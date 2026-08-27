@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      control-db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: origami
+          POSTGRES_PASSWORD: origami_ci_password
+          POSTGRES_DB: origami_control_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U origami -d origami_control_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      tenant-db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: origami
+          POSTGRES_PASSWORD: origami_ci_password
+          POSTGRES_DB: origami_tenant_shared_test
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U origami -d origami_tenant_shared_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      ENVIRONMENT: test
+      CONTROL_DATABASE_URL: postgresql+psycopg://origami:origami_ci_password@localhost:5432/origami_control_test
+      TENANT_DATABASE_URL: postgresql+psycopg://origami:origami_ci_password@localhost:5433/origami_tenant_shared_test
+      AUTH_DEV_MODE: "true"
+      APP_SECRET_KEY: ci-only-secret-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: api
+        run: pip install -r requirements-dev.txt
+
+      - name: Generate license lease keys
+        run: python scripts/generate_license_keys.py
+
+      - name: Lint (ruff)
+        working-directory: api
+        run: ruff check .
+
+      - name: Type check (mypy)
+        working-directory: api
+        run: mypy app
+
+      - name: Run control-plane migrations
+        working-directory: api
+        run: alembic -c alembic_control.ini upgrade head
+
+      - name: Run tenant-plane migrations (incl. RLS policies)
+        working-directory: api
+        run: alembic -c alembic_tenant.ini upgrade head
+
+      - name: Run tests
+        working-directory: api
+        run: pytest -q
+
+  admin-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: admin-web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: admin-web
+        run: npm ci
+
+      - name: Type check
+        working-directory: admin-web
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: admin-web
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        run: npx next build

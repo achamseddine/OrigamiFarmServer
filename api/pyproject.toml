@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+# Generated Alembic migrations are not hand-formatted; reformatting them
+# risks introducing a typo in DDL for no real benefit.
+extend-exclude = ["migrations/*/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Environment variables must be set before importing anything from `app`,
+# since several modules create DB engines / read cached settings at
+# import time — see the module docstring in tests/conftest.py.
+"tests/conftest.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true

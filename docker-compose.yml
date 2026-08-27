@@ -1,0 +1,125 @@
+version: "3.9"
+
+# Origami Server local development stack.
+# Two PostgreSQL instances mirror the control-plane / farm-data-plane
+# separation described in ARCHITECTURE.md and TENANCY.md.
+
+services:
+  control-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: origami
+      POSTGRES_PASSWORD: origami_dev_password
+      POSTGRES_DB: origami_control
+    ports:
+      - "5433:5432"
+    volumes:
+      - control_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U origami -d origami_control"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tenant-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: origami
+      POSTGRES_PASSWORD: origami_dev_password
+      POSTGRES_DB: origami_tenant_shared
+    ports:
+      - "5434:5432"
+    volumes:
+      - tenant_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U origami -d origami_tenant_shared"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: origami
+      MINIO_ROOT_PASSWORD: origami_dev_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./infrastructure/keycloak:/opt/keycloak/data/import
+
+  api:
+    build:
+      context: ./api
+    env_file:
+      - .env
+    environment:
+      CONTROL_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@control-db:5432/origami_control
+      TENANT_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@tenant-db:5432/origami_tenant_shared
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      OIDC_ISSUER: http://keycloak:8080/realms/origami
+    ports:
+      - "8000:8000"
+    depends_on:
+      control-db:
+        condition: service_healthy
+      tenant-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./api:/app
+
+  workers:
+    build:
+      context: ./api
+    env_file:
+      - .env
+    environment:
+      CONTROL_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@control-db:5432/origami_control
+      TENANT_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@tenant-db:5432/origami_tenant_shared
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+    depends_on:
+      control-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["python", "-m", "workers.main"]
+    volumes:
+      - ./api:/app
+      - ./workers:/app/workers
+
+  admin-web:
+    build:
+      context: ./admin-web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  control_db_data:
+  tenant_db_data:
+  minio_data:

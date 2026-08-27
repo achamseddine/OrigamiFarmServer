@@ -1,0 +1,26 @@
+# Environments / secrets
+.env
+.env.*
+!.env.example
+infrastructure/keys/
+
+# Python
+api/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+*.swp
+
+# Logs
+*.log
