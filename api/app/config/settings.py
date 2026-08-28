@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
 
+    # FarmOS tablet app's own username/password login (app/farmos/) — a
+    # long TTL is deliberate: "log in once, stay logged in" per the
+    # contract, with GET /auth/me re-validating the stored token on each
+    # relaunch rather than a refresh flow.
+    farmos_token_ttl_days: int = 180
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]

@@ -37,6 +37,13 @@ class ModuleCatalog(ControlBase):
     commercial_status: Mapped[str] = mapped_column(String(16), default="AVAILABLE")
     trial_allowed: Mapped[bool] = mapped_column(default=True)
     active: Mapped[bool] = mapped_column(default=True)
+    # FarmOS tablet contract (GET /modules/catalog): a display grouping
+    # ("operations", "livestock", ...) and, for the small set of modules
+    # that are paid add-ons rather than included in every plan, the
+    # license_code that GET /modules rows are checked against — see
+    # app/farmos/modules.py.
+    group: Mapped[str] = mapped_column(default="")
+    license_code: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class PlanModule(UUIDPrimaryKeyMixin, ControlBase):
@@ -118,3 +125,10 @@ class TenantEntitlement(UUIDPrimaryKeyMixin, TimestampMixin, ControlBase):
         PG_UUID(as_uuid=True), ForeignKey("user_identity.id"), nullable=True
     )
     reason: Mapped[str | None] = mapped_column(nullable=True)
+    # FarmOS tablet contract (GET /modules -> ModuleLicenseOut): the
+    # commercial plan name and optional capacity caps for licensed
+    # add-ons (Mouneh, Farm Visits). Unset for the ordinary included
+    # modules, which never appear in that endpoint at all.
+    plan: Mapped[str | None] = mapped_column(nullable=True)
+    max_users: Mapped[int | None] = mapped_column(nullable=True)
+    max_products: Mapped[int | None] = mapped_column(nullable=True)

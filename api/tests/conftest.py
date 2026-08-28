@@ -63,6 +63,38 @@ def _migrated_databases():
     yield
 
 
+def _seed_farmos_module_catalog() -> None:
+    """The FarmOS contract's fixed 20-code permission catalog plus its 2
+    licence SKUs ("mouneh", "visits_agritourism") — reseeded after every
+    per-test TRUNCATE (see _clean_slate below), same rows scripts/seed.py
+    writes for a real environment. Imported from there rather than
+    duplicated so the two can't drift apart.
+    """
+    import importlib.util
+
+    from app.common.db import ControlSessionLocal
+    from app.plans.models import ModuleCatalog
+
+    seed_path = _REPO_ROOT / "scripts" / "seed.py"
+    spec = importlib.util.spec_from_file_location("_seed_module", seed_path)
+    seed_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seed_module)
+
+    with ControlSessionLocal() as db:
+        for code, (label_en, label_ar, group, license_code) in seed_module.FARMOS_MODULE_CATALOG.items():
+            if db.get(ModuleCatalog, code) is None:
+                db.add(
+                    ModuleCatalog(
+                        module_code=code,
+                        name_en=label_en,
+                        name_ar=label_ar,
+                        group=group,
+                        license_code=license_code,
+                    )
+                )
+        db.commit()
+
+
 @pytest.fixture(scope="session")
 def app():
     from app.main import app as fastapi_app
@@ -77,6 +109,7 @@ def client(app, _clean_slate):
 
 
 _CONTROL_TABLES = [
+    "farmos_idempotency_record",
     "audit_event",
     "support_session",
     "support_case",
@@ -118,6 +151,10 @@ def _clean_slate():
     with TenantSharedSessionLocal() as db:
         db.execute(text(f"TRUNCATE TABLE {', '.join(_TENANT_TABLES)} CASCADE"))
         db.commit()
+    # module_catalog is truncated above (tests create their own ad-hoc rows
+    # via helpers.ensure_module) — the FarmOS contract's 20+2 fixed codes
+    # need to exist again for every test, not just once per session.
+    _seed_farmos_module_catalog()
     yield
 
 
@@ -149,3 +186,13 @@ def auth_headers(token: str, *, device_id: str | None = None, membership_id: str
     if membership_id:
         headers["X-Membership-Id"] = membership_id
     return headers
+
+
+def farmos_login(client: TestClient, email: str, password: str) -> str:
+    resp = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["access_token"]
+
+
+def farmos_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}

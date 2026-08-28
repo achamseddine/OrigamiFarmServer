@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import Boolean, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -29,7 +30,10 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, ControlBase):
     company_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     legal_name: Mapped[str] = mapped_column()
     display_name: Mapped[str] = mapped_column()
-    country: Mapped[str] = mapped_column(String(2))
+    # Free text, not a constrained ISO-2 code: the FarmOS tablet contract's
+    # GET /farms/me returns a display value like "Lebanon", not "LB".
+    country: Mapped[str] = mapped_column()
+    region: Mapped[str | None] = mapped_column(nullable=True)
     timezone: Mapped[str] = mapped_column(default="UTC")
     default_currency: Mapped[str] = mapped_column(String(3), default="USD")
     status: Mapped[TenantStatus] = mapped_column(
@@ -82,6 +86,24 @@ class TenantMembership(UUIDPrimaryKeyMixin, TimestampMixin, ControlBase):
     default_farm_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("farm.id", ondelete="SET NULL"), nullable=True
     )
+
+    # --- FarmOS tablet app profile fields (app/farmos/) -----------------
+    # `role` is free text (job title-ish: "owner", "manager", "veterinarian",
+    # "guide", ...) per the tablet API contract — distinct from tenant_role
+    # above, which stays a fixed enum for the platform's own admin-web
+    # semantics. full_access (owner/manager) is computed from `role`, never
+    # stored, so it can't drift from the value actually returned to the app.
+    role: Mapped[str] = mapped_column(default="worker")
+    phone: Mapped[str | None] = mapped_column(nullable=True)
+    department: Mapped[str | None] = mapped_column(nullable=True)
+    language: Mapped[str] = mapped_column(default="en")
+    job_title: Mapped[str | None] = mapped_column(nullable=True)
+    employment_status: Mapped[str] = mapped_column(default="active")
+    start_date: Mapped[datetime | None] = mapped_column(nullable=True)
+    photo_path: Mapped[str | None] = mapped_column(nullable=True)
+    working_days: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    working_hours: Mapped[str | None] = mapped_column(nullable=True)
+    notes: Mapped[str | None] = mapped_column(nullable=True)
 
     tenant: Mapped[Tenant] = relationship(back_populates="memberships")
 

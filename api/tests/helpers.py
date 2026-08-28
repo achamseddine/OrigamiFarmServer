@@ -23,6 +23,7 @@ from app.common.enums import (
     TenantRole,
     TenantStatus,
 )
+from app.farmos.security import hash_password
 from app.plans.models import ModuleCatalog, TenantEntitlement
 from app.tenants.models import (
     MembershipFarmAccess,
@@ -121,3 +122,43 @@ def add_membership(
         db.add(MembershipFarmAccess(membership_id=membership.id, farm_id=farm_id))
     db.flush()
     return membership
+
+
+FARMOS_DEMO_PASSWORD = "test-password-123"
+
+
+def add_farmos_user(
+    db: Session,
+    tenant: Tenant,
+    email: str,
+    *,
+    role: str = "worker",
+    display_name: str | None = None,
+    password: str = FARMOS_DEMO_PASSWORD,
+    grid: dict[str, list[str]] | None = None,
+) -> tuple[UserIdentity, TenantMembership]:
+    """Creates a password-enabled FarmOS tablet user. `grid` maps module
+    code -> list of allowed actions (from app.farmos.permissions.ACTIONS),
+    ignored for role in ("owner", "manager") since those get full_access
+    without needing any permission rows at all.
+    """
+    user = ensure_user(db, email, display_name)
+    user.password_hash = hash_password(password)
+    membership = TenantMembership(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        status=MembershipStatus.ACTIVE,
+        tenant_role=TenantRole.TENANT_OWNER if role == "owner" else TenantRole.EMPLOYEE,
+        role=role,
+    )
+    db.add(membership)
+    db.flush()
+    for module_code, actions in (grid or {}).items():
+        for action in actions:
+            db.add(
+                MembershipModulePermission(
+                    membership_id=membership.id, module_code=module_code, permission_code=action
+                )
+            )
+    db.flush()
+    return user, membership

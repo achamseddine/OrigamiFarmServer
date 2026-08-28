@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from app.common.errors import AppError
 from app.common.logging import CorrelationIdMiddleware, SecurityHeadersMiddleware, configure_logging
 from app.config import get_settings
+from app.farmos.idempotency import IdempotencyMiddleware
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -24,6 +25,7 @@ app = FastAPI(
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +46,17 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
 @app.get("/healthz", tags=["Health"])
 def healthz() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/health", tags=["Health"])
+def health() -> dict:
+    """The FarmOS tablet app's own liveness ping — deliberately at the
+    server root, not under /api/v1 (that prefixed path is the animal-health
+    module's own route group, a different thing entirely). Unauthenticated
+    and as cheap as /healthz on purpose: the app calls this just to decide
+    whether it's online, and anything under 500 counts as reachable.
+    """
     return {"status": "ok"}
 
 
@@ -68,14 +81,20 @@ def readyz() -> dict:
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.backups.routes import router as backups_router  # noqa: E402
 from app.devices.routes import router as devices_router  # noqa: E402
+from app.farmos.routes_auth import router as farmos_auth_router  # noqa: E402
+from app.farmos.routes_employees import router as farmos_employees_router  # noqa: E402
+from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
 from app.files.routes import router as files_router  # noqa: E402
 from app.platform.routes import router as platform_router  # noqa: E402
 from app.support.routes import router as support_router  # noqa: E402
 from app.sync.routes import router as sync_router  # noqa: E402
-from app.tenant_api.routes import router as tenant_api_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
-app.include_router(tenant_api_router, prefix="/api/v1", tags=["Tenant Farm API"])
+# The FarmOS tablet contract (docs/FARMOS_API.md) — every path relative to
+# /api/v1, matched exactly against the reference backend's OpenAPI schema.
+app.include_router(farmos_auth_router, prefix="/api/v1", tags=["FarmOS: Auth"])
+app.include_router(farmos_employees_router, prefix="/api/v1", tags=["FarmOS: Employees"])
+app.include_router(farmos_farms_router, prefix="/api/v1", tags=["FarmOS: Farm"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])
