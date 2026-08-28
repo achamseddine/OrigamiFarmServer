@@ -1,11 +1,13 @@
 # FarmOS Tablet API Contract
 
-`app/farmos/` implements the exact REST API the Origami FarmOS tablet app calls — 92 endpoints
+`app/farmos/` implements the exact REST API the Origami FarmOS tablet app calls — 97 endpoints
 across 19 functional groups, reverse-engineered and verified against a real reference backend (81
-examples from a demo snapshot, 11 captured live from the running app). This is a **fixed external
-contract**, not free-form internal API design: field names, types, status codes, and response
-shapes match the app's expectations exactly, even where that diverges from this codebase's own
-conventions elsewhere (see "Deliberate divergences from the rest of this codebase" below).
+examples from a demo snapshot, 11 captured live from the running app), plus 5 endpoints added since
+to close gaps the captured examples left open (see "Known, deliberate gaps" below — each one moved
+here once built). This is a **fixed external contract**, not free-form internal API design: field
+names, types, status codes, and response shapes match the app's expectations exactly, even where
+that diverges from this codebase's own conventions elsewhere (see "Deliberate divergences from the
+rest of this codebase" below).
 
 Every route lives under `/api/v1`, mounted in `app/main.py`, one router module per functional
 group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_models.py`
@@ -121,11 +123,11 @@ the routing map — which router module owns which path.
 | Farm | `routes_farms.py` | `GET /farms/me` |
 | Animals | `routes_animals.py` | `GET/POST /animals`, `GET/PATCH/PUT /animals/{id}` |
 | Animal health | `routes_health.py` | `GET/POST /health/treatments` |
-| Observations | `routes_observations.py` | `POST /observations` |
-| Feed & inventory | `routes_feed.py` | `GET /feed/items`, `POST /feed/transactions` |
+| Observations | `routes_observations.py` | `GET/POST /observations` |
+| Feed & inventory | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` |
 | Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` |
 | Agriculture | `routes_agriculture.py` | `GET/POST /crop-plantings`, `GET/POST/DELETE /crops`, `POST/PATCH /fields`, `POST /harvest` |
-| Sales & finance | `routes_finance.py` | `GET /expenses`, `GET /sales` (both read-only — see below) |
+| Sales & finance | `routes_finance.py` | `GET/POST /expenses`, `GET/POST /sales` |
 | Tasks | `routes_tasks.py` | `GET/POST/PATCH/DELETE /tasks` |
 | Notifications | `routes_notifications.py` | `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all` |
 | Priorities & audit | `routes_priorities.py`, `routes_audit.py` | `GET /priorities`, `GET /audit` |
@@ -162,17 +164,25 @@ where cited, not as a generic framework:
 - **CONSTITUTION.md: never generate a recommendation without persisted evidence.**
   `GET /recommendations` (default `refresh=true`) re-evaluates real rules against this farm's real
   stored data before returning anything — `app/farmos/recommendations.py` implements
-  `RULE-FEED-COST-INSIGHT` (today's feed-expense share vs. a 35% threshold) and `RULE-HARVEST-DUE`
-  (active crop plantings due within 48h); a refresh skips re-creating a rule+entity pair that
-  already has an undecided row rather than spamming duplicates.
+  `RULE-FEED-COST-INSIGHT` (today's feed-expense share vs. a 35% threshold), `RULE-HARVEST-DUE`
+  (active crop plantings due within 48h), `RULE-LOW-FEED` (an inventory item at or below its own
+  `reorder_level`), and `RULE-EGG-DROP` (a flock's sellable-egg output down more than 20% versus
+  the preceding week); a refresh skips re-creating a rule+entity pair that already has an undecided
+  row rather than spamming duplicates. Every rule goes through the same `_add_recommendation()`
+  helper, which also raises a paired `Notification` row — the only place in this codebase a
+  `Notification` gets created, so `GET /notifications` and the notification half of `GET
+  /priorities` now reflect real, rule-evaluated farm state instead of only test-seeded rows.
 
 ## Known, deliberate gaps
 
-- **`GET /expenses` and `GET /sales` are read-only.** The captured contract has no matching POST
-  endpoint for either — `Expense` rows have no write path yet in this codebase (`app/farmos/
-  finance_models.py` documents this); `Sale` rows are written only by `POST /mouneh/sales` and
-  `POST /visit-retail-sales`, per the contract's own note that a general manual sale-entry endpoint
-  is tracked as follow-on work, not yet built.
+- **`POST /expenses` and `POST /sales` field shapes are inferred, not captured.** The 81+11
+  reference examples never captured a manual expense/sale entry, so these two endpoints (added to
+  close the "no write path" gap noted below) mirror `ExpenseOut`/`SaleOut`'s existing fields rather
+  than a verified real request. `Sale` rows also still arrive via `POST /mouneh/sales` and `POST
+  /visit-retail-sales` as before; the general manual entry point now exists alongside those.
+- **`GET /feed/items`'s new `POST` sibling, `GET /feed/transactions`, and `GET /observations` are
+  the same situation** — built to close a real store-without-display or no-write-path gap using the
+  same field names as their existing `Out` schemas, but not verified against a captured example.
 - **Audit instrumentation is representative, not exhaustive.** `app/audit/service.py`'s
   `record_audit_event` was extended with FarmOS-specific columns (`module_code`, `summary`,
   `changes_json`, `metadata_json`, `device`) and wired into employee CRUD, animal move/update, and
