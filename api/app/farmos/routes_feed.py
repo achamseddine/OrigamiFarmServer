@@ -5,7 +5,7 @@ should not go negative without explicit override."
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
@@ -13,24 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
-from app.farmos.schemas import FeedTransactionCreate, InventoryItemOut, InventoryMovementOut
+from app.farmos.schemas import FeedTransactionCreate, InventoryItemOut
 from app.tenant_api.models import InventoryItem, InventoryMovement
 
 router = APIRouter()
-
-
-def _to_movement_out(m: InventoryMovement) -> InventoryMovementOut:
-    delta = float(m.quantity_delta)
-    return InventoryMovementOut(
-        id=str(m.id),
-        inventory_item_id=str(m.inventory_item_id),
-        direction="in" if delta >= 0 else "out",
-        quantity=abs(delta),
-        reason=m.reason or None,
-        linked_entity_type=m.linked_entity_type,
-        linked_entity_id=m.linked_entity_id,
-        occurred_at=m.occurred_at,
-    )
 
 
 def _to_item_out(item: InventoryItem, tenant_id: uuid.UUID) -> InventoryItemOut:
@@ -59,28 +45,6 @@ def list_inventory_items(
         select(InventoryItem).where(InventoryItem.deleted_at.is_(None)).order_by(InventoryItem.name)
     ).scalars().all()
     return [_to_item_out(row, access.tenant_id) for row in rows]
-
-
-@router.get("/feed/transactions", response_model=list[InventoryMovementOut])
-def list_feed_transactions(
-    farm_id: str = Query(...),
-    item_id: str | None = Query(default=None),
-    days: int = Query(default=90),
-    access: AccessContext = Depends(require_permission("feed_nutrition", "view")),
-    db: Session = Depends(get_farmos_tenant_db),
-) -> list[InventoryMovementOut]:
-    check_farm_id(farm_id, access)
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    stmt = select(InventoryMovement).where(
-        InventoryMovement.deleted_at.is_(None), InventoryMovement.occurred_at >= since
-    )
-    if item_id:
-        try:
-            stmt = stmt.where(InventoryMovement.inventory_item_id == uuid.UUID(item_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail="Inventory item not found.") from exc
-    rows = db.execute(stmt.order_by(InventoryMovement.occurred_at.desc())).scalars().all()
-    return [_to_movement_out(row) for row in rows]
 
 
 @router.post("/feed/transactions", response_model=InventoryItemOut, status_code=201)

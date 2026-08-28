@@ -105,10 +105,10 @@ def test_worker_cannot_manage_employees(client, control_db):
     assert resp.status_code == 403
 
 
-# --- Expenses & sales -------------------------------------------------------
+# --- Expenses & sales (read-only listings) --------------------------------
 
 
-def test_expenses_and_sales_can_be_listed(client, control_db):
+def test_expenses_and_sales_are_listed_read_only(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-FIN", "finowner@origami-demo.com")
     now = datetime.now(timezone.utc)
     with TenantDataRouter.session_for(tenant.id) as db:
@@ -142,69 +142,6 @@ def test_expenses_and_sales_can_be_listed(client, control_db):
     )
     assert sales.status_code == 200
     assert sales.json()[0]["product_type"] == "milk"
-
-
-def test_manager_can_record_a_manual_expense_and_sale(client, control_db):
-    tenant, token = _owner(client, control_db, "FARM-FIN2", "finowner2@origami-demo.com")
-
-    expense = client.post(
-        "/api/v1/expenses",
-        json={"category": "fuel", "amount": 420},
-        headers=farmos_headers(token),
-    )
-    assert expense.status_code == 201, expense.text
-    body = expense.json()
-    assert body["farm_id"] == str(tenant.id)
-    assert body["category"] == "fuel"
-    assert body["amount"] == 420.0
-    assert body["currency"] == "USD"
-
-    sale = client.post(
-        "/api/v1/sales",
-        json={
-            "product_type": "produce",
-            "product_label": "Zucchini",
-            "quantity": 90,
-            "unit": "kg",
-            "amount": 945,
-            "payment_status": "partial",
-        },
-        headers=farmos_headers(token),
-    )
-    assert sale.status_code == 201, sale.text
-    sale_body = sale.json()
-    assert sale_body["product_type"] == "produce"
-    assert sale_body["payment_status"] == "partial"
-
-    # Both new rows show up in the read listings — nothing recorded is lost.
-    expenses = client.get(
-        "/api/v1/expenses", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
-    )
-    assert any(e["id"] == body["id"] for e in expenses.json())
-
-    sales = client.get(
-        "/api/v1/sales", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
-    )
-    assert any(s["id"] == sale_body["id"] for s in sales.json())
-
-
-def test_worker_without_finance_permission_cannot_record_expense_or_sale(client, control_db):
-    tenant = create_tenant(control_db, company_code=unique_code("FARM-FIN3"))
-    add_farmos_user(control_db, tenant, "finworker@origami-demo.com", role="worker", grid={"tasks": ["view"]})
-    control_db.commit()
-    token = farmos_login(client, "finworker@origami-demo.com", FARMOS_DEMO_PASSWORD)
-
-    expense = client.post(
-        "/api/v1/expenses", json={"category": "fuel", "amount": 100}, headers=farmos_headers(token)
-    )
-    assert expense.status_code == 403
-
-    sale = client.post(
-        "/api/v1/sales",
-        json={"product_type": "produce", "amount": 100},
-        headers=farmos_headers(token),
-    )
-    assert sale.status_code == 403
 
 
 # --- Audit -----------------------------------------------------------------

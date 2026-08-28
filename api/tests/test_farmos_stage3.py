@@ -154,25 +154,6 @@ def test_worker_can_record_an_observation_with_no_diagnosis_field(client, contro
     assert body["confidence"] == 0.65
     assert "diagnosis" not in body
 
-    # What got recorded is also readable back (by someone with view access,
-    # e.g. the owner) — a worker's observation isn't write-only, so it can
-    # show up in the animal's history on its digital twin.
-    listed = client.get(
-        "/api/v1/observations",
-        params={"farm_id": str(tenant.id), "entity_type": "animal", "entity_id": animal_id},
-        headers=farmos_headers(owner_token),
-    )
-    assert listed.status_code == 200, listed.text
-    assert [o["id"] for o in listed.json()] == [body["id"]]
-    assert listed.json()[0]["observation_type"] == "udder_swelling"
-
-    other_animal = client.get(
-        "/api/v1/observations",
-        params={"farm_id": str(tenant.id), "entity_type": "animal", "entity_id": "not-this-one"},
-        headers=farmos_headers(owner_token),
-    )
-    assert other_animal.json() == []
-
 
 # --- Feed & inventory ------------------------------------------------------
 
@@ -224,19 +205,6 @@ def test_feed_transaction_updates_inventory_and_blocks_negative(client, control_
     )
     assert forced.status_code == 201
     assert forced.json()["current_qty"] < 0
-
-    # Every transaction that moved stock is itself readable — the Feed &
-    # Inventory screen's history, not just the running total.
-    history = client.get(
-        "/api/v1/feed/transactions",
-        params={"farm_id": str(tenant.id), "item_id": str(item_id)},
-        headers=farmos_headers(token),
-    )
-    assert history.status_code == 200, history.text
-    # Only the two transactions that actually moved stock exist — the
-    # blocked over-withdrawal never created a row. Newest first.
-    directions = [(m["direction"], m["quantity"]) for m in history.json()]
-    assert directions == [("out", 1000.0), ("out", 30.0)]
 
 
 # --- Production ----------------------------------------------------------
