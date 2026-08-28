@@ -12,6 +12,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.service import record_audit_event
+from app.common.db import get_control_db
+from app.common.enums import ActorType
 from app.farmos.deps import (
     AccessContext,
     check_farm_id,
@@ -67,6 +70,7 @@ def record_treatment(
     access: AccessContext = Depends(require_permission("animal_health", "create")),
     _diagnostic: AccessContext = Depends(require_diagnostic_role),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> TreatmentOut:
     treatment = Treatment(
         tenant_id=access.tenant_id,
@@ -104,4 +108,18 @@ def record_treatment(
                 animal.last_modified_by = access.membership_id
 
     db.flush()
+
+    record_audit_event(
+        control_db,
+        actor_id=access.user_id,
+        actor_type=ActorType.TENANT_USER,
+        actor_role=access.role,
+        tenant_id=access.tenant_id,
+        action="treatment.created",
+        entity_type="treatment",
+        entity_id=str(treatment.id),
+        module_code="animal_health",
+        summary=f"Recorded a {payload.medication} treatment for {payload.entity_type} {payload.entity_id}",
+    )
+
     return _to_treatment_out(treatment)

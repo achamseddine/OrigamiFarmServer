@@ -30,6 +30,11 @@ def record_audit_event(
     reason: str | None = None,
     ip_address: str | None = None,
     session_id: str | None = None,
+    module_code: str | None = None,
+    summary: str | None = None,
+    changes: dict | None = None,
+    metadata: dict | None = None,
+    device: str | None = None,
 ) -> AuditEvent:
     event = AuditEvent(
         actor_id=actor_id,
@@ -45,6 +50,11 @@ def record_audit_event(
         correlation_id=get_correlation_id() or None,
         ip_address=ip_address,
         session_id=session_id,
+        module_code=module_code,
+        summary=summary,
+        changes_json=changes,
+        metadata_json=metadata or {},
+        device=device,
     )
     db.add(event)
     db.flush()

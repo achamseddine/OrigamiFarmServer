@@ -52,8 +52,60 @@ class EmployeeDetailOut(UserProfileOut):
     working_days: list[str] | None
     working_hours: str | None
     notes: str | None
-    permissions: list[ModulePermissionOut]
-    full_access: bool
+    permissions: list[ModulePermissionOut] = []
+    full_access: bool = False
+
+
+class ModulePermissionIn(BaseModel):
+    module_code: str
+    can_view: bool = False
+    can_create: bool = False
+    can_edit: bool = False
+    can_delete: bool = False
+    can_approve: bool = False
+    can_export: bool = False
+    can_assign: bool = False
+    can_configure: bool = False
+
+
+class EmployeeCreate(BaseModel):
+    name: str
+    password: str
+    email: str | None = None
+    phone: str | None = None
+    role: str = "worker"
+    department: str | None = None
+    language: str = "en"
+    job_title: str | None = None
+    employment_status: str = "active"
+    start_date: str | None = None
+    photo_path: str | None = None
+    working_days: list[str] | None = None
+    working_hours: str | None = None
+    notes: str | None = None
+    permissions: list[ModulePermissionIn] = []
+
+
+class EmployeeUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    role: str | None = None
+    department: str | None = None
+    language: str | None = None
+    job_title: str | None = None
+    employment_status: str | None = None
+    start_date: str | None = None
+    photo_path: str | None = None
+    working_days: list[str] | None = None
+    working_hours: str | None = None
+    notes: str | None = None
+    active: bool | None = None
+    password: str | None = None
+
+
+class PermissionSet(BaseModel):
+    permissions: list[ModulePermissionIn]
 
 
 class MyAccessOut(BaseModel):
@@ -290,6 +342,34 @@ class MorningBriefingOut(BaseModel):
     kpis: dict[str, int | float]
     priorities: list[PriorityOut]
     tasks: list[TaskOut]
+
+
+class AmountByCategory(BaseModel):
+    category: str
+    amount: float
+
+
+class AmountByProductType(BaseModel):
+    product_type: str
+    amount: float
+
+
+class AmountByProductLabel(BaseModel):
+    product_label: str
+    amount: float
+
+
+class DailySummaryOut(BaseModel):
+    date: str
+    revenue_today: float
+    expenses_today: float
+    gross_margin: float
+    cash_collected: float
+    pending_payments: float
+    sales_breakdown: list[AmountByProductType]
+    expense_breakdown: list[AmountByCategory]
+    top_selling_products: list[AmountByProductLabel]
+    business_insights: list[str]
 
 
 # --- Animal health / observations ---------------------------------------
@@ -569,6 +649,76 @@ class DailyHarvestOut(BaseModel):
     recorded_at: datetime
     inventory_item_id: str | None
     inventory_qty_after: float | None
+
+
+class ExpenseOut(BaseModel):
+    id: str
+    farm_id: str
+    supplier_id: str | None
+    category: str
+    amount: float
+    currency: str
+    linked_entity_type: str | None
+    linked_entity_id: str | None
+    incurred_at: datetime
+
+
+class SaleOut(BaseModel):
+    id: str
+    farm_id: str
+    customer_id: str | None
+    product_type: str
+    product_label: str | None
+    quantity: float | None
+    unit: str | None
+    amount: float
+    currency: str
+    payment_status: str
+    sold_at: datetime
+
+
+class AuditEventOut(BaseModel):
+    id: str
+    user_id: str
+    user_name: str | None
+    action: str
+    entity_type: str
+    entity_id: str
+    module_code: str | None
+    summary: str | None
+    changes_json: dict | None
+    metadata_json: dict = {}
+    device: str | None
+    timestamp: datetime
+
+
+class EvidenceItem(BaseModel):
+    label: str
+    value: str
+
+
+class RecommendationOut(BaseModel):
+    id: str
+    farm_id: str
+    category: str
+    priority: str
+    title: str
+    entity_type: str | None
+    entity_id: str | None
+    entity_label: str | None
+    confidence: float
+    rationale: str
+    suggested_action: str
+    status: str
+    rule_id: str | None
+    generated_at: datetime
+    evidence: list[EvidenceItem] = []
+
+
+class RecommendationDecision(BaseModel):
+    decision: str
+    decided_by: str
+    note: str | None = None
 
 
 class DailyHarvestCreate(BaseModel):

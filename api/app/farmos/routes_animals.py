@@ -7,6 +7,9 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.service import record_audit_event
+from app.common.db import get_control_db
+from app.common.enums import ActorType
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
 from app.farmos.schemas import AnimalCreate, AnimalDetailOut, AnimalMove, AnimalOut, AnimalUpdate
 from app.tenant_api.models import Animal
@@ -124,12 +127,28 @@ def move_animal(
     payload: AnimalMove,
     access: AccessContext = Depends(require_permission("animals", "edit")),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> AnimalDetailOut:
     animal = _load_animal_or_404(db, animal_id)
+    before = animal.location_label
     animal.location_label = payload.location_label
     animal.version += 1
     animal.last_modified_by = access.membership_id
     db.flush()
+    if before != payload.location_label:
+        record_audit_event(
+            control_db,
+            actor_id=access.user_id,
+            actor_type=ActorType.TENANT_USER,
+            actor_role=access.role,
+            tenant_id=access.tenant_id,
+            action="animal.updated",
+            entity_type="animal",
+            entity_id=str(animal.id),
+            module_code="animals",
+            summary=f"Moved {animal.name} to {payload.location_label}",
+            changes={"location_label": {"from": before, "to": payload.location_label}},
+        )
     return _to_animal_out(animal, detail=True)  # type: ignore[return-value]
 
 
@@ -139,12 +158,31 @@ def update_animal(
     payload: AnimalUpdate,
     access: AccessContext = Depends(require_permission("animals", "edit")),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> AnimalDetailOut:
     """Full edit of an animal record."""
     animal = _load_animal_or_404(db, animal_id)
+    changes: dict[str, dict[str, object]] = {}
     for field, value in payload.model_dump(exclude_unset=True).items():
+        before = getattr(animal, field)
+        if before != value:
+            changes[field] = {"from": before, "to": value}
         setattr(animal, field, value)
     animal.version += 1
     animal.last_modified_by = access.membership_id
     db.flush()
+    if changes:
+        record_audit_event(
+            control_db,
+            actor_id=access.user_id,
+            actor_type=ActorType.TENANT_USER,
+            actor_role=access.role,
+            tenant_id=access.tenant_id,
+            action="animal.updated",
+            entity_type="animal",
+            entity_id=str(animal.id),
+            module_code="animals",
+            summary=f"Updated {animal.name}",
+            changes=changes,
+        )
     return _to_animal_out(animal, detail=True)  # type: ignore[return-value]

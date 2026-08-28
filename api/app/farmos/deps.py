@@ -97,7 +97,7 @@ def get_access_context(
             detail="This farm's subscription is paused. Ask your farm owner to reactivate it.",
         )
 
-    full_access = membership.role in ("owner", "manager")
+    full_access = is_full_access_role(membership.role)
     return AccessContext(
         membership_id=membership.id,
         user_id=user.id,
@@ -108,6 +108,13 @@ def get_access_context(
         full_access=full_access,
         permissions={} if full_access else permissions_grid(db, membership.id),
     )
+
+
+def is_full_access_role(role: str) -> bool:
+    """owners/managers get every permission on every module, always — see
+    module docstring: a farm can never lock itself out.
+    """
+    return role in ("owner", "manager")
 
 
 def require_permission(module_code: str, action: str) -> Callable:
