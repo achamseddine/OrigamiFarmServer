@@ -713,6 +713,17 @@ class FeedTransactionCreate(BaseModel):
     allow_negative: bool = False
 
 
+class InventoryMovementOut(BaseModel):
+    id: str
+    inventory_item_id: str
+    direction: str
+    quantity: float
+    reason: str | None
+    linked_entity_type: str | None
+    linked_entity_id: str | None
+    occurred_at: datetime
+
+
 # --- Production --------------------------------------------------------
 
 
@@ -920,6 +931,28 @@ class SaleOut(BaseModel):
     currency: str
     payment_status: str
     sold_at: datetime
+
+
+class ExpenseCreate(BaseModel):
+    category: str
+    amount: float
+    currency: str = "USD"
+    supplier_id: str | None = None
+    linked_entity_type: str | None = None
+    linked_entity_id: str | None = None
+    incurred_at: datetime | None = None
+
+
+class SaleCreate(BaseModel):
+    product_type: str
+    amount: float
+    product_label: str | None = None
+    quantity: float | None = None
+    unit: str | None = None
+    currency: str = "USD"
+    payment_status: str = "paid"
+    customer_id: str | None = None
+    sold_at: datetime | None = None
 
 
 class AuditEventOut(BaseModel):
