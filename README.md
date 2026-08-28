@@ -8,7 +8,7 @@ against real PostgreSQL, not mocked.
 See also: [ARCHITECTURE.md](ARCHITECTURE.md) · [TENANCY.md](TENANCY.md) ·
 [SECURITY.md](SECURITY.md) · [SYNC_PROTOCOL.md](SYNC_PROTOCOL.md) ·
 [LICENSE_ENTITLEMENTS.md](LICENSE_ENTITLEMENTS.md) · [API_ERROR_CODES.md](API_ERROR_CODES.md) ·
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/FARMOS_API.md](docs/FARMOS_API.md)
 
 ## What's in v0.1
 
@@ -22,18 +22,22 @@ Built, tested, and running end to end:
   entitlement → permission → farm scope.
 - `EntitlementService` + tenant/subscription/module state machines, all audited.
 - Device activation (hashed, single-use, expiring codes) and signed RS256 offline license leases.
-- A representative FarmOS domain API (farms, animals) enforcing entitlement + permission + RLS,
-  plus `/api/v1/me`, `/me/context`, `/me/entitlements`.
-- Idempotent, cursor-based sync push/pull with a structured conflict model.
+- The full FarmOS tablet API contract — 92 endpoints across 19 groups (animals, tasks, animal
+  health, observations, feed, production, agriculture, employees & permissions, sales/expenses,
+  notifications, priorities, audit, AI recommendations, reports, module licensing, and the Mouneh
+  and Farm Visits licensed add-ons), enforcing its own permission grid + RLS. See
+  [docs/FARMOS_API.md](docs/FARMOS_API.md).
+- Idempotent, cursor-based sync push/pull with a structured conflict model (the generic
+  `app/sync/` protocol, independent of the FarmOS tablet contract's own `Idempotency-Key` handling).
 - Audit service, support sessions (time-boxed, expiring), file presign endpoint, backup/export
   metadata endpoints.
 - Admin Web (Next.js): dev login, platform dashboard with real counts, tenant list with
   search/filter/pagination, a multi-step create-tenant wizard where every step is a real API call,
   and a Tenant 360 page (Overview / Farms / Modules / Devices / Audit) with working
   activate/deactivate/revoke actions.
-- 20 automated tests against a real Postgres instance, including every mandatory isolation,
+- 72 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
-  brief.
+  brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 
 **Deliberately deferred** (see "Roadmap" in ARCHITECTURE.md): billing/payment provider integration,
 scheduled backup/export job execution (the API + data model exist; a worker doesn't yet produce
@@ -127,4 +131,9 @@ isolation is real):
 | Dairy Farm | `FARM-A` | CORE, ANIMALS, FEED, MILK | `owner@farm-a-demo.com` |
 | Mixed Farm | `FARM-B` | CORE, ANIMALS, AGRICULTURE, PRODUCE, MOUNEH, SALES, FARM_VISITS | `owner@farm-b-demo.com` |
 
-Safe to re-run; every insert is guarded by a natural-key lookup first.
+Safe to re-run; every insert is guarded by a natural-key lookup first. `scripts/seed.py` also
+password-enables both tenant owners for the FarmOS tablet contract's own login
+(`POST /api/v1/auth/login`, distinct from the platform's OIDC/dev-login) — password
+`farmos-demo-2026` for either owner email above — and grants Tenant B's licensed add-ons
+(`mouneh`, `visits_agritourism`) as active `TenantEntitlement` rows so its owner can immediately
+exercise the Mouneh and Farm Visits endpoints. See [docs/FARMOS_API.md](docs/FARMOS_API.md).
