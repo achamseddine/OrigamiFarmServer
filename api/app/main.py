@@ -91,6 +91,8 @@ from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
 from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
+from app.farmos.routes_modules import router as farmos_modules_router  # noqa: E402
+from app.farmos.routes_mouneh import router as farmos_mouneh_router  # noqa: E402
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
 from app.farmos.routes_observations import router as farmos_observations_router  # noqa: E402
 from app.farmos.routes_priorities import router as farmos_priorities_router  # noqa: E402
@@ -123,6 +125,8 @@ app.include_router(farmos_employees_admin_router, prefix="/api/v1", tags=["FarmO
 app.include_router(farmos_finance_router, prefix="/api/v1", tags=["FarmOS: Finance"])
 app.include_router(farmos_audit_router, prefix="/api/v1", tags=["FarmOS: Audit"])
 app.include_router(farmos_recommendations_router, prefix="/api/v1", tags=["FarmOS: Recommendations"])
+app.include_router(farmos_modules_router, prefix="/api/v1", tags=["FarmOS: Modules"])
+app.include_router(farmos_mouneh_router, prefix="/api/v1", tags=["FarmOS: Mouneh"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])

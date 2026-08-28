@@ -146,6 +146,251 @@ class ModuleLicenseOut(BaseModel):
     max_products: int | None
 
 
+class ModuleLicenseUpdate(BaseModel):
+    status: str = "active"
+    plan: str = "mouneh_addon"
+    expires_at: str | None = None
+    max_users: int | None = None
+    max_products: int | None = None
+
+
+# --- Mouneh --------------------------------------------------------------
+
+
+class RawMaterialOut(BaseModel):
+    id: str
+    farm_id: str
+    name: str
+    category: str
+    source_type: str
+    inventory_item_id: str | None
+    unit: str
+    default_unit_cost: float
+    stock_tracking_enabled: bool
+    current_stock: float
+    loss_percent_default: float
+    active: bool
+
+
+class RawMaterialCreate(BaseModel):
+    name: str
+    category: str = "raw_material"
+    source_type: str = "purchased"
+    inventory_item_id: str | None = None
+    unit: str
+    default_unit_cost: float = 0
+    stock_tracking_enabled: bool = True
+    current_stock: float = 0
+    loss_percent_default: float = 0
+
+
+class CostComponentOut(BaseModel):
+    id: str
+    product_id: str | None
+    batch_id: str | None
+    label: str
+    cost_type: str
+    calculation_method: str
+    quantity: float | None
+    unit_cost: float | None
+    amount: float | None
+    allocation_basis: str | None
+
+
+class CostComponentCreate(BaseModel):
+    label: str
+    cost_type: str
+    calculation_method: str = "fixed_amount"
+    quantity: float | None = None
+    unit_cost: float | None = None
+    amount: float | None = None
+    allocation_basis: str | None = None
+
+
+class RecipeItemOut(BaseModel):
+    id: str
+    material_id: str
+    material_type: str
+    quantity: float
+    unit: str
+    loss_percent: float
+    is_optional: bool
+
+
+class RecipeItemCreate(BaseModel):
+    material_id: str
+    material_type: str = "raw_material"
+    quantity: float
+    unit: str
+    loss_percent: float = 0
+    is_optional: bool = False
+
+
+class RecipeOut(BaseModel):
+    id: str
+    product_id: str
+    version: int
+    effective_from: datetime
+    basis_quantity: float
+    basis_unit: str
+    active: bool
+    notes: str | None
+    items: list[RecipeItemOut] = []
+    cost_components: list[CostComponentOut] = []
+
+
+class RecipeCreate(BaseModel):
+    basis_quantity: float
+    basis_unit: str
+    notes: str | None = None
+    items: list[RecipeItemCreate]
+    cost_components: list[CostComponentCreate] = []
+
+
+class MounehProductOut(BaseModel):
+    id: str
+    farm_id: str
+    name: str
+    category: str
+    photo_path: str | None
+    output_unit: str
+    custom_output_unit_label: str | None
+    default_batch_size: float
+    shelf_life_days: int | None
+    warehouse_rules: str | None
+    low_stock_threshold: float | None
+    target_price: float | None
+    wholesale_price: float | None
+    target_margin_pct: float | None
+    status: str
+    created_at: datetime
+
+
+class MounehProductDetailOut(MounehProductOut):
+    active_recipe: RecipeOut | None = None
+
+
+class MounehProductCreate(BaseModel):
+    name: str
+    category: str = "general"
+    photo_path: str | None = None
+    output_unit: str
+    custom_output_unit_label: str | None = None
+    default_batch_size: float = 1
+    shelf_life_days: int | None = None
+    warehouse_rules: str | None = None
+    low_stock_threshold: float | None = None
+    target_price: float | None = None
+    wholesale_price: float | None = None
+    target_margin_pct: float | None = None
+
+
+class BatchInputConsumptionOut(BaseModel):
+    id: str
+    material_id: str
+    planned_qty: float
+    actual_qty: float | None
+    unit_cost: float
+    total_cost: float | None
+
+
+class ProductionBatchOut(BaseModel):
+    id: str
+    farm_id: str
+    product_id: str
+    recipe_version_id: str
+    batch_code: str
+    planned_qty: float
+    actual_output_qty: float | None
+    waste_qty: float
+    damaged_qty: float
+    quality_status: str
+    expiry_date: datetime | None
+    warehouse_location: str | None
+    status: str
+    planned_unit_cost: float | None
+    planned_total_cost: float | None
+    actual_unit_cost: float | None
+    actual_total_cost: float | None
+    labor_hours: float | None
+    started_at: datetime
+    completed_at: datetime | None
+    notes: str | None
+    consumptions: list[BatchInputConsumptionOut] = []
+
+
+class ProductionBatchCreate(BaseModel):
+    product_id: str
+    batch_code: str | None = None
+    planned_qty: float
+    warehouse_location: str | None = None
+    notes: str | None = None
+
+
+class BatchCompleteRequest(BaseModel):
+    actual_output_qty: float
+    waste_qty: float = 0
+    damaged_qty: float = 0
+    quality_status: str = "good"
+    expiry_date: datetime | None = None
+    warehouse_location: str | None = None
+    labor_hours: float | None = None
+    extra_cost_components: list[CostComponentCreate] = []
+
+
+class BatchConsumptionLine(BaseModel):
+    material_id: str
+    actual_qty: float
+    unit_cost: float | None = None
+
+
+class BatchConsumeRequest(BaseModel):
+    lines: list[BatchConsumptionLine]
+    allow_negative: bool = False
+
+
+class FinishedGoodsStockOut(BaseModel):
+    id: str
+    batch_id: str
+    product_id: str
+    quantity_produced: float
+    quantity_available: float
+    quantity_reserved: float
+    quantity_sold: float
+    quantity_damaged: float
+    quantity_expired: float
+    unit_cost: float
+    expiry_date: datetime | None
+    warehouse_location: str | None
+
+
+class MounehSaleOut(BaseModel):
+    id: str
+    farm_id: str
+    product_id: str
+    batch_id: str
+    finished_goods_stock_id: str
+    quantity: float
+    unit_price: float
+    discount: float
+    customer_id: str | None
+    channel: str
+    cost_per_unit: float
+    revenue: float
+    margin: float
+    sold_at: datetime
+
+
+class MounehSaleCreate(BaseModel):
+    product_id: str
+    finished_goods_stock_id: str | None = None
+    quantity: float
+    unit_price: float
+    discount: float = 0
+    customer_id: str | None = None
+    channel: str = "retail"
+
+
 # --- Animals -----------------------------------------------------------
 
 
