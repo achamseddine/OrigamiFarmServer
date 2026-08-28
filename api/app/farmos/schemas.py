@@ -702,6 +702,17 @@ class InventoryItemOut(BaseModel):
     last_purchase: datetime | None
 
 
+class InventoryItemCreate(BaseModel):
+    name: str
+    unit: str
+    category: str | None = None
+    reorder_level: float = 0
+    supplier_label: str | None = None
+    unit_cost: float | None = None
+    initial_qty: float = 0
+    last_purchase: datetime | None = None
+
+
 class FeedTransactionCreate(BaseModel):
     item_id: str
     direction: str

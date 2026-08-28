@@ -177,6 +177,61 @@ def test_worker_can_record_an_observation_with_no_diagnosis_field(client, contro
 # --- Feed & inventory ------------------------------------------------------
 
 
+def test_owner_can_register_a_new_inventory_item(client, control_db):
+    tenant, token = _owner(client, control_db, "FARM-NEWFEED", "newfeedowner@origami-demo.com")
+
+    created = client.post(
+        "/api/v1/feed/items",
+        json={
+            "name": "Layer Feed",
+            "unit": "kg",
+            "category": "Poultry",
+            "reorder_level": 1500,
+            "supplier_label": "Al Mashreq",
+            "unit_cost": 0.39,
+            "initial_qty": 1150,
+        },
+        headers=farmos_headers(token),
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["name"] == "Layer Feed"
+    assert body["current_qty"] == 1150.0
+    assert body["reorder_level"] == 1500.0
+    item_id = body["id"]
+
+    # A brand-new item can now actually be used by POST /feed/transactions,
+    # which 404s on an item_id that doesn't exist.
+    restock = client.post(
+        "/api/v1/feed/transactions",
+        json={"item_id": item_id, "direction": "in", "quantity": 200},
+        headers=farmos_headers(token),
+    )
+    assert restock.status_code == 201, restock.text
+    assert restock.json()["current_qty"] == 1350.0
+
+    listing = client.get(
+        "/api/v1/feed/items", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert any(i["id"] == item_id for i in listing.json())
+
+
+def test_worker_without_feed_permission_cannot_register_inventory_item(client, control_db):
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-NEWFEED2"))
+    add_farmos_user(
+        control_db, tenant, "feedworker@origami-demo.com", role="worker", grid={"tasks": ["view"]}
+    )
+    control_db.commit()
+    token = farmos_login(client, "feedworker@origami-demo.com", FARMOS_DEMO_PASSWORD)
+
+    resp = client.post(
+        "/api/v1/feed/items",
+        json={"name": "Minerals", "unit": "kg"},
+        headers=farmos_headers(token),
+    )
+    assert resp.status_code == 403
+
+
 def _seed_feed_item(client, token, tenant):
     from app.common.tenant_router import TenantDataRouter
     from app.tenant_api.models import InventoryItem
