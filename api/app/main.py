@@ -81,12 +81,17 @@ def readyz() -> dict:
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.backups.routes import router as backups_router  # noqa: E402
 from app.devices.routes import router as devices_router  # noqa: E402
+from app.farmos.routes_agriculture import router as farmos_agriculture_router  # noqa: E402
 from app.farmos.routes_animals import router as farmos_animals_router  # noqa: E402
 from app.farmos.routes_auth import router as farmos_auth_router  # noqa: E402
 from app.farmos.routes_employees import router as farmos_employees_router  # noqa: E402
 from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
+from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
+from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
+from app.farmos.routes_observations import router as farmos_observations_router  # noqa: E402
 from app.farmos.routes_priorities import router as farmos_priorities_router  # noqa: E402
+from app.farmos.routes_production import router as farmos_production_router  # noqa: E402
 from app.farmos.routes_reports import router as farmos_reports_router  # noqa: E402
 from app.farmos.routes_tasks import router as farmos_tasks_router  # noqa: E402
 from app.files.routes import router as files_router  # noqa: E402
@@ -105,6 +110,11 @@ app.include_router(farmos_tasks_router, prefix="/api/v1", tags=["FarmOS: Tasks"]
 app.include_router(farmos_notifications_router, prefix="/api/v1", tags=["FarmOS: Notifications"])
 app.include_router(farmos_priorities_router, prefix="/api/v1", tags=["FarmOS: Priorities"])
 app.include_router(farmos_reports_router, prefix="/api/v1", tags=["FarmOS: Reports"])
+app.include_router(farmos_health_router, prefix="/api/v1", tags=["FarmOS: Animal Health"])
+app.include_router(farmos_observations_router, prefix="/api/v1", tags=["FarmOS: Observations"])
+app.include_router(farmos_feed_router, prefix="/api/v1", tags=["FarmOS: Feed"])
+app.include_router(farmos_production_router, prefix="/api/v1", tags=["FarmOS: Production"])
+app.include_router(farmos_agriculture_router, prefix="/api/v1", tags=["FarmOS: Agriculture"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])

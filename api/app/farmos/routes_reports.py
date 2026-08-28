@@ -1,7 +1,5 @@
 """GET /morning-briefing — the tablet app's home-screen summary: today's
 date, a handful of top priorities, today's tasks, and a few headline KPIs.
-KPIs from domains not built yet (milk/eggs — Stage 3) honestly report 0
-rather than being guessed or omitted.
 """
 
 from __future__ import annotations
@@ -16,6 +14,7 @@ from app.auth.models import UserIdentity
 from app.common.db import get_control_db
 from app.common.enums import MembershipStatus
 from app.farmos.deps import AccessContext, check_farm_id, get_access_context, get_farmos_tenant_db
+from app.farmos.production_models import EggRecord, MilkRecord
 from app.farmos.routes_priorities import build_priorities
 from app.farmos.routes_tasks import to_task_out
 from app.farmos.schemas import MorningBriefingOut
@@ -54,13 +53,26 @@ def morning_briefing(
         manager_name = user.display_name if user else None
 
     now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     animal_count = db.execute(
         select(func.count()).select_from(Animal).where(
             Animal.deleted_at.is_(None), Animal.active.is_(True)
         )
     ).scalar_one()
     active_fields = db.execute(
-        select(func.count()).select_from(Field).where(Field.deleted_at.is_(None))
+        select(func.count()).select_from(Field).where(
+            Field.deleted_at.is_(None), Field.status == "active"
+        )
+    ).scalar_one()
+    milk_today_l = db.execute(
+        select(func.coalesce(func.sum(MilkRecord.liters), 0)).where(
+            MilkRecord.deleted_at.is_(None), MilkRecord.recorded_at >= today_start
+        )
+    ).scalar_one()
+    eggs_today = db.execute(
+        select(func.coalesce(func.sum(EggRecord.sellable_eggs), 0)).where(
+            EggRecord.deleted_at.is_(None), EggRecord.recorded_at >= today_start
+        )
     ).scalar_one()
 
     todays_tasks = list(
@@ -88,8 +100,8 @@ def morning_briefing(
         manager_name=manager_name,
         kpis={
             "animals": animal_count,
-            "milk_today_l": 0,
-            "eggs_today": 0,
+            "milk_today_l": float(milk_today_l),
+            "eggs_today": eggs_today,
             "active_fields": active_fields,
             "tasks_due": tasks_due,
             "open_alerts": open_alerts,

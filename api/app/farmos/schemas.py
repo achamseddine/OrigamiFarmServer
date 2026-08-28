@@ -290,3 +290,296 @@ class MorningBriefingOut(BaseModel):
     kpis: dict[str, int | float]
     priorities: list[PriorityOut]
     tasks: list[TaskOut]
+
+
+# --- Animal health / observations ---------------------------------------
+
+
+class TreatmentOut(BaseModel):
+    id: str
+    entity_type: str
+    entity_id: str
+    diagnosis: str | None
+    medication: str
+    dose: str
+    route: str
+    start_at: datetime
+    end_at: datetime | None
+    withdrawal_until: datetime | None
+    vet_id: str | None
+    responsible_user_id: str
+    status: str
+    cost: float | None
+    notes: str | None
+
+
+class TreatmentCreate(BaseModel):
+    entity_type: str
+    entity_id: str
+    medication: str
+    dose: str
+    route: str
+    responsible_user_id: str
+    diagnosis: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    withdrawal_until: datetime | None = None
+    vet_id: str | None = None
+    cost: float | None = None
+    notes: str | None = None
+
+
+class ObservationOut(BaseModel):
+    id: str
+    farm_id: str
+    entity_type: str
+    entity_id: str
+    observation_type: str
+    quality: str
+    confidence: float
+    value_numeric: float | None
+    value_text: str | None
+    unit: str | None
+    severity: str | None
+    observed_at: datetime
+    observer_id: str
+    notes: str | None
+
+
+class ObservationCreate(BaseModel):
+    farm_id: str
+    entity_type: str
+    entity_id: str
+    observation_type: str
+    quality: str = "human_observed"
+    value_numeric: float | None = None
+    value_text: str | None = None
+    unit: str | None = None
+    severity: str | None = None
+    observed_at: datetime | None = None
+    observer_id: str
+    notes: str | None = None
+
+
+# --- Feed & inventory ------------------------------------------------------
+
+
+class InventoryItemOut(BaseModel):
+    id: str
+    farm_id: str
+    name: str
+    category: str | None
+    unit: str
+    current_qty: float
+    reorder_level: float
+    supplier_label: str | None
+    unit_cost: float | None
+    last_purchase: datetime | None
+
+
+class FeedTransactionCreate(BaseModel):
+    item_id: str
+    direction: str
+    quantity: float
+    unit: str | None = None
+    reason: str | None = None
+    linked_entity_type: str | None = None
+    linked_entity_id: str | None = None
+    allow_negative: bool = False
+
+
+# --- Production --------------------------------------------------------
+
+
+class EggRecordOut(BaseModel):
+    id: str
+    flock_id: str
+    total_eggs: int
+    sellable_eggs: int
+    broken_eggs: int
+    consumed: int
+    hatched: int
+    wasted: int
+    recorded_at: datetime
+
+
+class EggRecordCreate(BaseModel):
+    flock_id: str
+    total_eggs: int
+    sellable_eggs: int = 0
+    broken_eggs: int = 0
+    consumed: int = 0
+    hatched: int = 0
+    wasted: int = 0
+    recorded_at: datetime | None = None
+
+
+class FieldOut(BaseModel):
+    id: str
+    name: str
+    crop_type: str | None
+    area_value: float | None
+    area_unit: str | None
+    stage: str | None
+    expected_harvest_date: datetime | None
+    est_yield_kg: float | None
+    field_code: str | None
+    location_label: str | None
+    soil_type: str | None
+    irrigation_method: str | None
+    status: str = "active"
+    notes: str | None
+
+
+class FieldCreate(BaseModel):
+    name: str
+    field_code: str | None = None
+    area_value: float | None = None
+    area_unit: str | None = "m2"
+    location_label: str | None = None
+    soil_type: str | None = None
+    irrigation_method: str | None = None
+    status: str = "active"
+    notes: str | None = None
+
+
+class FieldUpdate(BaseModel):
+    name: str | None = None
+    field_code: str | None = None
+    area_value: float | None = None
+    area_unit: str | None = None
+    location_label: str | None = None
+    soil_type: str | None = None
+    irrigation_method: str | None = None
+    status: str | None = None
+    notes: str | None = None
+    crop_type: str | None = None
+    stage: str | None = None
+    expected_harvest_date: datetime | None = None
+    est_yield_kg: float | None = None
+
+
+class HarvestRecordOut(BaseModel):
+    id: str
+    field_id: str
+    product_name: str
+    quantity: float
+    unit: str
+    waste_qty: float
+    destination: str | None
+    recorded_at: datetime
+
+
+class HarvestRecordCreate(BaseModel):
+    field_id: str
+    product_name: str
+    quantity: float
+    unit: str = "kg"
+    waste_qty: float = 0
+    destination: str | None = None
+    recorded_at: datetime | None = None
+
+
+class MilkRecordOut(BaseModel):
+    id: str
+    animal_id: str
+    session: str
+    liters: float
+    quality_status: str
+    destination: str
+    recorded_at: datetime
+    recorded_by: str | None
+    under_withdrawal_warning: bool = False
+
+
+class MilkRecordCreate(BaseModel):
+    animal_id: str
+    session: str
+    liters: float
+    destination: str = "stored"
+    quality_status: str = "normal"
+    recorded_at: datetime | None = None
+    recorded_by: str | None = None
+
+
+# --- Agriculture ---------------------------------------------------------
+
+
+class CropOut(BaseModel):
+    id: str
+    name: str
+    category: str | None
+    default_cycle_days: int | None
+    active: bool
+
+
+class CropCreate(BaseModel):
+    name: str
+    category: str | None = None
+    default_cycle_days: int | None = None
+
+
+class CropPlantingOut(BaseModel):
+    id: str
+    field_id: str
+    crop_id: str
+    variety: str | None
+    planted_area: float | None
+    area_unit: str | None
+    planted_date: datetime | None
+    expected_harvest_date: datetime | None
+    expected_yield_kg: float | None
+    stage: str
+    status: str
+    notes: str | None
+    created_at: datetime
+
+
+class CropPlantingCreate(BaseModel):
+    field_id: str
+    crop_id: str
+    variety: str | None = None
+    planted_area: float | None = None
+    area_unit: str | None = "m2"
+    planted_date: datetime | None = None
+    expected_harvest_date: datetime | None = None
+    expected_yield_kg: float | None = None
+    stage: str = "planted"
+    notes: str | None = None
+
+
+class CropPlantingUpdate(BaseModel):
+    variety: str | None = None
+    planted_area: float | None = None
+    expected_harvest_date: datetime | None = None
+    expected_yield_kg: float | None = None
+    stage: str | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class DailyHarvestOut(BaseModel):
+    id: str
+    field_id: str
+    product_name: str
+    total_quantity: float
+    sellable_quantity: float
+    waste_quantity: float
+    unit: str
+    recorded_at: datetime
+    inventory_item_id: str | None
+    inventory_qty_after: float | None
+
+
+class DailyHarvestCreate(BaseModel):
+    field_id: str
+    planting_id: str | None = None
+    crop_id: str | None = None
+    product_name: str | None = None
+    total_quantity: float
+    sellable_quantity: float | None = None
+    waste_quantity: float = 0
+    unit: str = "kg"
+    destination: str | None = None
+    recorded_at: datetime | None = None
+    notes: str | None = None

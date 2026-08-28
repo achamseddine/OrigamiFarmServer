@@ -128,6 +128,19 @@ def require_owner_or_manager(access: AccessContext = Depends(get_access_context)
     return access
 
 
+def require_diagnostic_role(access: AccessContext = Depends(get_access_context)) -> AccessContext:
+    """Constitution: "Veterinarians diagnose and prescribe." Recording a
+    treatment (a diagnosis, a medication, a withdrawal period) is gated to
+    the farm owner/manager or a veterinarian — a worker or accountant
+    account is rejected before the request body is even looked at.
+    """
+    if not access.full_access and access.role != "veterinarian":
+        raise HTTPException(
+            status_code=403, detail="Only a veterinarian or a farm manager can record a treatment."
+        )
+    return access
+
+
 def check_farm_id(farm_id: str, access: AccessContext) -> None:
     """Several list/create endpoints take farm_id as a required query or
     body field, per the contract. It is never trusted as authorization —

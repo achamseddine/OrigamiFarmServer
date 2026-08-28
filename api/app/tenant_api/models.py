@@ -68,26 +68,45 @@ class Animal(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase)
 
 
 class Field(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
+    """Field names match the FarmOS tablet contract's FieldOut/FieldCreate
+    exactly (docs/FARMOS_API.md) — shared by the "production" doc group's
+    read-only listing and the "agriculture" group's create/update.
+    """
+
     __tablename__ = "field"
 
     name: Mapped[str] = mapped_column()
-    crop: Mapped[str | None] = mapped_column(nullable=True)
-    area_hectares: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
-    attributes: Mapped[dict] = mapped_column(JSONB, default=dict)
+    crop_type: Mapped[str | None] = mapped_column(nullable=True)
+    area_value: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    area_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    stage: Mapped[str | None] = mapped_column(nullable=True)
+    expected_harvest_date: Mapped[datetime | None] = mapped_column(nullable=True)
+    est_yield_kg: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    field_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    location_label: Mapped[str | None] = mapped_column(nullable=True)
+    soil_type: Mapped[str | None] = mapped_column(nullable=True)
+    irrigation_method: Mapped[str | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    notes: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class InventoryItem(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
     """Current on-hand quantity. Mutated only via InventoryMovement so
     stock changes are append-based, matching SYNC_PROTOCOL.md's rule that
     inventory quantities are derived from movements, not overwritten.
+    Field names match the contract's InventoryItemOut exactly.
     """
 
     __tablename__ = "inventory_item"
 
-    sku: Mapped[str] = mapped_column(String(64))
     name: Mapped[str] = mapped_column()
+    category: Mapped[str | None] = mapped_column(nullable=True)
     unit: Mapped[str] = mapped_column(String(16), default="unit")
-    quantity_on_hand: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
+    current_qty: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
+    reorder_level: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
+    supplier_label: Mapped[str | None] = mapped_column(nullable=True)
+    unit_cost: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    last_purchase: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class InventoryMovement(UUIDPrimaryKeyMixin, SyncedEntityMixin, TenantBase):
@@ -96,6 +115,8 @@ class InventoryMovement(UUIDPrimaryKeyMixin, SyncedEntityMixin, TenantBase):
     inventory_item_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), index=True)
     quantity_delta: Mapped[float] = mapped_column(Numeric(14, 3))
     reason: Mapped[str] = mapped_column(default="")
+    linked_entity_type: Mapped[str | None] = mapped_column(nullable=True)
+    linked_entity_id: Mapped[str | None] = mapped_column(nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
