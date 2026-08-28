@@ -977,4 +977,276 @@ class DailyHarvestCreate(BaseModel):
     unit: str = "kg"
     destination: str | None = None
     recorded_at: datetime | None = None
+
+
+# --- Farm Visits -----------------------------------------------------------
+
+
+class VisitModuleStatusOut(BaseModel):
+    module_code: str
+    status: str
+    active: bool
+    features: dict[str, bool]
+
+
+class VisitActivityOut(BaseModel):
+    id: str
+    farm_id: str
+    name: str
+    activity_type: str
+    price: float
+    capacity_per_slot: int
+    duration_minutes: int | None
+    requires_staff_role: str | None
+    requires_animal_id: str | None
+    welfare_limit_json: dict | None
+    active: bool
+
+
+class VisitActivityCreate(BaseModel):
+    name: str
+    activity_type: str = "other"
+    price: float = 0
+    capacity_per_slot: int = 1
+    duration_minutes: int | None = None
+    requires_staff_role: str | None = None
+    requires_animal_id: str | None = None
+    welfare_limit_json: dict | None = None
+    active: bool = True
+
+
+class VisitPackageOut(BaseModel):
+    id: str
+    farm_id: str
+    name: str
+    description: str | None
+    base_price: float
+    currency: str
+    duration_minutes: int | None
+    included_items_json: dict
+    active: bool
+
+
+class VisitPackageCreate(BaseModel):
+    name: str
+    description: str | None = None
+    base_price: float = 0
+    currency: str = "USD"
+    duration_minutes: int | None = None
+    included_items_json: dict = {}
+    active: bool = True
+
+
+class VisitorProfileOut(BaseModel):
+    id: str
+    farm_id: str
+    full_name: str
+    phone: str | None
+    email: str | None
+    preferred_language: str
+    notes: str | None
+    consent_marketing: bool
+
+
+class VisitorProfileCreate(BaseModel):
+    full_name: str
+    phone: str | None = None
+    email: str | None = None
+    preferred_language: str = "en"
+    notes: str | None = None
+    consent_marketing: bool = False
+
+
+class VisitSessionOut(BaseModel):
+    id: str
+    farm_id: str
+    date: str
+    start_time: str
+    end_time: str
+    capacity: int
+    status: str
+    weather_note: str | None
+    expected_staff_cost: float | None
+
+
+class VisitSessionCreate(BaseModel):
+    date: str
+    start_time: str
+    end_time: str
+    capacity: int
+    weather_note: str | None = None
+    expected_staff_cost: float | None = None
+
+
+class VisitSessionUpdate(BaseModel):
+    capacity: int | None = None
+    status: str | None = None
+    weather_note: str | None = None
+    expected_staff_cost: float | None = None
+
+
+class BookingActivityOut(BaseModel):
+    id: str
+    activity_id: str
+    quantity: int
+    unit_price: float
+    total_price: float
+
+
+class BookingActivitySelection(BaseModel):
+    activity_id: str
+    quantity: int = 1
+
+
+class VisitBookingOut(BaseModel):
+    id: str
+    farm_id: str
+    visitor_id: str
+    session_id: str
+    package_id: str
+    status: str
+    adults: int
+    children: int
+    total_amount: float
+    deposit_amount: float
+    balance_due: float
+    source: str
+    payment_method: str | None
+    notes: str | None
+    confirmed_at: datetime | None
+    checked_in_at: datetime | None
+    completed_at: datetime | None
+    cancelled_at: datetime | None
+    activities: list[BookingActivityOut] = []
+
+
+class VisitBookingCreate(BaseModel):
+    visitor_id: str | None = None
+    visitor: VisitorProfileCreate | None = None
+    session_id: str
+    package_id: str
+    adults: int = 1
+    children: int = 0
+    activities: list[BookingActivitySelection] = []
+    deposit_amount: float = 0
+    source: str = "manual"
+    payment_method: str | None = None
+    notes: str | None = None
+    idempotency_key: str | None = None
+
+
+class OpeningCalendarDayOut(BaseModel):
+    id: str
+    weekday: int
+    is_open: bool
+    open_time: str | None
+    close_time: str | None
+    default_capacity: int
+    notes: str | None
+
+
+class OpeningCalendarDayUpsert(BaseModel):
+    weekday: int
+    is_open: bool = False
+    open_time: str | None = None
+    close_time: str | None = None
+    default_capacity: int = 0
+    notes: str | None = None
+
+
+class VisitCostOut(BaseModel):
+    id: str
+    session_id: str
+    category: str
+    description: str | None
+    amount: float
+    allocation_method: str
+
+
+class VisitCostCreate(BaseModel):
+    session_id: str
+    category: str
+    description: str | None = None
+    amount: float
+    allocation_method: str = "per_session"
+
+
+class VisitIncidentOut(BaseModel):
+    id: str
+    session_id: str
+    booking_id: str | None
+    incident_type: str
+    severity: str
+    description: str
+    action_taken: str | None
+    created_at: datetime
+
+
+class VisitIncidentCreate(BaseModel):
+    session_id: str
+    booking_id: str | None = None
+    incident_type: str
+    severity: str = "low"
+    description: str
+    action_taken: str | None = None
+
+
+class VisitStaffRosterOut(BaseModel):
+    id: str
+    session_id: str
+    worker_id: str
+    role: str
+    start_time: str
+    end_time: str
+    hourly_rate: float
+    total_cost: float | None
+
+
+class VisitStaffRosterCreate(BaseModel):
+    session_id: str
+    worker_id: str
+    role: str
+    start_time: str
+    end_time: str
+    hourly_rate: float = 0
+
+
+class VisitorFeedbackOut(BaseModel):
+    id: str
+    booking_id: str
+    rating: int
+    comments: str | None
+    would_return: bool | None
+    submitted_at: datetime
+
+
+class VisitorFeedbackCreate(BaseModel):
+    booking_id: str
+    rating: int
+    comments: str | None = None
+    would_return: bool | None = None
+
+
+class RetailSaleLine(BaseModel):
+    item_type: str  # "finished_goods" | "inventory_item"
+    item_id: str
+    quantity: float
+    unit_price: float
+
+
+class VisitRetailSaleOut(BaseModel):
+    id: str
+    booking_id: str | None
+    visitor_id: str | None
+    sale_id: str
+    channel: str
+    total_amount: float
+
+
+class VisitRetailSaleCreate(BaseModel):
+    booking_id: str | None = None
+    visitor_id: str | None = None
+    channel: str = "farm_shop"
+    payment_status: str = "paid"
+    lines: list[RetailSaleLine]
     notes: str | None = None

@@ -135,6 +135,18 @@ def require_owner_or_manager(access: AccessContext = Depends(get_access_context)
     return access
 
 
+def require_visitor_access(access: AccessContext = Depends(get_access_context)) -> AccessContext:
+    """RULE-VIS-010: visitor PII is permission-controlled — only
+    visit-operations roles (owner/manager/visitor_coordinator) can read or
+    create visitor CRM records. Nobody else gets a route to it.
+    """
+    if not access.full_access and access.role != "visitor_coordinator":
+        raise HTTPException(
+            status_code=403, detail="Only a visitor coordinator or a farm manager can do that."
+        )
+    return access
+
+
 def require_diagnostic_role(access: AccessContext = Depends(get_access_context)) -> AccessContext:
     """Constitution: "Veterinarians diagnose and prescribe." Recording a
     treatment (a diagnosis, a medication, a withdrawal period) is gated to
