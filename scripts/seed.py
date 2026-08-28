@@ -270,24 +270,24 @@ def main() -> None:
     # an artifact of the sample data being trivially distinguishable.
     print("Seeding farm-data-plane sample records...")
     with TenantDataRouter.session_for(tenant_a_id) as db:
-        if not db.execute(select(Animal).where(Animal.tag_code == "COW-001")).scalars().all():
+        if not db.execute(select(Animal).where(Animal.tag == "COW-001")).scalars().all():
             db.add(
                 Animal(
                     tenant_id=tenant_a_id,
                     farm_id=farm_a_id,
-                    tag_code="COW-001",
+                    tag="COW-001",
                     species="cow",
                     name="Bessie",
                 )
             )
 
     with TenantDataRouter.session_for(tenant_b_id) as db:
-        if not db.execute(select(Animal).where(Animal.tag_code == "COW-001")).scalars().all():
+        if not db.execute(select(Animal).where(Animal.tag == "COW-001")).scalars().all():
             db.add(
                 Animal(
                     tenant_id=tenant_b_id,
                     farm_id=farm_b_id,
-                    tag_code="COW-001",
+                    tag="COW-001",
                     species="cow",
                     name="Bessie",
                 )

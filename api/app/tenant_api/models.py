@@ -30,13 +30,41 @@ from app.common.types import str_enum
 
 
 class Animal(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
+    """Field names match the FarmOS tablet contract's AnimalOut/AnimalCreate
+    exactly (docs/FARMOS_API.md) — this is the animal's "digital twin"
+    both the tablet app and the generic sync protocol (app/sync/) operate
+    on against the same rows.
+    """
+
     __tablename__ = "animal"
 
-    tag_code: Mapped[str] = mapped_column(String(64))
+    tag: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column()
     species: Mapped[str] = mapped_column(String(64))
-    name: Mapped[str | None] = mapped_column(nullable=True)
+    breed: Mapped[str | None] = mapped_column(nullable=True)
+    sex: Mapped[str | None] = mapped_column(String(1), nullable=True)
     birth_date: Mapped[datetime | None] = mapped_column(nullable=True)
-    attributes: Mapped[dict] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="healthy")
+    location_label: Mapped[str | None] = mapped_column(nullable=True)
+    health_score: Mapped[int] = mapped_column(default=100)
+    pregnant: Mapped[bool] = mapped_column(default=False)
+    pregnancy_days: Mapped[int | None] = mapped_column(nullable=True)
+    lactating: Mapped[bool] = mapped_column(default=False)
+    lactation_cycle: Mapped[int | None] = mapped_column(nullable=True)
+    withdrawal_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    withdrawal_reason: Mapped[str | None] = mapped_column(nullable=True)
+    weight_kg: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    group_name: Mapped[str | None] = mapped_column(nullable=True)
+    photo_path: Mapped[str | None] = mapped_column(nullable=True)
+    acquisition_date: Mapped[datetime | None] = mapped_column(nullable=True)
+    acquisition_source: Mapped[str | None] = mapped_column(nullable=True)
+    sire_tag: Mapped[str | None] = mapped_column(nullable=True)
+    dam_tag: Mapped[str | None] = mapped_column(nullable=True)
+    color_markings: Mapped[str | None] = mapped_column(nullable=True)
+    purchase_cost: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    current_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    notes: Mapped[str | None] = mapped_column(nullable=True)
+    active: Mapped[bool] = mapped_column(default=True)
 
 
 class Field(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
@@ -75,9 +103,13 @@ class Task(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
     __tablename__ = "task"
 
     title: Mapped[str] = mapped_column()
-    status: Mapped[str] = mapped_column(String(32), default="OPEN")
+    description: Mapped[str | None] = mapped_column(nullable=True)
     assigned_to: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    priority: Mapped[str] = mapped_column(String(16), default="medium")
+    status: Mapped[str] = mapped_column(String(32), default="open")
+    source_type: Mapped[str | None] = mapped_column(nullable=True)
+    source_id: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class SyncEvent(UUIDPrimaryKeyMixin, TenantBase):

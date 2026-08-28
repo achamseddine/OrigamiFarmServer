@@ -35,10 +35,10 @@ _MAX_PULL_BATCH = 500
 
 def _serialize_animal(animal: Animal) -> dict:
     return {
-        "tag_code": animal.tag_code,
+        "tag": animal.tag,
         "species": animal.species,
         "name": animal.name,
-        "attributes": animal.attributes,
+        "status": animal.status,
         "farm_id": str(animal.farm_id) if animal.farm_id else None,
     }
 

@@ -81,9 +81,14 @@ def readyz() -> dict:
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.backups.routes import router as backups_router  # noqa: E402
 from app.devices.routes import router as devices_router  # noqa: E402
+from app.farmos.routes_animals import router as farmos_animals_router  # noqa: E402
 from app.farmos.routes_auth import router as farmos_auth_router  # noqa: E402
 from app.farmos.routes_employees import router as farmos_employees_router  # noqa: E402
 from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
+from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
+from app.farmos.routes_priorities import router as farmos_priorities_router  # noqa: E402
+from app.farmos.routes_reports import router as farmos_reports_router  # noqa: E402
+from app.farmos.routes_tasks import router as farmos_tasks_router  # noqa: E402
 from app.files.routes import router as files_router  # noqa: E402
 from app.platform.routes import router as platform_router  # noqa: E402
 from app.support.routes import router as support_router  # noqa: E402
@@ -95,6 +100,11 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(farmos_auth_router, prefix="/api/v1", tags=["FarmOS: Auth"])
 app.include_router(farmos_employees_router, prefix="/api/v1", tags=["FarmOS: Employees"])
 app.include_router(farmos_farms_router, prefix="/api/v1", tags=["FarmOS: Farm"])
+app.include_router(farmos_animals_router, prefix="/api/v1", tags=["FarmOS: Animals"])
+app.include_router(farmos_tasks_router, prefix="/api/v1", tags=["FarmOS: Tasks"])
+app.include_router(farmos_notifications_router, prefix="/api/v1", tags=["FarmOS: Notifications"])
+app.include_router(farmos_priorities_router, prefix="/api/v1", tags=["FarmOS: Priorities"])
+app.include_router(farmos_reports_router, prefix="/api/v1", tags=["FarmOS: Reports"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])

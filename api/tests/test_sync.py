@@ -34,7 +34,7 @@ def test_duplicate_sync_push_is_idempotent(client, control_db):
                 "entity_type": "animal",
                 "entity_id": entity_id,
                 "operation": "CREATE",
-                "payload": {"tag_code": "SYNC-1", "species": "cow"},
+                "payload": {"tag": "SYNC-1", "name": "Bessie", "species": "cow"},
             }
         ]
     }
@@ -68,7 +68,7 @@ def test_sync_conflict_is_structured(client, control_db):
                     "entity_type": "animal",
                     "entity_id": entity_id,
                     "operation": "CREATE",
-                    "payload": {"tag_code": "SYNC-2", "species": "goat"},
+                    "payload": {"tag": "SYNC-2", "name": "Clover", "species": "goat"},
                 }
             ]
         },

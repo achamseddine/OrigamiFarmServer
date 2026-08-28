@@ -11,7 +11,7 @@ TENANCY.md and docs/FARMOS_API.md.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 
 import jwt
@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.auth.models import UserIdentity
 from app.common.db import get_control_db
 from app.common.enums import MembershipStatus, TenantStatus
+from app.common.tenant_router import TenantDataRouter
 from app.config import get_settings
 from app.farmos.permissions import permissions_grid
 from app.farmos.security import decode_access_token
@@ -127,7 +128,33 @@ def require_owner_or_manager(access: AccessContext = Depends(get_access_context)
     return access
 
 
+def check_farm_id(farm_id: str, access: AccessContext) -> None:
+    """Several list/create endpoints take farm_id as a required query or
+    body field, per the contract. It is never trusted as authorization —
+    farm_id is just access.tenant_id spelled the app's way (see
+    docs/FARMOS_API.md), so any value that doesn't match the caller's own
+    farm is rejected the same way a guessed cross-tenant object ID is:
+    404, not 403, so a client can't use this to enumerate other farms.
+    """
+    try:
+        if uuid.UUID(farm_id) != access.tenant_id:
+            raise HTTPException(status_code=404, detail="Farm not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Farm not found.") from exc
+
+
 def optional_idempotency_key(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> str | None:
     return idempotency_key
+
+
+def get_farmos_tenant_db(
+    access: AccessContext = Depends(get_access_context),
+) -> Generator[Session, None, None]:
+    """The farm-data-plane (RLS-protected) session for this request's own
+    tenant — the same TenantDataRouter the rest of the codebase uses, just
+    keyed off the FarmOS AccessContext instead of the OIDC tenant context.
+    """
+    with TenantDataRouter.session_for(access.tenant_id) as session:
+        yield session

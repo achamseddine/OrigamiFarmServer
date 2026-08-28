@@ -1,56 +1,94 @@
+"""Mandatory permission-enforcement tests, exercised against the FarmOS
+tablet contract's own permission grid (app/farmos/permissions.py) and
+/api/v1/animals — the old TenantRole/permission-string scheme these
+originally targeted was superseded by it in Stage 2.
+"""
+
 from __future__ import annotations
 
 import uuid
 
-from app.common.enums import TenantRole
-from tests.conftest import auth_headers, dev_login, unique_code
-from tests.helpers import add_membership, create_tenant, grant_module
+from tests.conftest import farmos_headers, farmos_login, unique_code
+from tests.helpers import FARMOS_DEMO_PASSWORD, add_farmos_user, create_tenant
 
 
 def test_user_without_create_permission_cannot_create(client, control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-PERM"))
-    grant_module(control_db, tenant, "ANIMALS")
-    # Entitled tenant, but this employee was only ever granted read access.
-    add_membership(
+    # Entitled tenant, but this employee was only ever granted view access.
+    add_farmos_user(
         control_db,
         tenant,
-        "readonly@test.com",
-        role=TenantRole.EMPLOYEE,
-        permissions=["ANIMALS:read"],
+        "readonly@origami-demo.com",
+        role="worker",
+        grid={"animals": ["view"]},
     )
     control_db.commit()
 
-    token = dev_login(client, "readonly@test.com")
+    token = farmos_login(client, "readonly@origami-demo.com", FARMOS_DEMO_PASSWORD)
     resp = client.post(
-        "/api/v1/animals", json={"tag_code": "P-1", "species": "cow"}, headers=auth_headers(token)
+        "/api/v1/animals",
+        json={"tag": "P-1", "name": "Bessie", "species": "cow"},
+        headers=farmos_headers(token),
     )
     assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "PERMISSION_DENIED"
+    assert resp.json()["detail"]
 
     # Read still works — this proves the block is permission-specific, not
     # a blanket module lockout.
-    listing = client.get("/api/v1/animals", headers=auth_headers(token))
+    listing = client.get(
+        "/api/v1/animals", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
     assert listing.status_code == 200
 
 
-def test_employee_without_farm_access_cannot_reach_other_farm_scoped_data(client, control_db):
+def test_employee_with_no_module_permission_cannot_reach_farm_scoped_data(client, control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-SCOPE"))
-    grant_module(control_db, tenant, "ANIMALS")
-    add_membership(
+    # This employee has no "animals" permission rows at all — the module is
+    # simply absent from their grid, not present-and-false.
+    add_farmos_user(
         control_db,
         tenant,
-        "scoped@test.com",
-        role=TenantRole.EMPLOYEE,
-        permissions=["ANIMALS:create"],
-        farm_ids=[],  # explicit employee with zero farm grants
+        "scoped@origami-demo.com",
+        role="worker",
+        grid={"tasks": ["view"]},
     )
     control_db.commit()
 
-    token = dev_login(client, "scoped@test.com")
+    token = farmos_login(client, "scoped@origami-demo.com", FARMOS_DEMO_PASSWORD)
     resp = client.post(
         "/api/v1/animals",
-        json={"tag_code": "S-1", "species": "cow", "farm_id": str(uuid.uuid4())},
-        headers=auth_headers(token),
+        json={"tag": "S-1", "name": "Bessie", "species": "cow"},
+        headers=farmos_headers(token),
     )
     assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "FARM_SCOPE_DENIED"
+    assert resp.json()["detail"]
+
+    listing = client.get(
+        "/api/v1/animals", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert listing.status_code == 403
+
+
+def test_farm_id_from_another_tenant_is_rejected_not_enumerable(client, control_db):
+    """farm_id is never trusted as authorization — see check_farm_id in
+    app/farmos/deps.py. A client-supplied farm_id belonging to a real,
+    different tenant must fail exactly like a made-up one: 404, not 403,
+    so it can't be used to probe which farm ids exist.
+    """
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-OWN"))
+    other_tenant = create_tenant(control_db, company_code=unique_code("FARM-OTHER"))
+    add_farmos_user(control_db, tenant, "owner@origami-demo.com", role="owner")
+    control_db.commit()
+
+    token = farmos_login(client, "owner@origami-demo.com", FARMOS_DEMO_PASSWORD)
+
+    other_farm = client.get(
+        "/api/v1/animals", params={"farm_id": str(other_tenant.id)}, headers=farmos_headers(token)
+    )
+    assert other_farm.status_code == 404
+
+    made_up_farm = client.get(
+        "/api/v1/animals", params={"farm_id": str(uuid.uuid4())}, headers=farmos_headers(token)
+    )
+    assert made_up_farm.status_code == 404
+    assert made_up_farm.json()["detail"] == other_farm.json()["detail"]

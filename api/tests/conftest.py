@@ -138,7 +138,15 @@ _CONTROL_TABLES = [
     "tenant",
     "user_identity",
 ]
-_TENANT_TABLES = ["sync_event", "inventory_movement", "inventory_item", "task", "field", "animal"]
+_TENANT_TABLES = [
+    "sync_event",
+    "inventory_movement",
+    "inventory_item",
+    "notification",
+    "task",
+    "field",
+    "animal",
+]
 
 
 @pytest.fixture()
