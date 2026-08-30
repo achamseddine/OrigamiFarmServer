@@ -25,23 +25,37 @@ here.
   LOCATION=<location from above>
   APP_NAME=leb-container-test
   ```
-- Docker is **not required locally** — `az acr build` (step 1) builds the image inside Azure
-  itself. Use plain `docker build`/`docker push` instead only if you'd rather build locally.
+- Docker Desktop, if building locally (the commands below default to this — it's what most
+  people already have a habit for). If you'd rather not run Docker locally at all, `az acr build`
+  builds the same image inside Azure itself — see the alternative at the end of step 1.
 
 ## 1. Build and push the image (Azure Container Registry)
 
-Create a registry (skip if you already have one) and build straight from this repo — `az acr
-build` uploads the build context and builds it server-side, so nothing needs to run locally:
+Create a registry, if you don't already have one you want to reuse for this project:
 
 ```bash
 ACR_NAME=origamiacr$RANDOM   # must be globally unique; note whatever this prints
 az acr create --resource-group "$RG" --name "$ACR_NAME" --sku Basic
-
-az acr build --registry "$ACR_NAME" --image origami-api:latest ./api
 ```
 
-(Local-build alternative: `cd api && docker build -t $ACR_NAME.azurecr.io/origami-api:latest . &&
-az acr login --name $ACR_NAME && docker push $ACR_NAME.azurecr.io/origami-api:latest`.)
+Build and push with Docker Desktop. **The build context is `./api`, not `.`** — `api/Dockerfile`'s
+`COPY requirements.txt .` expects `requirements.txt` at the context root, and that file lives at
+`api/requirements.txt`, not the repo root:
+
+```bash
+az acr login --name "$ACR_NAME"
+
+docker build -f ./api/Dockerfile -t "$ACR_NAME.azurecr.io/origami-api:latest" ./api
+docker push "$ACR_NAME.azurecr.io/origami-api:latest"
+```
+
+If Docker Desktop is on Apple Silicon (M-series Mac), it builds `arm64` by default — Azure App
+Service Linux containers run on `amd64`, and a plain `arm64` push there fails at container start
+(exec-format error), not at build/push time, so it's a confusing one to hit blind. Add
+`--platform linux/amd64` to the `docker build` above if that's your machine.
+
+(Cloud-build alternative, no local Docker needed: `az acr build --registry "$ACR_NAME" --image
+origami-api:latest ./api` — uploads `./api` and builds it server-side.)
 
 ## 2. Two PostgreSQL databases
 
