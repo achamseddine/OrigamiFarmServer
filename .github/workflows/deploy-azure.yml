@@ -1,0 +1,72 @@
+name: Deploy api to Azure Web App for Containers
+
+# Manual only — this never runs on push. Builds api/ into an image, pushes
+# it to Azure Container Registry, and points the target Web App at the new
+# tag. See docs/AZURE_DEPLOYMENT.md for the one-time setup this assumes
+# already exists (the registry, the Postgres databases, the Web App's
+# application settings) and for how to run all of this by hand instead.
+#
+# Required repository secrets:
+#   AZURE_CREDENTIALS   - JSON from:
+#     az ad sp create-for-rbac --name origami-deploy --role contributor \
+#       --scopes /subscriptions/<sub-id>/resourceGroups/<resource-group> \
+#       --sdk-auth
+#   ACR_NAME             - Azure Container Registry name (no ".azurecr.io")
+#   AZURE_WEBAPP_NAME    - e.g. leb-container-test
+#   AZURE_RESOURCE_GROUP - the resource group both of the above live in
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to build and deploy"
+        required: false
+        default: latest
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and push image to ACR
+        run: |
+          az acr build \
+            --registry "${{ secrets.ACR_NAME }}" \
+            --image "origami-api:${{ inputs.image_tag }}" \
+            ./api
+
+      - name: Point the Web App at the new image
+        run: |
+          az webapp config container set \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
+            --container-image-name "${{ secrets.ACR_NAME }}.azurecr.io/origami-api:${{ inputs.image_tag }}" \
+            --container-registry-url "https://${{ secrets.ACR_NAME }}.azurecr.io"
+
+      - name: Restart the Web App
+        run: |
+          az webapp restart \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ secrets.AZURE_WEBAPP_NAME }}"
+
+      - name: Smoke test /health
+        run: |
+          url="https://$(az webapp show --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" --name "${{ secrets.AZURE_WEBAPP_NAME }}" --query defaultHostName -o tsv)/health"
+          for i in $(seq 1 12); do
+            if curl -fsS "$url"; then
+              echo "Healthy: $url"
+              exit 0
+            fi
+            echo "Not ready yet (attempt $i/12), waiting 10s..."
+            sleep 10
+          done
+          echo "::error::$url never became healthy after deploy"
+          exit 1

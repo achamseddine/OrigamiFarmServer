@@ -1,16 +1,69 @@
-FROM python:3.12-slim
+# Multi-stage build: the `builder` stage has the compiler toolchain
+# psycopg[binary]/cryptography need to install; the final image only ships
+# the installed packages and app code, not gcc/libpq-dev — smaller image,
+# smaller attack surface. Suitable for a single-container PaaS deployment
+# (e.g. Azure Web App for Containers) as well as docker-compose — see
+# ../docs/AZURE_DEPLOYMENT.md.
+#
+# Dependencies install to /opt/venv, not the app user's home directory:
+# Azure Web App for Containers (Linux) auto-mounts persistent storage at
+# /home inside the container, which would silently shadow anything baked
+# into the image there. /opt is never touched by that mount.
 
-WORKDIR /app
+FROM python:3.12-slim AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq-dev gcc \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+
+FROM python:3.12-slim AS final
+
+# libpq5 is psycopg[binary]'s runtime dependency (not libpq-dev/gcc — those
+# were only needed to build it, in the stage above). curl backs the
+# HEALTHCHECK below.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 1000 --shell /usr/sbin/nologin --no-create-home origami
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+COPY --chown=origami:origami . .
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+# /app (code + wherever license keys land by default) is owned by origami;
+# root still owns /opt/venv, which is fine — origami only needs to read it.
+RUN chown origami:origami /app
+
+USER origami
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# `/health` is deliberately unauthenticated and does no real work (see
+# app/main.py) — safe and cheap for both this and a platform's own health
+# probe (e.g. Azure's WEBSITES_PORT-based ping).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS "http://localhost:${PORT:-8000}/health" || exit 1
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+# ${PORT:-8000}: falls back to 8000 (this repo's convention everywhere
+# else — README, .env.example, admin-web) but honors PORT when the
+# platform injects one (e.g. Cloud Run, Heroku-style PaaS). Azure Web App
+# for Containers doesn't inject PORT; point its WEBSITES_PORT setting at
+# 8000 instead — see ../docs/AZURE_DEPLOYMENT.md.
+# ${UVICORN_WORKERS:-2}: a starting point for a small test deployment, not
+# a tuned number — see that same doc for how to size it for real load.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-2}"]

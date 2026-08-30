@@ -61,8 +61,10 @@ docstring and ARCHITECTURE.md). Before any commercial commitment on RPO/RTO:
 (both blocking — the codebase is clean under both as of this commit), Alembic upgrade-head against
 fresh Postgres services (control + tenant), the pytest suite (including the mandatory isolation/
 entitlement/device/sync tests) against those same databases, and the admin-web `tsc --noEmit` +
-`next build`. It does not yet include a staging/production deploy step or a container registry
-push — add those once a target hosting environment is chosen.
+`next build`. A target hosting environment now exists (Azure Web App for Containers) — see
+[AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for the manual `az` CLI deploy steps, and
+`.github/workflows/deploy-azure.yml` (manual `workflow_dispatch` only, not yet wired to run
+automatically on push) for the same as a repeatable build-push-deploy workflow.
 
 ## Reverse proxy / TLS
 

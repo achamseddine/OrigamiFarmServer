@@ -8,7 +8,8 @@ against real PostgreSQL, not mocked.
 See also: [ARCHITECTURE.md](ARCHITECTURE.md) · [TENANCY.md](TENANCY.md) ·
 [SECURITY.md](SECURITY.md) · [SYNC_PROTOCOL.md](SYNC_PROTOCOL.md) ·
 [LICENSE_ENTITLEMENTS.md](LICENSE_ENTITLEMENTS.md) · [API_ERROR_CODES.md](API_ERROR_CODES.md) ·
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/FARMOS_API.md](docs/FARMOS_API.md)
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/AZURE_DEPLOYMENT.md](docs/AZURE_DEPLOYMENT.md) ·
+[docs/FARMOS_API.md](docs/FARMOS_API.md)
 
 ## What's in v0.1
 
