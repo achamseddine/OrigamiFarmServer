@@ -86,6 +86,20 @@ container databases live — it can wipe another project's local Postgres
 data. Or raise the ceiling instead of clearing it: Docker Desktop →
 Settings → Resources → Virtual disk limit.
 
+**`RuntimeError: can't start new thread`**, or a step failing because a
+subprocess/shell couldn't start (e.g. `E: Sub-process returned an error
+code` from a hook that ends in `|| true`, which can't fail any other way).
+These mean the Docker VM can't create threads or processes — resource
+starvation, not a bug in the step that reported it. The Dockerfile avoids
+the known trigger (`pip --progress-bar off`), but the VM still needs fixing
+or it will resurface at runtime, where uvicorn forks its workers:
+
+- Docker Desktop → Settings → Resources: raise **Memory** (4 GB+) and CPUs.
+- Restart Docker Desktop — the VM accumulates pressure over a long session.
+- Confirm with `docker run --rm python:3.12-slim-bookworm python -c "import
+  threading; t=threading.Thread(target=lambda:None); t.start(); t.join();
+  print('threads OK')"`.
+
 **`the --chmod option requires BuildKit`** or other unknown-flag errors.
 The Dockerfile is written to build on the classic builder as well as
 BuildKit, so this shouldn't happen on a current checkout — but it's the
