@@ -10,7 +10,15 @@
 # /home inside the container, which would silently shadow anything baked
 # into the image there. /opt is never touched by that mount.
 
-FROM python:3.12-slim AS builder
+# Debian release pinned deliberately. `python:3.12-slim` floats to whatever
+# Debian is current, and when it rolled to trixie (13) it started failing
+# on older Docker Engines with:
+#   E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ...'
+# — the daemon's seccomp profile blocks syscalls trixie's newer glibc uses,
+# so apt's post-invoke subprocess gets killed. Pinning bookworm keeps the
+# build reproducible and working on the Docker versions people actually
+# have installed; bump it deliberately, not by surprise.
+FROM python:3.12-slim-bookworm AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq-dev gcc \
@@ -24,7 +32,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 
-FROM python:3.12-slim AS final
+FROM python:3.12-slim-bookworm AS final
 
 # libpq5 is psycopg[binary]'s runtime dependency (not libpq-dev/gcc — those
 # were only needed to build it, in the stage above). curl backs the
@@ -41,7 +49,12 @@ ENV PATH=/opt/venv/bin:$PATH \
 
 WORKDIR /app
 COPY --chown=origami:origami . .
-COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Plain COPY + chmod rather than `COPY --chmod=`: the latter needs
+# BuildKit, and this has to build on the classic builder too (which is
+# still what `docker build` uses on some setups — you'll see "Sending
+# build context to Docker daemon" rather than "[+] Building").
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 
 # /app (code + wherever license keys land by default) is owned by origami;
 # root still owns /opt/venv, which is fine — origami only needs to read it.

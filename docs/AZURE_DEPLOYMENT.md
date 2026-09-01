@@ -57,6 +57,27 @@ Service Linux containers run on `amd64`, and a plain `arm64` push there fails at
 (Cloud-build alternative, no local Docker needed: `az acr build --registry "$ACR_NAME" --image
 origami-api:latest ./api` — uploads `./api` and builds it server-side.)
 
+### If the build fails
+
+**`E: Problem executing scripts APT::Update::Post-Invoke 'rm -f /var/cache/apt/archives/*.deb ...'`**
+during the `apt-get` step. The base images are pinned to
+`python:3.12-slim-bookworm` precisely to avoid this: an unpinned
+`python:3.12-slim` floats to whatever Debian is current, and on trixie
+(Debian 13) an older Docker Engine's seccomp profile kills apt's post-invoke
+subprocess. If you hit it anyway, check you're on a commit that has the pin
+(`grep FROM api/Dockerfile`) and, failing that, update Docker Desktop.
+
+**`the --chmod option requires BuildKit`** or other unknown-flag errors. The
+Dockerfile is written to build on the classic builder as well as BuildKit, so
+this shouldn't happen on a current checkout — but it's the same tell: if
+`docker build` prints "Sending build context to Docker daemon" rather than
+`[+] Building`, you're on the classic builder, and an older Dockerfile
+revision would fail here.
+
+**Step count sanity check.** The current Dockerfile is a multi-stage build —
+if `docker build` reports `Step 1/8` and step 2 is `WORKDIR /app`, you're
+building an older single-stage revision. `git pull` first.
+
 ## 2. Two PostgreSQL databases
 
 The app is architected around two logically separate databases — control plane (tenants,
