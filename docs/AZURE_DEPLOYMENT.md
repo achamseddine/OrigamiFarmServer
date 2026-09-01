@@ -114,6 +114,79 @@ it entirely — same image, no local daemon involved:
 az acr build --registry "$ACR_NAME" --image origami-api:latest ./api
 ```
 
+## 1b. Run the image locally first (optional, ~2 minutes)
+
+Worth doing before touching Azure. Everything after this point is Azure
+configuration; if the image itself is broken you want to know now, while a
+failure costs you a `docker logs` instead of a container-start loop behind
+a PaaS you can't attach a debugger to.
+
+`docker-compose.local.yml` runs the image you just built, unmodified,
+against two throwaway Postgres containers:
+
+```bash
+# Use whatever tag you built. The compose file defaults to
+# unileb.azurecr.io/compiler:origami.
+export ORIGAMI_IMAGE="$ACR_NAME.azurecr.io/origami-api:latest"
+
+docker compose -f docker-compose.local.yml up -d
+docker compose -f docker-compose.local.yml logs -f api
+```
+
+Note this is **not** the repo's main `docker-compose.yml`. That one builds
+from source, bind-mounts `./api` over `/app`, and swaps the command for
+`uvicorn --reload` — a fine dev loop, but the container it runs isn't the
+container you ship. `docker-compose.local.yml` builds nothing, mounts no
+source, and overrides no command, so the image's own
+`api/docker-entrypoint.sh` runs the two Alembic upgrades and the license
+keypair generation exactly as it will in Azure.
+
+You're looking for these lines, in this order:
+
+```
+docker-entrypoint: running control-plane migrations...
+docker-entrypoint: running tenant-plane migrations...
+docker-entrypoint: no license lease keypair found at ... — generating one...
+docker-entrypoint: starting: sh -c uvicorn app.main:app ...
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+Then load demo data and smoke-test:
+
+```bash
+docker compose -f docker-compose.local.yml --profile seed run --rm seed
+
+curl localhost:8000/health
+# {"status":"ok"}
+
+curl -X POST localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"owner@farm-a-demo.com","password":"farmos-demo-2026"}'
+# {"access_token":"...","token_type":"bearer"}
+```
+
+A token back from that second call means the whole stack is working:
+migrations applied, the seeded user is in the control plane, and the
+tablet's own login path is live. Point the app's Settings → Server
+connection at `http://<your-machine-ip>:8000` and it will work against
+this the same way it will against Azure.
+
+`docker compose -f docker-compose.local.yml down -v` tears it down,
+databases included. That `-v` only touches this file's own two volumes
+(`local_control_db`, `local_tenant_db`) — it is not
+`docker system prune`, and it won't reach another project's data.
+
+Two intentional local-only differences from the Azure deployment:
+
+- **`UVICORN_WORKERS: "1"`.** Multi-worker uvicorn forks a process per
+  worker, and the Docker VM that couldn't start a thread during the build
+  can fail that fork at runtime too. One worker takes that variable out of
+  the smoke test. Raise it once the container is confirmed healthy.
+- **No volume for the license keypair**, so the entrypoint writes a
+  throwaway one inside the container on each recreate. Harmless locally —
+  only device activation reads it — but on Azure it must persist, see
+  section 5.
+
 ## 2. Two PostgreSQL databases
 
 The app is architected around two logically separate databases — control plane (tenants,
