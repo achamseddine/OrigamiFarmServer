@@ -153,6 +153,25 @@ offline licensing. When you do, note that `scripts/generate_license_keys.py` wri
 `api/`. Run the script, then point the two `LICENSE_LEASE_*_PATH` settings in `api/.env` at the
 absolute path it printed.
 
+### Option C — plain SQL, no Python or Docker
+
+If you'd rather create the schema from DDL — a DBA who wants to read it first, a managed
+Postgres where you only have a SQL console, or a restore — `infrastructure/sql/` holds three
+scripts generated from the migrations:
+
+```bash
+psql -U postgres -f infrastructure/sql/00_bootstrap.sql   # role + both databases
+PGPASSWORD=origami_dev_password psql -h localhost -U origami \
+  -d origami_control       -f infrastructure/sql/01_control_schema.sql
+PGPASSWORD=origami_dev_password psql -h localhost -U origami \
+  -d origami_tenant_shared -f infrastructure/sql/02_tenant_schema.sql
+```
+
+They carry Alembic's version stamps, so a database built this way is one Alembic recognizes
+as current and future migrations apply on top of it normally. Run 01 and 02 **as the
+`origami` role** — the executing role owns the tables. See
+[infrastructure/sql/README.md](infrastructure/sql/README.md).
+
 ### Running the tests
 
 ```bash
