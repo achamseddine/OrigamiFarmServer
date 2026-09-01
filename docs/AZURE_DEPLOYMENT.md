@@ -59,13 +59,20 @@ origami-api:latest ./api` — uploads `./api` and builds it server-side.)
 
 ### If the build fails
 
-These two look alike in the logs and can occur together — check for the
-disk message first, then the post-invoke one.
+**Anything mentioning `apt-get`, `NO_PUBKEY`, `is not signed`, or
+`APT::Update::Post-Invoke`.** The current Dockerfile doesn't run `apt-get`
+at all, so any of these means you're building an older revision — `git
+pull` and check with `grep -c apt-get api/Dockerfile` (expect `0`) and
+`docker build` reporting more than 8 steps. Earlier revisions installed
+`gcc`/`libpq-dev`, which turned out to be unnecessary: every dependency
+ships a prebuilt wheel and `psycopg[binary]` vendors its own libpq, so the
+package manager was removed rather than kept working. That step was by far
+the most fragile part of the build — it broke three different ways on one
+machine (full Docker VM, a seccomp/base-image mismatch, then archive key
+verification) and none of them can recur now.
 
-**`No space left on device`** during `apt-get`. Docker Desktop's VM has its
-own virtual disk that fills up with old images and build cache. While it's
-full you'll also see knock-on `404 Not Found` and post-invoke errors from
-half-written package indexes, which clear up once there's space:
+**`No space left on device`.** Docker Desktop's VM has its own virtual disk
+that fills with old images and build cache:
 
 ```bash
 docker system df            # what's actually using the space
@@ -73,43 +80,25 @@ docker builder prune        # build cache only — safest, usually the biggest w
 docker image prune -a       # images not used by any container
 ```
 
-Only reach for `docker system prune -a --volumes` if the above isn't
-enough, and read it twice first: `--volumes` deletes named volumes, which
-is where container databases live — it can wipe another project's local
-Postgres data. Alternatively raise the ceiling instead of clearing it:
-Docker Desktop → Settings → Resources → Virtual disk limit.
+Only reach for `docker system prune -a --volumes` if that isn't enough, and
+read it twice first: `--volumes` deletes named volumes, which is where
+container databases live — it can wipe another project's local Postgres
+data. Or raise the ceiling instead of clearing it: Docker Desktop →
+Settings → Resources → Virtual disk limit.
 
-**`E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ... || true'`
-followed by `E: Sub-process returned an error code`**, with no disk error
-and the package fetch clearly succeeding. This is a base-image/engine
-mismatch, not a problem with your build: that hook ends in `|| true`, so it
-can only fail if the shell was killed or couldn't start — i.e. a syscall
-the daemon's seccomp profile doesn't permit. It was seen with a floating
-`python:3.12-slim` (now Debian trixie) on an engine old enough to still
-default to the classic builder.
+**`the --chmod option requires BuildKit`** or other unknown-flag errors.
+The Dockerfile is written to build on the classic builder as well as
+BuildKit, so this shouldn't happen on a current checkout — but it's the
+same tell: if `docker build` prints "Sending build context to Docker
+daemon" rather than `[+] Building`, you're on the classic builder, and an
+older Dockerfile revision would fail here.
 
-The Dockerfile pins `python:3.12-slim-bookworm` to avoid it, so first
-confirm your checkout actually has that pin — `grep FROM api/Dockerfile`.
-To check it in isolation, outside any build:
+**When local Docker just won't cooperate**, build in Azure instead and skip
+it entirely — same image, no local daemon involved:
 
 ```bash
-docker run --rm python:3.12-slim          sh -c 'apt-get update >/dev/null 2>&1; echo "trixie   exit=$?"'
-docker run --rm python:3.12-slim-bookworm sh -c 'apt-get update >/dev/null 2>&1; echo "bookworm exit=$?"'
+az acr build --registry "$ACR_NAME" --image origami-api:latest ./api
 ```
-
-A nonzero trixie and a zero bookworm confirms it. Updating Docker Desktop
-is the other fix, and the one to take if you want to move to trixie later.
-
-**`the --chmod option requires BuildKit`** or other unknown-flag errors. The
-Dockerfile is written to build on the classic builder as well as BuildKit, so
-this shouldn't happen on a current checkout — but it's the same tell: if
-`docker build` prints "Sending build context to Docker daemon" rather than
-`[+] Building`, you're on the classic builder, and an older Dockerfile
-revision would fail here.
-
-**Step count sanity check.** The current Dockerfile is a multi-stage build —
-if `docker build` reports `Step 1/8` and step 2 is `WORKDIR /app`, you're
-building an older single-stage revision. `git pull` first.
 
 ## 2. Two PostgreSQL databases
 
