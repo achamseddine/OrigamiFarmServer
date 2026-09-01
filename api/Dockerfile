@@ -10,14 +10,10 @@
 # /home inside the container, which would silently shadow anything baked
 # into the image there. /opt is never touched by that mount.
 
-# Debian release pinned deliberately. `python:3.12-slim` floats to whatever
-# Debian is current, and when it rolled to trixie (13) it started failing
-# on older Docker Engines with:
-#   E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ...'
-# — the daemon's seccomp profile blocks syscalls trixie's newer glibc uses,
-# so apt's post-invoke subprocess gets killed. Pinning bookworm keeps the
-# build reproducible and working on the Docker versions people actually
-# have installed; bump it deliberately, not by surprise.
+# Debian release pinned deliberately: `python:3.12-slim` follows whatever
+# Debian is current (it has since rolled to trixie/13), so an unpinned base
+# means the build environment can change under you between two builds of
+# the same commit. Pin it and bump on purpose.
 FROM python:3.12-slim-bookworm AS builder
 
 RUN apt-get update \

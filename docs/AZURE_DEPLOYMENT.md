@@ -59,13 +59,24 @@ origami-api:latest ./api` — uploads `./api` and builds it server-side.)
 
 ### If the build fails
 
-**`E: Problem executing scripts APT::Update::Post-Invoke 'rm -f /var/cache/apt/archives/*.deb ...'`**
-during the `apt-get` step. The base images are pinned to
-`python:3.12-slim-bookworm` precisely to avoid this: an unpinned
-`python:3.12-slim` floats to whatever Debian is current, and on trixie
-(Debian 13) an older Docker Engine's seccomp profile kills apt's post-invoke
-subprocess. If you hit it anyway, check you're on a commit that has the pin
-(`grep FROM api/Dockerfile`) and, failing that, update Docker Desktop.
+**Anything mentioning `No space left on device`, and/or
+`E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ...'` during
+the `apt-get` step.** Check for the disk message first — it's the cause,
+and the apt/post-invoke and `404 Not Found` errors underneath it are just
+downstream noise from half-written files. Docker Desktop's VM has its own
+virtual disk that fills up with old images and build cache:
+
+```bash
+docker system df            # what's actually using the space
+docker builder prune        # build cache only — safest, usually the biggest win
+docker image prune -a       # images not used by any container
+```
+
+Only reach for `docker system prune -a --volumes` if the above isn't
+enough, and read it twice first: `--volumes` deletes named volumes, which
+is where container databases live — it can wipe another project's local
+Postgres data. Alternatively raise the ceiling instead of clearing it:
+Docker Desktop → Settings → Resources → Virtual disk limit.
 
 **`the --chmod option requires BuildKit`** or other unknown-flag errors. The
 Dockerfile is written to build on the classic builder as well as BuildKit, so
