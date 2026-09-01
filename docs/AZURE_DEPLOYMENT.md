@@ -59,12 +59,13 @@ origami-api:latest ./api` — uploads `./api` and builds it server-side.)
 
 ### If the build fails
 
-**Anything mentioning `No space left on device`, and/or
-`E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ...'` during
-the `apt-get` step.** Check for the disk message first — it's the cause,
-and the apt/post-invoke and `404 Not Found` errors underneath it are just
-downstream noise from half-written files. Docker Desktop's VM has its own
-virtual disk that fills up with old images and build cache:
+These two look alike in the logs and can occur together — check for the
+disk message first, then the post-invoke one.
+
+**`No space left on device`** during `apt-get`. Docker Desktop's VM has its
+own virtual disk that fills up with old images and build cache. While it's
+full you'll also see knock-on `404 Not Found` and post-invoke errors from
+half-written package indexes, which clear up once there's space:
 
 ```bash
 docker system df            # what's actually using the space
@@ -77,6 +78,27 @@ enough, and read it twice first: `--volumes` deletes named volumes, which
 is where container databases live — it can wipe another project's local
 Postgres data. Alternatively raise the ceiling instead of clearing it:
 Docker Desktop → Settings → Resources → Virtual disk limit.
+
+**`E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ... || true'`
+followed by `E: Sub-process returned an error code`**, with no disk error
+and the package fetch clearly succeeding. This is a base-image/engine
+mismatch, not a problem with your build: that hook ends in `|| true`, so it
+can only fail if the shell was killed or couldn't start — i.e. a syscall
+the daemon's seccomp profile doesn't permit. It was seen with a floating
+`python:3.12-slim` (now Debian trixie) on an engine old enough to still
+default to the classic builder.
+
+The Dockerfile pins `python:3.12-slim-bookworm` to avoid it, so first
+confirm your checkout actually has that pin — `grep FROM api/Dockerfile`.
+To check it in isolation, outside any build:
+
+```bash
+docker run --rm python:3.12-slim          sh -c 'apt-get update >/dev/null 2>&1; echo "trixie   exit=$?"'
+docker run --rm python:3.12-slim-bookworm sh -c 'apt-get update >/dev/null 2>&1; echo "bookworm exit=$?"'
+```
+
+A nonzero trixie and a zero bookworm confirms it. Updating Docker Desktop
+is the other fix, and the one to take if you want to move to trixie later.
 
 **`the --chmod option requires BuildKit`** or other unknown-flag errors. The
 Dockerfile is written to build on the classic builder as well as BuildKit, so

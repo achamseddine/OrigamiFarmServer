@@ -10,10 +10,21 @@
 # /home inside the container, which would silently shadow anything baked
 # into the image there. /opt is never touched by that mount.
 
-# Debian release pinned deliberately: `python:3.12-slim` follows whatever
-# Debian is current (it has since rolled to trixie/13), so an unpinned base
-# means the build environment can change under you between two builds of
-# the same commit. Pin it and bump on purpose.
+# Debian release pinned deliberately, for two reasons:
+#
+# 1. Reproducibility: `python:3.12-slim` follows whatever Debian is current
+#    (it has since rolled to trixie/13), so an unpinned base means the
+#    build environment can change under you between two builds of the same
+#    commit.
+# 2. trixie was observed failing to build on an older Docker Engine (one
+#    old enough to still default to the classic builder), during apt-get:
+#      E: Problem executing scripts APT::Update::Post-Invoke 'rm -f ... || true'
+#      E: Sub-process returned an error code
+#    Note the `|| true`: that can only return non-zero if the shell itself
+#    was killed or couldn't start, which points at a syscall the engine's
+#    seccomp profile doesn't allow rather than anything about the command.
+#    Newer base + older engine is the general shape of it; bookworm avoids
+#    it. Updating Docker is the other fix if you want to move to trixie.
 FROM python:3.12-slim-bookworm AS builder
 
 RUN apt-get update \
