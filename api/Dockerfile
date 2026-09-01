@@ -35,7 +35,13 @@ ENV PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
+# --progress-bar off: pip's default progress bar (rich) starts a background
+# refresh thread, which fails with "RuntimeError: can't start new thread" on
+# a resource-starved Docker VM and takes the whole build down with it. The
+# bar is useless in a non-TTY build log anyway. --only-binary=:all: keeps
+# the no-apt guarantee above honest: a dependency that would need compiling
+# fails here, loudly, instead of on a missing gcc.
+RUN pip install --no-cache-dir --only-binary=:all: --progress-bar off -r requirements.txt
 
 
 FROM python:3.12-slim-bookworm AS final
