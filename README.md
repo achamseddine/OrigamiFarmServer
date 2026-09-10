@@ -48,7 +48,7 @@ IdP (the abstraction and Docker Compose service are there; local dev uses `AUTH_
 ## Repository layout
 
 ```
-admin-web/        Next.js admin console
+admin-web/         Next.js admin console — compiled to static files and served by the API
 api/               FastAPI backend
   app/             application code, one package per domain area
   migrations/      two independent Alembic environments: control/ and tenant/
@@ -56,9 +56,17 @@ api/               FastAPI backend
 workers/           background worker entrypoint (scaffold; see ARCHITECTURE.md Roadmap)
 infrastructure/    Keycloak realm import, RLS notes, generated license-lease keys (gitignored)
 scripts/           seed.py, generate_license_keys.py
+Dockerfile         builds the console and the API into one image
+docker-entrypoint.sh  migrations, license keys, then uvicorn
 docker-compose.yml full local stack
 .env.example       documented environment variables
 ```
+
+The console and the API ship as **one container**. `admin-web` is a client-side app — every page
+fetches the API over `fetch` — so it exports to static files at build time and the API process
+serves them at `/`, with the API keeping `/api/v1/**`, `/platform/v1/**`, `/health` and `/docs`.
+One origin means no CORS between the two, no API hostname baked into the console bundle, and
+nothing Node-related in the runtime image. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Running it locally
 
@@ -70,14 +78,12 @@ docker compose up --build
 ```
 
 This starts: `control-db` and `tenant-db` (separate Postgres instances, matching the
-control-plane/data-plane split — see ARCHITECTURE.md), `redis`, `minio`, `keycloak`, the `api`,
-`workers`, and `admin-web`. Then, in a shell inside the `api` container (or locally with
-`CONTROL_DATABASE_URL`/`TENANT_DATABASE_URL` pointed at the compose ports):
+control-plane/data-plane split — see ARCHITECTURE.md), `redis`, `minio`, `keycloak`, `workers`,
+and `api` — which serves both the API and the console on <http://localhost:8000>. The container
+entrypoint applies both migration chains on start, so only the demo data is left to load:
 
 ```bash
-alembic -c alembic_control.ini upgrade head
-alembic -c alembic_tenant.ini upgrade head
-python ../scripts/seed.py
+docker compose exec api python scripts/seed.py
 ```
 
 ### Option B — bare-metal local Postgres (what this repo was actually developed and tested against)
@@ -97,15 +103,24 @@ alembic -c alembic_tenant.ini upgrade head
 python ../scripts/seed.py
 uvicorn app.main:app --reload
 
-# 3. Admin web (separate shell)
+# 3. Admin web — build it once and the API serves it at http://localhost:8000
 cd admin-web
 npm install
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev
+npm run build
 ```
 
-Then open `http://localhost:3000/login` and sign in as `admin@origami-platform.com` (seeded
-platform super admin) or `owner@farm-a-demo.com` / `owner@farm-b-demo.com` (seeded tenant owners).
-Dev login only works when the API has `AUTH_DEV_MODE=true` — never enable that outside local/CI.
+Then open <http://localhost:8000> and sign in as `admin@origami-platform.com` (the seeded platform
+super admin). Dev login only works when the API has `AUTH_DEV_MODE=true` — never enable that
+outside local/CI — and the console needs an account holding a platform role, which the seed script
+grants to that address only.
+
+While working on the console itself, `npm run dev` gives hot reload on
+<http://localhost:3000> instead; it needs the API's origin passed in, since only the co-served
+build can use relative URLs:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev
+```
 
 ### Running the tests
 

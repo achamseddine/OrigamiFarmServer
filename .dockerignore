@@ -1,0 +1,15 @@
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+admin-web/node_modules
+admin-web/.next
+admin-web/out
+api/.venv
+api/tests
+infrastructure/keys
+docs
+*.md
+.env

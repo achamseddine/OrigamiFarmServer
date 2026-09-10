@@ -14,6 +14,20 @@ from app.common.enums import (
 )
 
 
+class PlatformMeOut(BaseModel):
+    """Who the console is signed in as, and what platform access they hold.
+
+    platform_roles is empty for a perfectly valid identity that simply has
+    no Origami staff role — the console shows that as "no platform access"
+    rather than letting every subsequent call fail with a bare 403.
+    """
+
+    user_id: uuid.UUID
+    email: str
+    display_name: str
+    platform_roles: list[str]
+
+
 class TenantCreateRequest(BaseModel):
     company_code: str
     legal_name: str

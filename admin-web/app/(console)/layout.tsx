@@ -20,6 +20,27 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     return <div style={{ padding: 40 }}>Loading…</div>;
   }
 
+  // A valid sign-in with no staff role would otherwise render a console
+  // where every panel fails with PLATFORM_ROLE_REQUIRED. Say so once instead.
+  if (me.platform_roles.length === 0) {
+    return (
+      <div style={{ padding: 40, maxWidth: 560 }}>
+        <h1 className="page-title">No platform access</h1>
+        <p className="page-subtitle">
+          You are signed in as <strong>{me.email}</strong>, but this account holds no
+          Origami platform role, so none of the console is available to it.
+        </p>
+        <p className="page-subtitle">
+          A platform super admin can grant one by adding a{" "}
+          <code>platform_role_assignment</code> row for this user in the control database.
+        </p>
+        <button className="btn btn-secondary" onClick={logout}>
+          Sign out
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">

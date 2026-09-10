@@ -65,9 +65,11 @@ services:
     volumes:
       - ./infrastructure/keycloak:/opt/keycloak/data/import
 
+  # Serves the API and the admin console together on :8000, exactly as the
+  # deployed image does. The entrypoint runs both migration chains first.
   api:
     build:
-      context: ./api
+      context: .
     env_file:
       - .env
     environment:
@@ -86,12 +88,15 @@ services:
       redis:
         condition: service_started
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Only the Python packages are mounted for live reload — mounting all of
+    # ./api over /app would hide the console built into the image.
     volumes:
-      - ./api:/app
+      - ./api/app:/app/app
+      - ./api/migrations:/app/migrations
 
   workers:
     build:
-      context: ./api
+      context: .
     env_file:
       - .env
     environment:
@@ -106,18 +111,8 @@ services:
         condition: service_started
     command: ["python", "-m", "workers.main"]
     volumes:
-      - ./api:/app
+      - ./api/app:/app/app
       - ./workers:/app/workers
-
-  admin-web:
-    build:
-      context: ./admin-web
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-    ports:
-      - "3000:3000"
-    depends_on:
-      - api
 
 volumes:
   control_db_data:

@@ -1,4 +1,8 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+// Empty means same-origin: in production the API container serves this
+// console itself, so /platform/v1/... resolves without CORS or a baked-in
+// hostname. Only a split dev setup (next dev on :3000, API on :8000) needs
+// NEXT_PUBLIC_API_BASE_URL, and it is read at build time.
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
 export class ApiError extends Error {
   code: string;

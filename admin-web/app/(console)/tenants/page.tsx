@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
@@ -10,6 +10,16 @@ import { StatusChip } from "@/components/StatusChip";
 const PAGE_SIZE = 20;
 
 export default function TenantsPage() {
+  // useSearchParams has to sit under a Suspense boundary or the static
+  // export refuses to prerender this route.
+  return (
+    <Suspense fallback={<div>Loading…</div>}>
+      <TenantsList />
+    </Suspense>
+  );
+}
+
+function TenantsList() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const q = searchParams.get("q") || "";
@@ -95,7 +105,7 @@ export default function TenantsPage() {
               <tr
                 key={tenant.id}
                 className="clickable"
-                onClick={() => router.push(`/tenants/${tenant.id}`)}
+                onClick={() => router.push(`/tenants/detail/?id=${tenant.id}`)}
               >
                 <td>{tenant.company_code}</td>
                 <td>{tenant.display_name}</td>

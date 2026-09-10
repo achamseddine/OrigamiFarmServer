@@ -8,6 +8,7 @@ interface Me {
   user_id: string;
   email: string;
   display_name: string;
+  platform_roles: string[];
 }
 
 interface AuthState {
@@ -32,7 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const result = await apiFetch<Me>("/api/v1/me");
+      const result = await apiFetch<Me>("/platform/v1/me");
       setMe(result);
     } catch {
       clearToken();

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
 import {
   AuditEventItem,
@@ -17,8 +17,17 @@ const TABS = ["Overview", "Farms", "Modules", "Devices", "Audit"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function TenantDetailPage() {
-  const params = useParams<{ tenantId: string }>();
-  const tenantId = params.tenantId;
+  // useSearchParams has to sit under a Suspense boundary or the static
+  // export refuses to prerender this route.
+  return (
+    <Suspense fallback={<div>Loading…</div>}>
+      <TenantDetail />
+    </Suspense>
+  );
+}
+
+function TenantDetail() {
+  const tenantId = useSearchParams().get("id") || "";
 
   const [tab, setTab] = useState<Tab>("Overview");
   const [tenant, setTenant] = useState<Tenant | null>(null);
@@ -26,6 +35,12 @@ export default function TenantDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const loadTenant = useCallback(() => {
+    if (!tenantId) {
+      // Without an id the request would fall through to the list endpoint
+      // and render nonsense, so stop here instead.
+      setError("No tenant selected — open this page from the tenant list.");
+      return;
+    }
     apiFetch<Tenant>(`/platform/v1/tenants/${tenantId}`).then(setTenant).catch((e) => setError(e.message));
   }, [tenantId]);
 

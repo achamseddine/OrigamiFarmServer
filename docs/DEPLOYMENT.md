@@ -4,6 +4,35 @@ These are engineering notes for taking this foundation toward staging/production
 runbook — no contractual SLA should be derived from anything below until it has been validated
 against real infrastructure (see ARCHITECTURE.md "What's real vs. scaffolded").
 
+## The deployable unit
+
+One image, built from the repository root, containing both halves of the product:
+
+```bash
+docker build -t origami-server .
+docker run -p 8000:8000 --env-file .env origami-server
+```
+
+`admin-web` compiles to static files in a Node build stage; the runtime stage is Python only and
+serves those files itself from `/`, so the container runs a single process with no Node runtime
+and the console never needs its own hostname, CORS entry, or deployment. Anything the API doesn't
+claim (`/api/v1/**`, `/platform/v1/**`, `/health`, `/docs`) falls through to the console.
+
+`docker-entrypoint.sh` runs both migration chains, creates the license-lease keypair if it is
+missing, then execs uvicorn on `${PORT:-8000}` with `${UVICORN_WORKERS:-2}` workers. Passing a
+command overrides the server but still runs the migration steps first.
+
+On a single-container host (Azure App Service, Cloud Run, Fly, a plain Docker host) that is the
+whole deployment. Two settings deserve attention there:
+
+- **`LICENSE_LEASE_PRIVATE_KEY_PATH` / `LICENSE_LEASE_PUBLIC_KEY_PATH`** must point at persistent
+  storage. The container filesystem is replaced on every deploy, and a regenerated keypair
+  invalidates every offline lease already signed with the old one. Both must name a *file*, not
+  the directory holding it.
+- **`AUTH_DEV_MODE`** stays `false`. The console's sign-in calls `/api/v1/auth/dev-login`, which
+  is disabled unless that flag is on, so a production console needs a real OIDC provider wired up
+  (see `app/auth/providers.py`) rather than the dev path.
+
 ## Environments
 
 Four environments are assumed, per the technical spec: local, development, staging, production.
@@ -66,6 +95,6 @@ push — add those once a target hosting environment is chosen.
 
 ## Reverse proxy / TLS
 
-Not part of this repo. In front of `api` and `admin-web`, terminate TLS and apply rate limiting at
-Nginx/Caddy/Traefik/a managed gateway — `docker-compose.yml`'s services are meant to sit behind
-one in any non-local environment.
+Not part of this repo. Terminate TLS and apply rate limiting in front of the container at
+Nginx/Caddy/Traefik/a managed gateway — there is one origin to point it at, since the console and
+the API share it.

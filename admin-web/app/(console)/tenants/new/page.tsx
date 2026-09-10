@@ -249,7 +249,7 @@ export default function CreateTenantWizard() {
               <li>Modules: {modulesActivated ? "activated" : "none activated yet"}</li>
               <li>Tenant Owner: {ownerInvited ? owner.email : "not invited yet"}</li>
             </ul>
-            <button className="btn btn-primary" onClick={() => router.push(`/tenants/${tenant.id}`)}>
+            <button className="btn btn-primary" onClick={() => router.push(`/tenants/detail/?id=${tenant.id}`)}>
               Go to Tenant 360 →
             </button>
           </>

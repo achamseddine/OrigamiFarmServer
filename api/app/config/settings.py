@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
 
+    # Built admin console (admin-web's static export), served by this app at
+    # / so the whole product ships as one container. Relative to the API's
+    # working directory, which is api/ in development; the image sets an
+    # absolute path. When the directory is absent the API simply runs
+    # without a console — that is the normal state for a test run.
+    admin_web_dir: str = "../admin-web/out"
+
     # FarmOS tablet app's own username/password login (app/farmos/) — a
     # long TTL is deliberate: "log in once, stay logged in" per the
     # contract, with GET /auth/me re-validating the stored token on each

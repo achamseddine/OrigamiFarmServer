@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.common.errors import AppError
 from app.common.logging import CorrelationIdMiddleware, SecurityHeadersMiddleware, configure_logging
@@ -137,3 +140,12 @@ app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])
 app.include_router(platform_router, prefix="/platform/v1", tags=["Platform"])
 app.include_router(support_router, prefix="/platform/v1", tags=["Platform Support"])
 app.include_router(backups_router, prefix="/platform/v1", tags=["Platform Backups"])
+
+# The admin console, mounted last so every API route above still wins the
+# match. Routes are tried in registration order, so this only ever sees
+# paths nothing else claimed. admin-web exports each page as
+# <route>/index.html, which is what html=True resolves a directory URL to;
+# it also serves 404.html for anything unknown.
+_admin_web = Path(settings.admin_web_dir)
+if _admin_web.is_dir():
+    app.mount("/", StaticFiles(directory=_admin_web, html=True), name="admin-web")

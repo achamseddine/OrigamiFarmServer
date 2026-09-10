@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.audit.models import AuditEvent
 from app.audit.service import record_audit_event
-from app.auth.dependencies import require_platform_role
+from app.auth.dependencies import get_identity, require_platform_role
 from app.auth.models import UserIdentity
 from app.auth.schemas import Identity
 from app.backups.models import BackupJob
@@ -48,6 +48,7 @@ from app.platform.schemas import (
     ModuleOut,
     PlanCreateRequest,
     PlanOut,
+    PlatformMeOut,
     SubscriptionOut,
     SubscriptionUpsertRequest,
     TenantCreateRequest,
@@ -56,7 +57,7 @@ from app.platform.schemas import (
     TenantStatusChangeRequest,
     TenantUpdateRequest,
 )
-from app.tenants.models import Farm, Tenant, TenantMembership
+from app.tenants.models import Farm, PlatformRoleAssignment, Tenant, TenantMembership
 
 router = APIRouter()
 
@@ -66,6 +67,34 @@ _STAFF = (
 )
 _STAFF_AND_SUPPORT = (*_STAFF, PlatformRole.PLATFORM_SUPPORT_ADMIN)
 _ANY_PLATFORM_ROLE = (*_STAFF_AND_SUPPORT, PlatformRole.PLATFORM_AUDITOR)
+
+
+# --- Session -----------------------------------------------------------
+
+
+@router.get("/me", response_model=PlatformMeOut)
+def platform_me(
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_control_db),
+) -> PlatformMeOut:
+    """Resolves the console's stored token back to an identity.
+
+    Deliberately requires only a valid token, not a platform role: the
+    console calls this on every load to decide whether it is signed in at
+    all, and a signed-in user with no staff role needs to be told that
+    rather than bounced back to the login screen in a loop.
+    """
+    roles = db.execute(
+        select(PlatformRoleAssignment.platform_role).where(
+            PlatformRoleAssignment.user_id == identity.user_id
+        )
+    ).scalars().all()
+    return PlatformMeOut(
+        user_id=identity.user_id,
+        email=identity.email,
+        display_name=identity.display_name,
+        platform_roles=list(roles),
+    )
 
 
 # --- Dashboard ---------------------------------------------------------
