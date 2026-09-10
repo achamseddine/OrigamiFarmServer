@@ -99,5 +99,9 @@ def test_usage_for_an_unknown_tenant_is_404(client, control_db):
 
 def test_metrics_require_a_platform_role(client, control_db):
     token = dev_login(client, "outsider-metrics@test.com")
-    for path in ("/platform/v1/metrics/overview", "/platform/v1/metrics/licensing", "/platform/v1/metrics/usage"):
+    for path in (
+        "/platform/v1/metrics/overview",
+        "/platform/v1/metrics/licensing",
+        "/platform/v1/metrics/usage",
+    ):
         assert client.get(path, headers=auth_headers(token)).status_code == 403
