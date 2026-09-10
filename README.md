@@ -32,19 +32,23 @@ Built, tested, and running end to end:
   `app/sync/` protocol, independent of the FarmOS tablet contract's own `Idempotency-Key` handling).
 - Audit service, support sessions (time-boxed, expiring), file presign endpoint, backup/export
   metadata endpoints.
-- Admin Web (Next.js): dev login, platform dashboard with real counts, tenant list with
-  search/filter/pagination, a multi-step create-tenant wizard where every step is a real API call,
-  and a Tenant 360 page (Overview / Farms / Modules / Devices / Audit) with working
-  activate/deactivate/revoke actions.
+- Admin Web (Next.js), served by the API itself at `/`: password sign-in, a platform overview with
+  live counts and audit-volume history, usage and licensing dashboards derived from real rows, a
+  tenant list with search/filter/pagination, a multi-step create-tenant wizard where every step is
+  a real API call, a Tenant 360 page (Overview / Usage / Access / Farms / Modules / Devices /
+  Licensing / Audit) with working activate/deactivate/revoke actions, staff and platform-role
+  administration, the plan/module catalog, a global audit log, and self-service password change.
 - 72 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 
 **Deliberately deferred** (see "Roadmap" in ARCHITECTURE.md): billing/payment provider integration,
 scheduled backup/export job execution (the API + data model exist; a worker doesn't yet produce
-real backups), notifications, usage-metering aggregation, the full 22-page admin console (only the
-pages above are built — no page in this repo is a dead link), and Keycloak/MFA wired into a live
-IdP (the abstraction and Docker Compose service are there; local dev uses `AUTH_DEV_MODE`).
+real backups), notifications, and MFA — password sign-in has none, so a deployment that needs it
+should front the console with the OIDC provider the `IdentityProvider` abstraction already
+supports. Usage metering is also still deferred: `usage_meter` has nothing writing to it, so the
+usage dashboards count real rows in each tenant's data rather than reporting metered consumption.
+No page in this repo is a dead link.
 
 ## Repository layout
 

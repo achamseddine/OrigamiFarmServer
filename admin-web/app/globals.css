@@ -324,3 +324,234 @@ select {
   background: var(--farmos-olive);
   color: white;
 }
+
+/* --- navigation sections ------------------------------------------- */
+
+.sidebar-section {
+  margin-top: 18px;
+  margin-bottom: 6px;
+  padding-left: 4px;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--farmos-wheat);
+  opacity: 0.75;
+}
+
+/* --- data tables ---------------------------------------------------- */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--farmos-muted);
+  font-weight: 600;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--farmos-border);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--farmos-border);
+  vertical-align: middle;
+  font-size: 0.88rem;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-link {
+  cursor: pointer;
+}
+
+.row-link:hover {
+  background: var(--farmos-mist);
+}
+
+/* --- charts ---------------------------------------------------------
+   One data hue for every chart here: each is a single series, so colour
+   carries magnitude, never identity. Status colours stay reserved for
+   the chips, where they always sit beside their own label. */
+
+.chart {
+  position: relative;
+}
+
+.chart-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--farmos-ink);
+  margin-bottom: 2px;
+}
+
+.chart-note {
+  font-size: 0.72rem;
+  color: var(--farmos-muted);
+  margin-bottom: 12px;
+}
+
+.time-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  height: 120px;
+  border-bottom: 1px solid var(--farmos-border);
+  padding-bottom: 0;
+}
+
+/* Capped so a series with one or two points reads as a bar rather than a
+   full-width slab; a full series still spreads across the panel. */
+.time-bars .slot {
+  flex: 1 1 0;
+  max-width: 72px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  min-width: 4px;
+}
+
+.time-bars .mark {
+  width: 100%;
+  background: var(--farmos-olive);
+  border-radius: 4px 4px 0 0;
+  min-height: 2px;
+  transition: background 0.12s ease;
+}
+
+.time-bars .slot:hover .mark {
+  background: var(--farmos-cedar);
+}
+
+.time-bars .mark.empty {
+  background: var(--farmos-sand);
+}
+
+.time-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--farmos-muted);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranked-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ranked-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 26%) 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.ranked-row .label {
+  font-size: 0.8rem;
+  color: var(--farmos-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranked-row .track {
+  background: var(--farmos-sand);
+  border-radius: 4px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.ranked-row .mark {
+  height: 100%;
+  background: var(--farmos-olive);
+  border-radius: 4px;
+  min-width: 2px;
+}
+
+.ranked-row .value {
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--farmos-muted);
+  min-width: 3ch;
+  text-align: right;
+}
+
+.chart-tooltip {
+  position: fixed;
+  z-index: 20;
+  background: var(--farmos-ink);
+  color: var(--farmos-stone);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(7, 24, 20, 0.25);
+}
+
+/* --- misc ------------------------------------------------------------ */
+
+.empty-note {
+  color: var(--farmos-muted);
+  font-size: 0.85rem;
+  padding: 16px 0;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+.notice-banner {
+  background: var(--farmos-mist);
+  border: 1px solid var(--farmos-olive);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 24px;
+}
+
+.meta-grid .k {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--farmos-muted);
+}
+
+.meta-grid .v {
+  font-size: 0.92rem;
+  color: var(--farmos-ink);
+}

@@ -8,12 +8,33 @@ import {
   DeviceItem,
   Entitlement,
   Farm,
+  LicenseLease,
+  Membership,
   ModuleCatalogItem,
   Tenant,
+  TenantUsage,
 } from "@/lib/types";
 import { StatusChip } from "@/components/StatusChip";
+import {
+  Loading,
+  RankedBars,
+  StatTile,
+  daysUntil,
+  describeError,
+  formatDateTime,
+  useResource,
+} from "@/lib/ui";
 
-const TABS = ["Overview", "Farms", "Modules", "Devices", "Audit"] as const;
+const TABS = [
+  "Overview",
+  "Usage",
+  "Access",
+  "Farms",
+  "Modules",
+  "Devices",
+  "Licensing",
+  "Audit",
+] as const;
 type Tab = (typeof TABS)[number];
 
 export default function TenantDetailPage() {
@@ -113,6 +134,9 @@ function TenantDetail() {
       </div>
 
       {tab === "Overview" && <OverviewTab tenant={tenant} />}
+      {tab === "Usage" && <UsageTab tenantId={tenantId} />}
+      {tab === "Access" && <AccessTab tenantId={tenantId} />}
+      {tab === "Licensing" && <LicensingTab tenantId={tenantId} />}
       {tab === "Farms" && <FarmsTab tenantId={tenantId} />}
       {tab === "Modules" && <ModulesTab tenantId={tenantId} onChange={() => setNotice("Entitlements updated.")} />}
       {tab === "Devices" && <DevicesTab tenantId={tenantId} />}
@@ -345,6 +369,214 @@ function AuditTab({ tenantId }: { tenantId: string }) {
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function UsageTab({ tenantId }: { tenantId: string }) {
+  const { data, error, loading } = useResource<TenantUsage>(`/platform/v1/metrics/usage/${tenantId}`);
+
+  if (loading) return <Loading what="usage" />;
+  if (error) return <div className="error-banner">{error}</div>;
+  if (!data) return null;
+
+  return (
+    <div>
+      <div className="card-grid">
+        <StatTile value={data.total_records} label="Live records" />
+        <StatTile value={data.modules_with_data.length} label="Modules in use" />
+        <StatTile value={data.active_users} label="Active users" />
+        <StatTile value={data.active_devices} label="Active devices" />
+      </div>
+
+      <div className="panel">
+        <RankedBars
+          title="Records by module"
+          note="Counted inside this tenant's own isolated session, excluding deleted rows."
+          unit="records"
+          points={Object.entries(data.records_by_module).map(([module, value]) => ({
+            label: module.replace(/_/g, " "),
+            value,
+          }))}
+        />
+      </div>
+
+      <div className="panel">
+        <div className="meta-grid">
+          <div>
+            <div className="k">Last activity</div>
+            <div className="v">{formatDateTime(data.last_activity_at)}</div>
+          </div>
+          <div>
+            <div className="k">Entitlements held</div>
+            <div className="v">{data.modules_entitled.join(", ") || "None"}</div>
+          </div>
+          <div>
+            <div className="k">Farm-data modules in use</div>
+            <div className="v">{data.modules_with_data.join(", ") || "None"}</div>
+          </div>
+        </div>
+        <p className="chart-note" style={{ marginTop: 12, marginBottom: 0 }}>
+          These two lists are counted in different vocabularies and are not a like-for-like
+          comparison: entitlements are the platform&apos;s own module codes, while the modules in
+          use are the FarmOS tablet contract&apos;s permission modules. Nothing in the schema maps
+          one to the other, so the console does not guess at an adoption figure.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AccessTab({ tenantId }: { tenantId: string }) {
+  const { data, error, loading, reload } = useResource<Membership[]>(
+    `/platform/v1/tenants/${tenantId}/memberships`
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function setActive(membershipId: string, active: boolean) {
+    const reason = active ? null : window.prompt("Reason for suspending this person's access:");
+    if (!active && !reason) return;
+    try {
+      await apiFetch(`/platform/v1/tenants/${tenantId}/memberships/${membershipId}/status`, {
+        method: "POST",
+        body: { active, reason },
+      });
+      reload();
+    } catch (err) {
+      setActionError(describeError(err));
+    }
+  }
+
+  if (loading) return <Loading what="access" />;
+
+  return (
+    <div>
+      {(error || actionError) && <div className="error-banner">{error || actionError}</div>}
+      <div className="panel">
+        <div className="chart-note" style={{ marginBottom: 12 }}>
+          Everyone who can reach this tenant&apos;s farm data. Suspending keeps the record — their
+          name stays attached to everything they entered.
+        </div>
+        {data && data.length === 0 ? (
+          <div className="empty-note">Nobody has been given access yet.</div>
+        ) : (
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Platform role</th>
+                  <th>Job role</th>
+                  <th>Status</th>
+                  <th>Sign-in</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.map((member) => (
+                  <tr key={member.id}>
+                    <td>
+                      {member.display_name}
+                      <div style={{ color: "var(--farmos-muted)", fontSize: "0.75rem" }}>
+                        {member.email}
+                      </div>
+                    </td>
+                    <td>{member.tenant_role.replace(/_/g, " ").toLowerCase()}</td>
+                    <td>{member.role}</td>
+                    <td>
+                      <StatusChip status={member.status} />
+                    </td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--farmos-muted)" }}>
+                      {member.has_password ? "Tablet password set" : "No password"}
+                    </td>
+                    <td>
+                      {member.status === "ACTIVE" ? (
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={() => setActive(member.id, false)}
+                        >
+                          Suspend
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setActive(member.id, true)}
+                        >
+                          Restore
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LicensingTab({ tenantId }: { tenantId: string }) {
+  const { data, error, loading } = useResource<LicenseLease[]>(
+    `/platform/v1/tenants/${tenantId}/leases`
+  );
+
+  if (loading) return <Loading what="leases" />;
+
+  return (
+    <div>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="panel">
+        <div className="chart-title" style={{ marginBottom: 4 }}>
+          Offline license leases
+        </div>
+        <div className="chart-note">
+          Each one lets a device keep working without a connection until it expires. A lease already
+          issued cannot be recalled — revoking the device stops the next one, not this one.
+        </div>
+        {data && data.length === 0 ? (
+          <div className="empty-note">No leases have been issued to this tenant.</div>
+        ) : (
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Device</th>
+                  <th>Issued</th>
+                  <th>Expires</th>
+                  <th className="num">In</th>
+                  <th>Modules</th>
+                  <th>State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.map((lease) => {
+                  const remaining = daysUntil(lease.expires_at);
+                  return (
+                    <tr key={lease.id}>
+                      <td>{lease.device_name ?? "—"}</td>
+                      <td>{formatDateTime(lease.issued_at)}</td>
+                      <td>{formatDateTime(lease.expires_at)}</td>
+                      <td className="num">{remaining >= 0 ? `${remaining}d` : "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--farmos-muted)" }}>
+                        {lease.modules.join(", ") || "—"}
+                      </td>
+                      <td>
+                        <StatusChip
+                          status={
+                            lease.revoked_at ? "REVOKED" : remaining < 0 ? "TERMINATED" : "ACTIVE"
+                          }
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

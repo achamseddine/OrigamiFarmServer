@@ -74,3 +74,115 @@ export interface DashboardSummary {
   renewals_due_30d: number;
   backup_failures: number;
 }
+
+export interface MetricsOverview {
+  generated_at: string;
+  tenants_by_status: Record<string, number>;
+  tenants_total: number;
+  devices_by_status: Record<string, number>;
+  devices_total: number;
+  leases_active: number;
+  leases_expiring_7d: number;
+  staff_count: number;
+  user_count: number;
+  renewals_due_30d: number;
+  audit_events_per_day: { day: string; events: number }[];
+  tenants_created_per_month: { month: string; tenants: number }[];
+}
+
+export interface LicensingModule {
+  module_code: string;
+  name: string;
+  license_code: string | null;
+  is_permission_module: boolean;
+  active: number;
+  trial: number;
+  other: number;
+}
+
+export interface MetricsLicensing {
+  generated_at: string;
+  tenants_total: number;
+  modules: LicensingModule[];
+  leases_expiring_soon: {
+    lease_id: string;
+    tenant_id: string;
+    tenant_name: string;
+    device_name: string | null;
+    expires_at: string;
+    modules: string[];
+  }[];
+}
+
+export interface TenantUsage {
+  tenant_id: string;
+  company_code: string;
+  display_name: string;
+  status: string;
+  total_records: number;
+  records_by_module: Record<string, number>;
+  modules_with_data: string[];
+  modules_entitled: string[];
+  last_activity_at: string | null;
+  active_devices: number;
+  active_users: number;
+}
+
+export interface UsageList {
+  items: TenantUsage[];
+  tenants_total: number;
+  tenants_measured: number;
+}
+
+export interface Staff {
+  user_id: string;
+  email: string;
+  display_name: string;
+  platform_roles: string[];
+  has_password: boolean;
+}
+
+export interface Membership {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  tenant_role: string;
+  status: string;
+  email: string;
+  display_name: string;
+  role: string;
+  default_farm_id: string | null;
+  has_password: boolean;
+}
+
+export interface LicenseLease {
+  id: string;
+  tenant_id: string;
+  device_id: string;
+  device_name: string | null;
+  issued_at: string;
+  expires_at: string;
+  policy_version: number;
+  modules: string[];
+  revoked_at: string | null;
+}
+
+export interface Plan {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+  limits: Record<string, unknown>;
+}
+
+export interface Subscription {
+  id: string;
+  tenant_id: string;
+  plan_id: string;
+  status: string;
+  billing_cycle: string;
+  starts_at: string;
+  renews_at: string | null;
+  ends_at: string | null;
+  grace_until: string | null;
+}
