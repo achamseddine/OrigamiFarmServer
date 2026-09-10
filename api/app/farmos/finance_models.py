@@ -18,11 +18,9 @@ from app.common.mixins import SyncedEntityMixin, TimestampMixin, UUIDPrimaryKeyM
 
 
 class Expense(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
-    """Read-only via the FarmOS tablet contract today — GET /expenses has
-    no matching POST endpoint in docs/FARMOS_API.md, so rows land here via
-    other write paths (feed purchases, platform back-office entry, ...) as
-    those get built. See also Sale below, which is explicitly read-only
-    for the same reason.
+    """Rows land here either via POST /expenses (a manager's manual entry,
+    e.g. from the Sales & Finance screen) or via other write paths (feed
+    purchases, platform back-office entry, ...) as those get built.
     """
 
     __tablename__ = "expense"
@@ -37,10 +35,9 @@ class Expense(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase
 
 
 class Sale(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):
-    """Read-only for now — every row comes from the Mouneh and Farm Visits
-    modules' own sale-recording endpoints (Stage 5); a general manual
-    sale-entry endpoint is tracked as follow-on work, matching the
-    contract's own note on GET /sales.
+    """Rows come from the Mouneh and Farm Visits modules' own sale-recording
+    endpoints (Stage 5), or from a manager's manual entry via POST /sales
+    (e.g. from the Sales & Finance screen).
     """
 
     __tablename__ = "sale"

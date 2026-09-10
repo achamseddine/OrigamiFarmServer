@@ -93,6 +93,110 @@ def test_tenant_cannot_write_other_tenants_animal(client, control_db):
     assert listing.json() == []
 
 
+def test_endpoints_added_after_stage_5_are_farm_scoped(client, control_db):
+    """The read/write endpoints added after the original 92-endpoint
+    contract (GET /observations, GET/POST /feed/items, GET
+    /feed/transactions, POST /expenses, POST /sales) go through the same
+    check_farm_id + RLS pipeline as everything else — but they postdate the
+    isolation tests above, so prove it rather than assume it.
+    """
+    tenant_a = create_tenant(control_db, company_code=unique_code("FARM-ISO-A"))
+    tenant_b = create_tenant(control_db, company_code=unique_code("FARM-ISO-B"))
+    user_a, _ = add_farmos_user(control_db, tenant_a, "owner-iso-a@origami-demo.com", role="owner")
+    add_farmos_user(control_db, tenant_b, "owner-iso-b@origami-demo.com", role="owner")
+    control_db.commit()
+
+    token_a = farmos_login(client, "owner-iso-a@origami-demo.com", FARMOS_DEMO_PASSWORD)
+    token_b = farmos_login(client, "owner-iso-b@origami-demo.com", FARMOS_DEMO_PASSWORD)
+
+    # --- Tenant A creates one row through each new write endpoint --------
+    animal_id = client.post(
+        "/api/v1/animals",
+        json={"tag": "ISO-1", "name": "Bella", "species": "cow"},
+        headers=farmos_headers(token_a),
+    ).json()["id"]
+
+    observation = client.post(
+        "/api/v1/observations",
+        json={
+            "farm_id": str(tenant_a.id),
+            "entity_type": "animal",
+            "entity_id": animal_id,
+            "observation_type": "udder_swelling",
+            "observer_id": str(user_a.id),
+        },
+        headers=farmos_headers(token_a),
+    )
+    assert observation.status_code == 201, observation.text
+
+    item = client.post(
+        "/api/v1/feed/items",
+        json={"name": "Dairy Mix", "unit": "kg", "initial_qty": 100},
+        headers=farmos_headers(token_a),
+    )
+    assert item.status_code == 201, item.text
+    item_id = item.json()["id"]
+
+    assert client.post(
+        "/api/v1/expenses",
+        json={"category": "feed", "amount": 1680},
+        headers=farmos_headers(token_a),
+    ).status_code == 201
+    assert client.post(
+        "/api/v1/sales",
+        json={"product_type": "milk", "amount": 4250},
+        headers=farmos_headers(token_a),
+    ).status_code == 201
+
+    # Tenant A genuinely sees its own rows.
+    for path, params in [
+        ("/api/v1/observations", {"farm_id": str(tenant_a.id)}),
+        ("/api/v1/feed/items", {"farm_id": str(tenant_a.id)}),
+        ("/api/v1/feed/transactions", {"farm_id": str(tenant_a.id)}),
+        ("/api/v1/expenses", {"farm_id": str(tenant_a.id)}),
+        ("/api/v1/sales", {"farm_id": str(tenant_a.id)}),
+    ]:
+        own = client.get(path, params=params, headers=farmos_headers(token_a))
+        assert own.status_code == 200, f"{path}: {own.text}"
+        assert own.json(), f"{path} returned nothing for the tenant that owns the row"
+
+    # --- Tenant B must see none of it -----------------------------------
+    for path in [
+        "/api/v1/observations",
+        "/api/v1/feed/items",
+        "/api/v1/feed/transactions",
+        "/api/v1/expenses",
+        "/api/v1/sales",
+    ]:
+        cross = client.get(
+            path, params={"farm_id": str(tenant_b.id)}, headers=farmos_headers(token_b)
+        )
+        assert cross.status_code == 200, f"{path}: {cross.text}"
+        assert cross.json() == [], f"{path} leaked another tenant's rows"
+
+    # Asking for tenant A's farm_id while authenticated as B is a 404, not
+    # a 403 — no distinguishing "exists but forbidden" from "not found".
+    for path in [
+        "/api/v1/observations",
+        "/api/v1/feed/items",
+        "/api/v1/feed/transactions",
+        "/api/v1/expenses",
+        "/api/v1/sales",
+    ]:
+        spoofed = client.get(
+            path, params={"farm_id": str(tenant_a.id)}, headers=farmos_headers(token_b)
+        )
+        assert spoofed.status_code == 404, f"{path} allowed a spoofed farm_id: {spoofed.status_code}"
+
+    # Tenant B can't move tenant A's stock by guessing its item id either.
+    hijack = client.post(
+        "/api/v1/feed/transactions",
+        json={"item_id": item_id, "direction": "out", "quantity": 10},
+        headers=farmos_headers(token_b),
+    )
+    assert hijack.status_code == 404
+
+
 def test_rls_denies_cross_tenant_access_at_the_database_layer(control_db):
     """Direct proof independent of the API/authorization layer: RLS itself
     is what prevents the leak, not just application-level filtering.

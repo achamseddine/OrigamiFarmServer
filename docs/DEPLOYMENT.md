@@ -6,11 +6,12 @@ against real infrastructure (see ARCHITECTURE.md "What's real vs. scaffolded").
 
 ## The deployable unit
 
-One image, built from the repository root, containing both halves of the product:
+One image containing both halves of the product. The Dockerfile lives in `api/` but **builds from
+the repository root**, because it needs `admin-web/` and `scripts/` too:
 
 ```bash
-docker build -t origami-server .
-docker run -p 8000:8000 --env-file .env origami-server
+docker build -f api/Dockerfile -t origami-api .
+docker run -p 8000:8000 --env-file .env origami-api
 ```
 
 `admin-web` compiles to static files in a Node build stage; the runtime stage is Python only and
@@ -18,12 +19,14 @@ serves those files itself from `/`, so the container runs a single process with 
 and the console never needs its own hostname, CORS entry, or deployment. Anything the API doesn't
 claim (`/api/v1/**`, `/platform/v1/**`, `/health`, `/docs`) falls through to the console.
 
-`docker-entrypoint.sh` runs both migration chains, creates the license-lease keypair if it is
-missing, then execs uvicorn on `${PORT:-8000}` with `${UVICORN_WORKERS:-2}` workers. Passing a
-command overrides the server but still runs the migration steps first.
+`api/docker-entrypoint.sh` runs both migration chains, creates the license-lease keypair if it is
+missing, then execs the image's command. Both steps can be turned off per-instance with
+`RUN_MIGRATIONS=false` / `GENERATE_LICENSE_KEYS_IF_MISSING=false`, which is what the `workers`
+service does so only one container races to migrate.
 
-On a single-container host (Azure App Service, Cloud Run, Fly, a plain Docker host) that is the
-whole deployment. Two settings deserve attention there:
+On a single-container host (Azure Web App for Containers, Cloud Run, Fly, a plain Docker host)
+that is the whole deployment — see [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md). Two settings
+deserve attention there:
 
 - **`LICENSE_LEASE_PRIVATE_KEY_PATH` / `LICENSE_LEASE_PUBLIC_KEY_PATH`** must point at persistent
   storage. The container filesystem is replaced on every deploy, and a regenerated keypair
@@ -90,8 +93,10 @@ docstring and ARCHITECTURE.md). Before any commercial commitment on RPO/RTO:
 (both blocking — the codebase is clean under both as of this commit), Alembic upgrade-head against
 fresh Postgres services (control + tenant), the pytest suite (including the mandatory isolation/
 entitlement/device/sync tests) against those same databases, and the admin-web `tsc --noEmit` +
-`next build`. It does not yet include a staging/production deploy step or a container registry
-push — add those once a target hosting environment is chosen.
+`next build`. A target hosting environment now exists (Azure Web App for Containers) — see
+[AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for the manual `az` CLI deploy steps, and
+`.github/workflows/deploy-azure.yml` (manual `workflow_dispatch` only, not yet wired to run
+automatically on push) for the same as a repeatable build-push-deploy workflow.
 
 ## Reverse proxy / TLS
 

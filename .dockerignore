@@ -1,15 +1,23 @@
-.git
-.github
-**/__pycache__
+# Build context is the repository root (see api/Dockerfile), so these are
+# root-relative. Keep admin-web/ and scripts/ — the image needs both.
+.git/
+.github/
+**/__pycache__/
 **/*.pyc
-**/.pytest_cache
-**/.ruff_cache
-admin-web/node_modules
-admin-web/.next
-admin-web/out
-api/.venv
-api/tests
-infrastructure/keys
-docs
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+api/.venv/
+api/tests/
+api/requirements-dev.txt
+# Rebuilt inside the image; a stale local copy would only bloat the context.
+admin-web/node_modules/
+admin-web/.next/
+admin-web/out/
+infrastructure/keys/
+docs/
 *.md
+*.db
 .env
+.env.*
+!.env.example

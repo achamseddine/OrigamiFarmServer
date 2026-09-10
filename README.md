@@ -8,7 +8,8 @@ against real PostgreSQL, not mocked.
 See also: [ARCHITECTURE.md](ARCHITECTURE.md) · [TENANCY.md](TENANCY.md) ·
 [SECURITY.md](SECURITY.md) · [SYNC_PROTOCOL.md](SYNC_PROTOCOL.md) ·
 [LICENSE_ENTITLEMENTS.md](LICENSE_ENTITLEMENTS.md) · [API_ERROR_CODES.md](API_ERROR_CODES.md) ·
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/FARMOS_API.md](docs/FARMOS_API.md)
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/AZURE_DEPLOYMENT.md](docs/AZURE_DEPLOYMENT.md) ·
+[docs/FARMOS_API.md](docs/FARMOS_API.md)
 
 ## What's in v0.1
 
@@ -53,11 +54,11 @@ api/               FastAPI backend
   app/             application code, one package per domain area
   migrations/      two independent Alembic environments: control/ and tenant/
   tests/           pytest suite (runs against real Postgres)
+  Dockerfile       builds the console and the API into one image (context: repo root)
+  docker-entrypoint.sh  migrations, license keys, then uvicorn
 workers/           background worker entrypoint (scaffold; see ARCHITECTURE.md Roadmap)
 infrastructure/    Keycloak realm import, RLS notes, generated license-lease keys (gitignored)
 scripts/           seed.py, generate_license_keys.py
-Dockerfile         builds the console and the API into one image
-docker-entrypoint.sh  migrations, license keys, then uvicorn
 docker-compose.yml full local stack
 .env.example       documented environment variables
 ```

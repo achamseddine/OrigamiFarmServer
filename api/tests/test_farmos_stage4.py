@@ -105,10 +105,10 @@ def test_worker_cannot_manage_employees(client, control_db):
     assert resp.status_code == 403
 
 
-# --- Expenses & sales (read-only listings) --------------------------------
+# --- Expenses & sales -------------------------------------------------------
 
 
-def test_expenses_and_sales_are_listed_read_only(client, control_db):
+def test_expenses_and_sales_can_be_listed(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-FIN", "finowner@origami-demo.com")
     now = datetime.now(timezone.utc)
     with TenantDataRouter.session_for(tenant.id) as db:
@@ -142,6 +142,69 @@ def test_expenses_and_sales_are_listed_read_only(client, control_db):
     )
     assert sales.status_code == 200
     assert sales.json()[0]["product_type"] == "milk"
+
+
+def test_manager_can_record_a_manual_expense_and_sale(client, control_db):
+    tenant, token = _owner(client, control_db, "FARM-FIN2", "finowner2@origami-demo.com")
+
+    expense = client.post(
+        "/api/v1/expenses",
+        json={"category": "fuel", "amount": 420},
+        headers=farmos_headers(token),
+    )
+    assert expense.status_code == 201, expense.text
+    body = expense.json()
+    assert body["farm_id"] == str(tenant.id)
+    assert body["category"] == "fuel"
+    assert body["amount"] == 420.0
+    assert body["currency"] == "USD"
+
+    sale = client.post(
+        "/api/v1/sales",
+        json={
+            "product_type": "produce",
+            "product_label": "Zucchini",
+            "quantity": 90,
+            "unit": "kg",
+            "amount": 945,
+            "payment_status": "partial",
+        },
+        headers=farmos_headers(token),
+    )
+    assert sale.status_code == 201, sale.text
+    sale_body = sale.json()
+    assert sale_body["product_type"] == "produce"
+    assert sale_body["payment_status"] == "partial"
+
+    # Both new rows show up in the read listings — nothing recorded is lost.
+    expenses = client.get(
+        "/api/v1/expenses", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert any(e["id"] == body["id"] for e in expenses.json())
+
+    sales = client.get(
+        "/api/v1/sales", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert any(s["id"] == sale_body["id"] for s in sales.json())
+
+
+def test_worker_without_finance_permission_cannot_record_expense_or_sale(client, control_db):
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-FIN3"))
+    add_farmos_user(control_db, tenant, "finworker@origami-demo.com", role="worker", grid={"tasks": ["view"]})
+    control_db.commit()
+    token = farmos_login(client, "finworker@origami-demo.com", FARMOS_DEMO_PASSWORD)
+
+    expense = client.post(
+        "/api/v1/expenses", json={"category": "fuel", "amount": 100}, headers=farmos_headers(token)
+    )
+    assert expense.status_code == 403
+
+    sale = client.post(
+        "/api/v1/sales",
+        json={"product_type": "produce", "amount": 100},
+        headers=farmos_headers(token),
+    )
+    assert sale.status_code == 403
 
 
 # --- Audit -----------------------------------------------------------------
@@ -256,6 +319,80 @@ def test_harvest_due_recommendation_fires_for_soon_ready_planting(client, contro
     harvest_rec = next(r for r in resp.json() if r["rule_id"] == "RULE-HARVEST-DUE")
     assert harvest_rec["entity_label"] == "Herb Garden — Basil"
     assert "65 kg" in harvest_rec["rationale"]
+
+
+def test_low_feed_recommendation_fires_at_or_below_reorder_level(client, control_db):
+    tenant, token = _owner(client, control_db, "FARM-REC3", "recowner3@origami-demo.com")
+    from app.tenant_api.models import InventoryItem
+
+    with TenantDataRouter.session_for(tenant.id) as db:
+        db.add(
+            InventoryItem(
+                tenant_id=tenant.id, name="Dairy Mix", category="Dairy", unit="kg",
+                current_qty=1800, reorder_level=2000,
+            )
+        )
+        # Has no reorder level set — should never fire regardless of stock.
+        db.add(
+            InventoryItem(
+                tenant_id=tenant.id, name="Bedding Straw", unit="bale", current_qty=0, reorder_level=0,
+            )
+        )
+
+    resp = client.get(
+        "/api/v1/recommendations", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert resp.status_code == 200
+    recs = [r for r in resp.json() if r["rule_id"] == "RULE-LOW-FEED"]
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec["entity_label"] == "Dairy Mix"
+    assert rec["priority"] == "medium"
+    assert "2000" in rec["rationale"] or "2,000" in rec["rationale"]
+
+    # A second refresh doesn't duplicate the still-undecided recommendation.
+    again = client.get(
+        "/api/v1/recommendations", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert len([r for r in again.json() if r["rule_id"] == "RULE-LOW-FEED"]) == 1
+
+    # The recommendation also raised a real notification — the inbox isn't
+    # write-only from an app POV, it now reflects real farm state.
+    notifications = client.get("/api/v1/notifications", headers=farmos_headers(token))
+    assert notifications.status_code == 200
+    titles = [n["title"] for n in notifications.json()["notifications"]]
+    assert "Low feed: Dairy Mix" in titles
+
+
+def test_egg_drop_recommendation_fires_when_production_falls(client, control_db):
+    tenant, token = _owner(client, control_db, "FARM-REC4", "recowner4@origami-demo.com")
+    now = datetime.now(timezone.utc)
+    with TenantDataRouter.session_for(tenant.id) as db:
+        from app.farmos.production_models import EggRecord
+
+        # Last week: 1400 sellable eggs for this flock.
+        db.add(
+            EggRecord(
+                tenant_id=tenant.id, flock_id="flock-duck", total_eggs=1500, sellable_eggs=1400,
+                recorded_at=now - timedelta(days=10),
+            )
+        )
+        # This week: only 1000 — a 28.6% drop, above the 20% threshold.
+        db.add(
+            EggRecord(
+                tenant_id=tenant.id, flock_id="flock-duck", total_eggs=1050, sellable_eggs=1000,
+                recorded_at=now - timedelta(days=1),
+            )
+        )
+
+    resp = client.get(
+        "/api/v1/recommendations", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
+    )
+    assert resp.status_code == 200
+    recs = [r for r in resp.json() if r["rule_id"] == "RULE-EGG-DROP"]
+    assert len(recs) == 1
+    assert recs[0]["entity_label"] == "flock-duck"
+    assert "1000 vs 1400" in recs[0]["rationale"]
 
 
 # --- Daily summary ---------------------------------------------------------
