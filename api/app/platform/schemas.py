@@ -212,6 +212,32 @@ class MembershipOut(BaseModel):
     user_id: uuid.UUID
     tenant_role: TenantRole
     status: str
+    # From the joined user_identity — a list of bare UUIDs is unusable in
+    # the console, which needs to show who these people are.
+    email: str
+    display_name: str
+    # The tablet contract's own free-text job title, distinct from
+    # tenant_role above (see app/tenants/models.py).
+    role: str
+    default_farm_id: uuid.UUID | None = None
+    has_password: bool
+
+
+class MembershipStatusChangeRequest(BaseModel):
+    active: bool
+    reason: str | None = None
+
+
+class LicenseLeaseOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    device_id: uuid.UUID
+    device_name: str | None
+    issued_at: datetime
+    expires_at: datetime
+    policy_version: int
+    modules: list[str]
+    revoked_at: datetime | None
 
     model_config = {"from_attributes": True}
 

@@ -107,7 +107,9 @@ from app.farmos.routes_visit_bookings import router as farmos_visit_bookings_rou
 from app.farmos.routes_visits import router as farmos_visits_router  # noqa: E402
 from app.files.routes import router as files_router  # noqa: E402
 from app.platform.auth_routes import router as platform_auth_router  # noqa: E402
+from app.platform.metrics_routes import router as platform_metrics_router  # noqa: E402
 from app.platform.routes import router as platform_router  # noqa: E402
+from app.platform.staff_routes import router as platform_staff_router  # noqa: E402
 from app.support.routes import router as support_router  # noqa: E402
 from app.sync.routes import router as sync_router  # noqa: E402
 
@@ -140,6 +142,8 @@ app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])
 app.include_router(platform_auth_router, prefix="/platform/v1/auth", tags=["Platform Auth"])
 app.include_router(platform_router, prefix="/platform/v1", tags=["Platform"])
+app.include_router(platform_staff_router, prefix="/platform/v1", tags=["Platform Staff"])
+app.include_router(platform_metrics_router, prefix="/platform/v1", tags=["Platform Metrics"])
 app.include_router(support_router, prefix="/platform/v1", tags=["Platform Support"])
 app.include_router(backups_router, prefix="/platform/v1", tags=["Platform Backups"])
 

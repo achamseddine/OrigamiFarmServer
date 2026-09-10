@@ -27,7 +27,7 @@ from app.common.enums import (
     TenantStatus,
 )
 from app.common.errors import AppError, ErrorCode
-from app.devices.models import Device, DeviceActivation
+from app.devices.models import Device, DeviceActivation, LicenseLease
 from app.devices.service import generate_activation_code, hash_activation_code
 from app.entitlements.state_machine import transition_entitlement, transition_tenant_status
 from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement
@@ -42,8 +42,10 @@ from app.platform.schemas import (
     EntitlementOut,
     FarmCreateRequest,
     FarmOut,
+    LicenseLeaseOut,
     MembershipInviteRequest,
     MembershipOut,
+    MembershipStatusChangeRequest,
     ModuleCreateRequest,
     ModuleOut,
     PlanCreateRequest,
@@ -608,7 +610,130 @@ def invite_membership(
         entity_id=str(membership.id),
         after={"email": payload.email, "tenant_role": payload.tenant_role.value},
     )
-    return membership
+    return _membership_out(user, membership)
+
+
+def _membership_out(user: UserIdentity, membership: TenantMembership) -> MembershipOut:
+    return MembershipOut(
+        id=membership.id,
+        tenant_id=membership.tenant_id,
+        user_id=membership.user_id,
+        tenant_role=membership.tenant_role,
+        status=membership.status.value,
+        email=user.email,
+        display_name=user.display_name,
+        role=membership.role,
+        default_farm_id=membership.default_farm_id,
+        has_password=bool(user.password_hash),
+    )
+
+
+@router.get("/tenants/{tenant_id}/memberships", response_model=list[MembershipOut])
+def list_memberships(
+    tenant_id: uuid.UUID,
+    include_inactive: bool = Query(default=True),
+    db: Session = Depends(get_control_db),
+    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
+) -> list[MembershipOut]:
+    """Who can reach this tenant's data, and with what role.
+
+    This is control-plane metadata about access — it reads no farm data,
+    so it needs no support session (contrast app/support/).
+    """
+    _get_tenant_or_404(db, tenant_id)
+    stmt = (
+        select(TenantMembership, UserIdentity)
+        .join(UserIdentity, UserIdentity.id == TenantMembership.user_id)
+        .where(TenantMembership.tenant_id == tenant_id)
+        .order_by(UserIdentity.email)
+    )
+    if not include_inactive:
+        stmt = stmt.where(TenantMembership.status == MembershipStatus.ACTIVE)
+    return [_membership_out(user, membership) for membership, user in db.execute(stmt).all()]
+
+
+@router.post("/tenants/{tenant_id}/memberships/{membership_id}/status", response_model=MembershipOut)
+def set_membership_status(
+    tenant_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    payload: MembershipStatusChangeRequest,
+    db: Session = Depends(get_control_db),
+    identity: Identity = Depends(require_platform_role(*_STAFF)),
+) -> MembershipOut:
+    """Deactivates or restores one person's access to one tenant.
+
+    Deactivation rather than deletion, for the same reason the tenant API
+    deactivates employees: their name is attached to records they entered,
+    and history is never silently rewritten.
+    """
+    membership = db.execute(
+        select(TenantMembership).where(
+            TenantMembership.id == membership_id, TenantMembership.tenant_id == tenant_id
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No such membership in this tenant")
+
+    user = db.get(UserIdentity, membership.user_id)
+    assert user is not None  # FK-guaranteed
+
+    before = membership.status
+    membership.status = MembershipStatus.ACTIVE if payload.active else MembershipStatus.INACTIVE
+    db.flush()
+
+    if before != membership.status:
+        record_audit_event(
+            db,
+            actor_id=identity.user_id,
+            actor_type=ActorType.PLATFORM_USER,
+            tenant_id=tenant_id,
+            action="membership.activated" if payload.active else "membership.deactivated",
+            entity_type="tenant_membership",
+            entity_id=str(membership.id),
+            reason=payload.reason,
+            before={"status": before.value},
+            after={"status": membership.status.value},
+            summary=f"{'Restored' if payload.active else 'Suspended'} access for {user.email}",
+        )
+    return _membership_out(user, membership)
+
+
+@router.get("/tenants/{tenant_id}/leases", response_model=list[LicenseLeaseOut])
+def list_license_leases(
+    tenant_id: uuid.UUID,
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_control_db),
+    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
+) -> list[LicenseLeaseOut]:
+    """Offline license leases issued to this tenant's devices.
+
+    What a device can still do without a network, and until when — the
+    lease is verified on the device against the public key, so a lease
+    already issued keeps working until its own expires_at (there is no
+    revocation for one already handed out; see LICENSE_ENTITLEMENTS.md).
+    """
+    _get_tenant_or_404(db, tenant_id)
+    rows = db.execute(
+        select(LicenseLease, Device.display_name)
+        .outerjoin(Device, Device.id == LicenseLease.device_id)
+        .where(LicenseLease.tenant_id == tenant_id)
+        .order_by(LicenseLease.issued_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        LicenseLeaseOut(
+            id=lease.id,
+            tenant_id=lease.tenant_id,
+            device_id=lease.device_id,
+            device_name=device_name,
+            issued_at=lease.issued_at,
+            expires_at=lease.expires_at,
+            policy_version=lease.policy_version,
+            modules=list(lease.modules or []),
+            revoked_at=lease.revoked_at,
+        )
+        for lease, device_name in rows
+    ]
 
 
 # --- Audit -------------------------------------------------------------
