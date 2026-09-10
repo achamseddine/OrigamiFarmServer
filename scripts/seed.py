@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api"))
 from sqlalchemy import select  # noqa: E402
 
 from app.auth.models import UserIdentity  # noqa: E402
+from app.auth.passwords import hash_password  # noqa: E402
 from app.common.db import ControlSessionLocal  # noqa: E402
 from app.common.enums import (  # noqa: E402
     EntitlementSource,
@@ -29,7 +30,6 @@ from app.common.enums import (  # noqa: E402
     TenantStatus,
 )
 from app.common.tenant_router import TenantDataRouter  # noqa: E402
-from app.farmos.security import hash_password  # noqa: E402
 from app.plans.models import ModuleCatalog, TenantEntitlement  # noqa: E402
 from app.tenant_api.models import Animal  # noqa: E402
 from app.tenants.models import Farm, PlatformRoleAssignment, Tenant, TenantMembership  # noqa: E402

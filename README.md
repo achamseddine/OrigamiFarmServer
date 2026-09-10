@@ -110,10 +110,15 @@ npm install
 npm run build
 ```
 
-Then open <http://localhost:8000> and sign in as `admin@origami-platform.com` (the seeded platform
-super admin). Dev login only works when the API has `AUTH_DEV_MODE=true` — never enable that
-outside local/CI — and the console needs an account holding a platform role, which the seed script
-grants to that address only.
+Create a staff account, then open <http://localhost:8000> and sign in with it:
+
+```bash
+python scripts/create_platform_admin.py --email you@example.com
+```
+
+That prompts for a password, creates the account if it's new (or resets the password if it isn't),
+and grants `PLATFORM_SUPER_ADMIN`. It's the same command a production deployment uses to bootstrap
+its first admin — run it inside the container there.
 
 While working on the console itself, `npm run dev` gives hot reload on
 <http://localhost:3000> instead; it needs the API's origin passed in, since only the co-served

@@ -52,6 +52,17 @@ export async function apiFetch<T>(
   const data = await res.json().catch(() => null);
 
   if (!res.ok) {
+    // A session that expired mid-visit would otherwise leave every panel
+    // showing its own 401. Send the whole page back to sign-in once —
+    // except for the sign-in call itself, whose 401 means "wrong password"
+    // and belongs to the form.
+    const isLoginAttempt = path.startsWith("/platform/v1/auth/login");
+    if (res.status === 401 && !isLoginAttempt && typeof window !== "undefined") {
+      clearToken();
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login/";
+      }
+    }
     const code = data?.error?.code || "UNKNOWN_ERROR";
     const message = data?.error?.message || res.statusText;
     throw new ApiError(code, message, res.status);

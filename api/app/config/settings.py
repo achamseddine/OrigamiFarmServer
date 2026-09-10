@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     license_lease_policy_version: int = 1
     license_lease_default_ttl_hours: int = 72
 
+    # How long a console sign-in lasts before it has to be repeated. Short
+    # by comparison with farmos_token_ttl_days below on purpose: this one
+    # carries platform-wide authority, the tablet's carries one farm's.
+    platform_session_ttl_hours: int = 12
+
     app_secret_key: str = "change-me-in-every-environment"
     cors_allowed_origins: str = "http://localhost:3000"
     log_level: str = "INFO"

@@ -6,12 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserIdentity
+from app.auth.passwords import verify_password
 from app.common.db import get_control_db
 from app.common.enums import MembershipStatus
 from app.config import get_settings
 from app.farmos.deps import AccessContext, get_access_context
 from app.farmos.schemas import LoginRequest, LoginResponse, UserProfileOut
-from app.farmos.security import issue_access_token, verify_password
+from app.farmos.security import issue_access_token
 from app.tenants.models import TenantMembership
 
 router = APIRouter()

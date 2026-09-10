@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserIdentity
+from app.auth.passwords import hash_password
 from app.common.enums import (
     EntitlementSource,
     EntitlementStatus,
@@ -23,7 +24,6 @@ from app.common.enums import (
     TenantRole,
     TenantStatus,
 )
-from app.farmos.security import hash_password
 from app.plans.models import ModuleCatalog, TenantEntitlement
 from app.tenants.models import (
     MembershipFarmAccess,

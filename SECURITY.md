@@ -38,16 +38,33 @@ default, one shared database. The primary threats this design targets:
 
 ## Authentication
 
-Production/staging: standards-based OIDC against Keycloak (or any compatible provider) —
-`app/auth/providers.py:OIDCIdentityProvider` validates via the provider's published JWKS (RS256,
-audience + issuer checked). Local/test only: `AUTH_DEV_MODE=true` swaps in
-`DevIdentityProvider`, which signs/verifies with `APP_SECRET_KEY` (HS256) and has no external
-dependency. `app/main.py` refuses to start with `AUTH_DEV_MODE=true` when
-`ENVIRONMENT=production` — this is enforced in code, not just documented.
+Three credentials can reach this API, and they are deliberately not interchangeable:
 
-MFA for platform admins is an IdP-side policy (Keycloak realm configuration); this repo's
-responsibility is to require and correctly validate the resulting token, which it does uniformly
-regardless of whether MFA was used upstream.
+| Credential | Issued by | Verified by | Carries |
+|---|---|---|---|
+| Console session | `POST /platform/v1/auth/login` (email + bcrypt password) | `LocalSessionProvider` — HS256 over `APP_SECRET_KEY`, `typ=platform_session` required | An Origami staff identity; authority comes from `platform_role_assignment`, never the token |
+| OIDC access token | An external provider (Keycloak or compatible) | `OIDCIdentityProvider` — RS256 via published JWKS, audience + issuer checked | The same, for organizations that front the console with their own IdP |
+| FarmOS tablet token | `POST /api/v1/auth/login` | `app/farmos/security.py:decode_access_token` | One farm worker, scoped to one tenant |
+
+`ChainedIdentityProvider` routes on the JWT's algorithm header — HS256 to the local verifier,
+RS256 to OIDC — and each branch pins its own algorithm list and key source, so a token cannot be
+steered into a verifier that would check it against the wrong key. The tablet token and the
+console session are both HS256 over the same secret, which is exactly why the console session
+carries a `typ` claim the verifier requires: without it, a tablet token would resolve to a
+platform identity.
+
+Sign-ins and password changes are audited (`platform.signed_in`, `platform.password_changed`).
+Login answers identically for an unknown address, an account with no password, and a wrong
+password, so it cannot be used to enumerate staff addresses.
+
+`AUTH_DEV_MODE=true` additionally enables `POST /api/v1/auth/dev-login`, which mints a session
+from an email address with **no password at all** — local and CI only. `app/main.py` refuses to
+start with it enabled when `ENVIRONMENT=production`, enforced in code rather than documented.
+
+Passwords are bcrypt (`app/auth/passwords.py`), minimum 12 characters, with the first staff
+account created by `scripts/create_platform_admin.py`. MFA is not implemented for password
+sign-in; deployments that need it should put an OIDC provider in front, where MFA is a realm
+policy and this repo's only responsibility is validating the resulting token.
 
 ## Known gaps in this v0.1 pass (see ARCHITECTURE.md "What's real vs. scaffolded")
 

@@ -6,8 +6,8 @@ import { ApiError } from "@/lib/api";
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("admin@origami-platform.com");
-  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -16,13 +16,18 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, displayName);
+      await login(email, password);
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? `${err.code}: ${err.message}`
-          : "Could not sign in. Is the API reachable and AUTH_DEV_MODE enabled?";
-      setError(message);
+      // 401 is the expected "wrong credentials" case and the API returns
+      // the same message whether the address exists or not; anything else
+      // is a real fault worth showing verbatim.
+      if (err instanceof ApiError && err.status === 401) {
+        setError("Incorrect email or password.");
+      } else if (err instanceof ApiError) {
+        setError(`${err.code}: ${err.message}`);
+      } else {
+        setError("Could not reach the server. Check your connection and try again.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -38,16 +43,19 @@ export default function LoginPage() {
         background: "var(--farmos-stone)",
       }}
     >
-      <form
-        onSubmit={handleSubmit}
-        className="panel"
-        style={{ width: 380 }}
-      >
-        <div style={{ fontFamily: "var(--font-display)", fontSize: "1.5rem", color: "var(--farmos-cedar)", marginBottom: 4 }}>
+      <form onSubmit={handleSubmit} className="panel" style={{ width: 380 }}>
+        <div
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: "1.5rem",
+            color: "var(--farmos-cedar)",
+            marginBottom: 4,
+          }}
+        >
           Origami Server
         </div>
         <p className="page-subtitle" style={{ marginBottom: 24 }}>
-          Platform admin console — local/dev sign-in
+          Platform admin console
         </p>
 
         {error && <div className="error-banner">{error}</div>}
@@ -57,27 +65,35 @@ export default function LoginPage() {
           <input
             id="email"
             type="email"
+            autoComplete="username"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
         <div className="field-row">
-          <label htmlFor="displayName">Display name (optional)</label>
+          <label htmlFor="password">Password</label>
           <input
-            id="displayName"
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        <button type="submit" className="btn btn-primary" disabled={submitting} style={{ width: "100%" }}>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={submitting}
+          style={{ width: "100%" }}
+        >
           {submitting ? "Signing in…" : "Sign in"}
         </button>
         <p style={{ fontSize: "0.75rem", color: "var(--farmos-muted)", marginTop: 16 }}>
-          This calls <code>/api/v1/auth/dev-login</code>, which only works when the API has{" "}
-          <code>AUTH_DEV_MODE=true</code> — local and staging only. Production uses your OIDC
-          provider instead.
+          Staff accounts are created with{" "}
+          <code>scripts/create_platform_admin.py</code>, which is also how a lost password is
+          reset.
         </p>
       </form>
     </div>

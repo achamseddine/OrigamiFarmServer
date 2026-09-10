@@ -1,4 +1,4 @@
-"""Password hashing and JWT issuance for the FarmOS tablet app's own login.
+"""JWT issuance for the FarmOS tablet app's own login.
 
 This is intentionally independent of app/auth/providers.py (OIDC / platform
 dev-login): field workers using the tablet have no OIDC account, and the
@@ -13,21 +13,9 @@ from __future__ import annotations
 import time
 import uuid
 
-import bcrypt
 import jwt
 
 from app.config import Settings
-
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        return bcrypt.checkpw(password.encode(), password_hash.encode())
-    except ValueError:
-        return False
 
 
 def issue_access_token(settings: Settings, *, user_id: uuid.UUID, tenant_id: uuid.UUID, email: str) -> str:
