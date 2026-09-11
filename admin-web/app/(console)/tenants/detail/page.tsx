@@ -10,6 +10,8 @@ import {
   Farm,
   LicenseLease,
   Membership,
+  Plan,
+  Subscription,
   ModuleCatalogItem,
   Tenant,
   TenantUsage,
@@ -22,12 +24,14 @@ import {
   daysUntil,
   describeError,
   formatDateTime,
+  formatPrice,
   useResource,
 } from "@/lib/ui";
 
 const TABS = [
   "Overview",
   "Usage",
+  "Subscription",
   "Access",
   "Farms",
   "Modules",
@@ -135,6 +139,7 @@ function TenantDetail() {
 
       {tab === "Overview" && <OverviewTab tenant={tenant} />}
       {tab === "Usage" && <UsageTab tenantId={tenantId} />}
+      {tab === "Subscription" && <SubscriptionTab tenantId={tenantId} />}
       {tab === "Access" && <AccessTab tenantId={tenantId} />}
       {tab === "Licensing" && <LicensingTab tenantId={tenantId} />}
       {tab === "Farms" && <FarmsTab tenantId={tenantId} />}
@@ -576,6 +581,185 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+const SUBSCRIPTION_STATES = [
+  { value: "ONBOARDING_TRIAL", label: "Trial — not paying yet" },
+  { value: "ACTIVE", label: "Active — paying" },
+  { value: "GRACE", label: "Past due — chasing payment" },
+  { value: "SUSPENDED", label: "Suspended" },
+  { value: "TERMINATED", label: "Terminated" },
+];
+
+function SubscriptionTab({ tenantId }: { tenantId: string }) {
+  const subscription = useResource<Subscription | null>(
+    `/platform/v1/tenants/${tenantId}/subscription`
+  );
+  const plans = useResource<Plan[]>("/platform/v1/plans");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    plan_id: "",
+    billing_cycle: "MONTHLY",
+    status: "ONBOARDING_TRIAL",
+    starts_at: "",
+    renews_at: "",
+  });
+
+  // Populate the form from whatever is already recorded, once it arrives.
+  useEffect(() => {
+    const current = subscription.data;
+    if (!current) return;
+    setForm({
+      plan_id: current.plan_id,
+      billing_cycle: current.billing_cycle,
+      status: current.status,
+      starts_at: current.starts_at.slice(0, 10),
+      renews_at: current.renews_at ? current.renews_at.slice(0, 10) : "",
+    });
+  }, [subscription.data]);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    try {
+      await apiFetch(`/platform/v1/tenants/${tenantId}/subscription`, {
+        method: "PATCH",
+        body: {
+          plan_id: form.plan_id,
+          billing_cycle: form.billing_cycle,
+          status: form.status,
+          starts_at: new Date(form.starts_at || Date.now()).toISOString(),
+          renews_at: form.renews_at ? new Date(form.renews_at).toISOString() : null,
+        },
+      });
+      setNotice("Subscription saved. It is counted on the Business screen from now on.");
+      await subscription.reload();
+    } catch (err) {
+      setError(describeError(err));
+    }
+  }
+
+  if (subscription.loading || plans.loading) return <Loading what="the subscription" />;
+
+  const selectedPlan = plans.data?.find((plan) => plan.id === form.plan_id);
+  const priceForCycle =
+    selectedPlan &&
+    (form.billing_cycle === "ANNUAL"
+      ? selectedPlan.annual_price_cents
+      : selectedPlan.monthly_price_cents);
+
+  return (
+    <div>
+      {(error || subscription.error) && (
+        <div className="error-banner">{error || subscription.error}</div>
+      )}
+      {notice && <div className="notice-banner">{notice}</div>}
+
+      {!subscription.data && (
+        <div className="notice-banner">
+          This customer has no subscription recorded, so they contribute nothing to revenue and do
+          not appear on the Business screen. Set one below.
+        </div>
+      )}
+
+      <div className="panel" style={{ maxWidth: 560 }}>
+        <div className="chart-title" style={{ marginBottom: 4 }}>
+          What this customer pays
+        </div>
+        <div className="chart-note">
+          Recording this is what puts them into the revenue figures — it is separate from the
+          modules they can use.
+        </div>
+
+        <form onSubmit={save} style={{ marginTop: 14 }}>
+          <div className="field-row">
+            <label htmlFor="sub-plan">Plan</label>
+            <select
+              id="sub-plan"
+              required
+              value={form.plan_id}
+              onChange={(e) => setForm({ ...form, plan_id: e.target.value })}
+            >
+              <option value="">Choose a plan…</option>
+              {plans.data?.map((plan) => (
+                <option key={plan.id} value={plan.id}>
+                  {plan.name} ({plan.code})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field-row">
+            <label htmlFor="sub-cycle">Billing cycle</label>
+            <select
+              id="sub-cycle"
+              value={form.billing_cycle}
+              onChange={(e) => setForm({ ...form, billing_cycle: e.target.value })}
+            >
+              <option value="MONTHLY">Monthly</option>
+              <option value="ANNUAL">Annual</option>
+            </select>
+          </div>
+
+          {selectedPlan && (
+            <p className="chart-note" style={{ marginTop: -6, marginBottom: 14 }}>
+              {priceForCycle === null || priceForCycle === undefined ? (
+                <strong>
+                  This plan has no {form.billing_cycle.toLowerCase()} price set, so this customer
+                  will be reported as unpriced rather than counted in revenue.
+                </strong>
+              ) : (
+                <>Charged at {formatPrice(priceForCycle, selectedPlan.currency)} per{" "}
+                {form.billing_cycle === "ANNUAL" ? "year" : "month"}.</>
+              )}
+            </p>
+          )}
+
+          <div className="field-row">
+            <label htmlFor="sub-status">Status</label>
+            <select
+              id="sub-status"
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value })}
+            >
+              {SUBSCRIPTION_STATES.map((state) => (
+                <option key={state.value} value={state.value}>
+                  {state.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field-row">
+            <label htmlFor="sub-starts">Starts on</label>
+            <input
+              id="sub-starts"
+              type="date"
+              required
+              value={form.starts_at}
+              onChange={(e) => setForm({ ...form, starts_at: e.target.value })}
+            />
+          </div>
+
+          <div className="field-row">
+            <label htmlFor="sub-renews">Renews on (optional)</label>
+            <input
+              id="sub-renews"
+              type="date"
+              value={form.renews_at}
+              onChange={(e) => setForm({ ...form, renews_at: e.target.value })}
+            />
+          </div>
+
+          <button className="btn btn-primary" type="submit">
+            {subscription.data ? "Update subscription" : "Record subscription"}
+          </button>
+        </form>
       </div>
     </div>
   );

@@ -149,6 +149,10 @@ class SubscriptionUpsertRequest(BaseModel):
     starts_at: datetime
     renews_at: datetime | None = None
     grace_until: datetime | None = None
+    # Without this a subscription was stuck on the model default forever:
+    # nothing in the codebase assigned it, so every customer stayed an
+    # onboarding trial and MRR could never be anything but zero.
+    status: SubscriptionStatus = SubscriptionStatus.ONBOARDING_TRIAL
 
 
 class SubscriptionOut(BaseModel):

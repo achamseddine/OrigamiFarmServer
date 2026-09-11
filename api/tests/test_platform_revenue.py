@@ -250,3 +250,66 @@ def test_plan_pricing_round_trips_through_the_api(client, control_db):
     assert updated.status_code == 200, updated.text
     assert updated.json()["monthly_price_cents"] == 24_900
     assert updated.json()["annual_price_cents"] == 199_000
+
+
+def test_the_whole_commercial_loop_works_through_the_api(client, control_db):
+    """Price a plan, sign a customer, put them on it — and see MRR move.
+
+    Every other test here builds Subscription rows directly, which is how a
+    real gap survived: the upsert endpoint had no status field, so a
+    subscription created through the product stayed an onboarding trial
+    forever and MRR could never leave zero. This test only touches HTTP.
+    """
+    token = admin_token(client, control_db, "rev-loop@test.com")
+    headers = auth_headers(token)
+    before = revenue(client, token)["mrr_cents"]
+
+    plan = client.post(
+        "/platform/v1/plans",
+        json={"code": unique_code("LOOP"), "name": "Loop Plan", "monthly_price_cents": 30_000},
+        headers=headers,
+    ).json()
+
+    tenant = client.post(
+        "/platform/v1/tenants",
+        json={
+            "company_code": unique_code("FARM-LOOP"),
+            "legal_name": "Loop Farm Ltd",
+            "display_name": "Loop Farm",
+            "country": "Lebanon",
+        },
+        headers=headers,
+    ).json()
+
+    # As the wizard leaves it: on a plan, but not yet paying.
+    trial = client.patch(
+        f"/platform/v1/tenants/{tenant['id']}/subscription",
+        json={
+            "plan_id": plan["id"],
+            "billing_cycle": "MONTHLY",
+            "starts_at": datetime.now(timezone.utc).isoformat(),
+        },
+        headers=headers,
+    )
+    assert trial.status_code == 200, trial.text
+    assert trial.json()["status"] == "ONBOARDING_TRIAL"
+    assert revenue(client, token)["mrr_cents"] == before, "a trial is pipeline, not revenue"
+
+    # Trial converts.
+    converted = client.patch(
+        f"/platform/v1/tenants/{tenant['id']}/subscription",
+        json={
+            "plan_id": plan["id"],
+            "billing_cycle": "MONTHLY",
+            "starts_at": datetime.now(timezone.utc).isoformat(),
+            "renews_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+            "status": "ACTIVE",
+        },
+        headers=headers,
+    )
+    assert converted.status_code == 200, converted.text
+    assert converted.json()["status"] == "ACTIVE"
+
+    after = revenue(client, token)
+    assert after["mrr_cents"] == before + 30_000
+    assert after["renewals_due_30d"] >= 1
