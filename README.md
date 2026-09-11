@@ -33,12 +33,20 @@ Built, tested, and running end to end:
 - Audit service, support sessions (time-boxed, expiring), file presign endpoint, backup/export
   metadata endpoints.
 - Admin Web (Next.js), served by the API itself at `/`: password sign-in, a platform overview with
-  live counts and audit-volume history, usage and licensing dashboards derived from real rows, a
-  tenant list with search/filter/pagination, a multi-step create-tenant wizard where every step is
-  a real API call, a Tenant 360 page (Overview / Usage / Access / Farms / Modules / Devices /
+  live counts and audit-volume history, a business dashboard (MRR/ARR, pipeline, renewals, revenue
+  by plan), usage and licensing dashboards derived from real rows, a tenant list with
+  search/filter/pagination, a multi-step create-tenant wizard where every step is a real API call,
+  a Tenant 360 page (Overview / Usage / Subscription / Access / Farms / Modules / Devices /
   Licensing / Audit) with working activate/deactivate/revoke actions, staff and platform-role
-  administration, the plan/module catalog, a global audit log, and self-service password change.
-- 72 automated tests against a real Postgres instance, including every mandatory isolation,
+  administration, the plan/module catalog with per-cycle pricing, a global audit log, and
+  self-service password change.
+- A **Getting started** screen (`/guide`) that draws the whole operating sequence — set yourself
+  up, sign a customer, settle into a rhythm — as a flow, with each box's state read from
+  `GET /platform/v1/setup` rather than asserted: the platform checks its own database for a
+  self-set password, a second staff account, priced plans, a customer, a subscription per
+  customer, and a paired tablet, so the diagram says where this deployment has actually got to.
+  The Overview banner names the next outstanding step.
+- 131 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 
@@ -123,6 +131,10 @@ python scripts/create_platform_admin.py --email you@example.com
 That prompts for a password, creates the account if it's new (or resets the password if it isn't),
 and grants `PLATFORM_SUPER_ADMIN`. It's the same command a production deployment uses to bootstrap
 its first admin — run it inside the container there.
+
+Whoever runs it knows the password they typed, so the account is flagged until its holder replaces
+it (`user_identity.password_changed_at` stays null). **Getting started**, the first item in the
+console's sidebar, says so and walks through the rest of the first-run sequence in order.
 
 While working on the console itself, `npm run dev` gives hot reload on
 <http://localhost:3000> instead; it needs the API's origin passed in, since only the co-served

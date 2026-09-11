@@ -26,6 +26,10 @@ class PlatformMeOut(BaseModel):
     email: str
     display_name: str
     platform_roles: list[str]
+    # True while the password in force is one somebody else typed — the
+    # admin who created the account, or one who reset it. False for an
+    # identity that signs in through OIDC and has no password at all.
+    password_set_by_someone_else: bool = False
 
 
 class TenantCreateRequest(BaseModel):

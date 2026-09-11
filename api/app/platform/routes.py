@@ -92,11 +92,15 @@ def platform_me(
             PlatformRoleAssignment.user_id == identity.user_id
         )
     ).scalars().all()
+    user = db.get(UserIdentity, identity.user_id)
     return PlatformMeOut(
         user_id=identity.user_id,
         email=identity.email,
         display_name=identity.display_name,
         platform_roles=list(roles),
+        password_set_by_someone_else=bool(
+            user is not None and user.password_hash and user.password_changed_at is None
+        ),
     )
 
 

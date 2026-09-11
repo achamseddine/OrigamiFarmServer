@@ -510,6 +510,265 @@ select {
   box-shadow: 0 4px 12px rgba(7, 24, 20, 0.25);
 }
 
+/* --- the guide schema ------------------------------------------------
+   A flow, not a list: the phases read left to right, and each node
+   carries its own live state so the diagram and the checklist are the
+   same object rather than two things that can disagree. */
+
+.flow-phase {
+  margin-bottom: 28px;
+}
+
+.flow-phase-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.flow-phase-head .tag {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--farmos-gold);
+  font-weight: 700;
+}
+
+.flow-phase-head h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  margin: 0;
+  color: var(--farmos-cedar);
+}
+
+.flow-phase .cadence {
+  color: var(--farmos-muted);
+  font-size: 0.85rem;
+  margin: 0 0 14px 0;
+}
+
+.flow-lane {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.flow-arrow {
+  align-self: center;
+  color: #b5aa91;
+  font-size: 1.1rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+/* Once the lane has stacked, an arrow still pointing right is pointing at
+   the margin. */
+@media (max-width: 760px) {
+  .flow-arrow {
+    transform: rotate(90deg);
+    align-self: flex-start;
+    margin-left: 16px;
+  }
+}
+
+.flow-node {
+  /* Capped so a lane that wraps leaves a box the size of its neighbours
+     rather than one slab stretched across the width. */
+  flex: 1 1 190px;
+  min-width: 180px;
+  max-width: 310px;
+  background: var(--farmos-card);
+  border: 1px solid var(--farmos-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+a.flow-node:hover {
+  box-shadow: 0 4px 16px rgba(11, 61, 46, 0.12);
+  transform: translateY(-1px);
+}
+
+/* Colour never carries the state on its own: each node also prints what
+   the platform found, so a reader who cannot tell the two greens apart
+   still knows which steps are outstanding. */
+.flow-node.done {
+  border-color: #bcdcc8;
+}
+
+.flow-node.todo {
+  border-color: var(--farmos-gold);
+  background: #fffaf0;
+}
+
+.flow-node .marker {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flow-node.done .marker {
+  color: var(--farmos-olive);
+}
+.flow-node.todo .marker {
+  color: #9a6b12;
+}
+.flow-node.habit .marker {
+  color: var(--farmos-muted);
+}
+
+.flow-node .t {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--farmos-ink);
+}
+
+.flow-node .d {
+  font-size: 0.82rem;
+  color: var(--farmos-muted);
+  line-height: 1.45;
+}
+
+.flow-node .s {
+  font-size: 0.76rem;
+  color: var(--farmos-ink);
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px dashed var(--farmos-border);
+}
+
+.setup-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--farmos-sand);
+  overflow: hidden;
+  margin: 10px 0 6px 0;
+}
+
+.setup-bar .fill {
+  height: 100%;
+  background: var(--farmos-olive);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.next-step {
+  background: var(--farmos-cedar);
+  color: white;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.next-step .k {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--farmos-wheat);
+  margin-bottom: 4px;
+}
+
+.next-step h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  margin: 0 0 4px 0;
+  color: white;
+}
+
+.next-step p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--farmos-wheat);
+  max-width: 60ch;
+}
+
+.next-step .btn {
+  background: var(--farmos-gold);
+  color: var(--farmos-ink);
+  border: none;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* --- how the pieces fit --------------------------------------------- */
+
+.pieces {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.piece {
+  flex: 1 1 180px;
+  border: 1px solid var(--farmos-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--farmos-mist);
+}
+
+.piece.you {
+  background: var(--farmos-cedar);
+  border-color: var(--farmos-cedar);
+  color: var(--farmos-wheat);
+}
+
+.piece.you .w {
+  color: white;
+}
+
+.piece .w {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--farmos-ink);
+  margin-bottom: 4px;
+}
+
+.piece p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: inherit;
+  opacity: 0.85;
+}
+
+/* --- glossary -------------------------------------------------------- */
+
+.glossary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px 28px;
+}
+
+.glossary .w {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--farmos-ink);
+}
+
+.glossary p {
+  margin: 2px 0 0 0;
+  font-size: 0.82rem;
+  color: var(--farmos-muted);
+  line-height: 1.5;
+}
+
 /* --- misc ------------------------------------------------------------ */
 
 .empty-note {

@@ -12,6 +12,9 @@ never has a password_hash.
 
 from __future__ import annotations
 
+from datetime import datetime
+
+from sqlalchemy import DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.db import ControlBase
@@ -25,3 +28,10 @@ class UserIdentity(UUIDPrimaryKeyMixin, TimestampMixin, ControlBase):
     email: Mapped[str] = mapped_column(unique=True, index=True)
     display_name: Mapped[str] = mapped_column()
     password_hash: Mapped[str | None] = mapped_column(nullable=True)
+    # Set only when the account holder changes their own password. Null
+    # means the password in force was typed by somebody else — the admin who
+    # created the account, or one who reset it — which is a different
+    # security position, and the one the setup checklist asks about.
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -84,6 +84,10 @@ def main() -> None:
             print(f"Created user {email} ({user.id})")
         else:
             user.password_hash = hash_password(password)
+            # Whoever runs this script now knows the password, so the
+            # console's setup checklist goes back to asking them to set
+            # their own.
+            user.password_changed_at = None
             if args.name:
                 user.display_name = args.name
             print(f"Updated password for existing user {email} ({user.id})")

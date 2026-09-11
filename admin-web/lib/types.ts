@@ -140,6 +140,7 @@ export interface Staff {
   display_name: string;
   platform_roles: string[];
   has_password: boolean;
+  password_set_by_someone_else: boolean;
 }
 
 export interface Membership {
@@ -227,4 +228,24 @@ export interface Subscription {
   renews_at: string | null;
   ends_at: string | null;
   grace_until: string | null;
+}
+
+/** One step of the first-run checklist (GET /platform/v1/setup).
+ *
+ * The key set is closed on purpose: the guide screen maps each one to the
+ * screen that does it, so a step the API adds without the console knowing
+ * would be a compile error rather than a box with nowhere to go.
+ */
+export interface SetupStep {
+  key: "password" | "staff" | "plans" | "pricing" | "tenant" | "subscription" | "device";
+  done: boolean;
+  detail: string;
+}
+
+export interface SetupState {
+  generated_at: string;
+  steps: SetupStep[];
+  steps_done: number;
+  steps_total: number;
+  complete: boolean;
 }

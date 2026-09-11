@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { StatusChip } from "@/components/StatusChip";
 import {
   ErrorBanner,
@@ -10,10 +11,16 @@ import {
   formatDate,
   useResource,
 } from "@/lib/ui";
-import { MetricsOverview } from "@/lib/types";
+import { MetricsOverview, SetupState } from "@/lib/types";
+import { SETUP_STEPS } from "@/lib/setup";
 
 export default function DashboardPage() {
   const { data, error, loading } = useResource<MetricsOverview>("/platform/v1/metrics/overview");
+  // Separate request on purpose: the overview is the screen people live on,
+  // and an unfinished setup is worth saying here rather than only on a
+  // screen they have no reason to open twice.
+  const { data: setup } = useResource<SetupState>("/platform/v1/setup");
+  const outstanding = (setup?.steps ?? []).filter((step) => !step.done);
 
   return (
     <div>
@@ -22,6 +29,17 @@ export default function DashboardPage() {
         subtitle="Live state of the control plane — every figure is counted from the database at load."
       />
       <ErrorBanner message={error} />
+
+      {outstanding.length > 0 && (
+        <div className="notice-banner">
+          {outstanding.length} setup {outstanding.length === 1 ? "step is" : "steps are"} still
+          outstanding — next up, {SETUP_STEPS[outstanding[0].key].title.toLowerCase()}.{" "}
+          <Link href="/guide" style={{ fontWeight: 600 }}>
+            Open Getting started
+          </Link>
+        </div>
+      )}
+
       {loading && <Loading what="the overview" />}
 
       {data && (

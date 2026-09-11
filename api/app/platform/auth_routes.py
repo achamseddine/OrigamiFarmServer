@@ -14,6 +14,8 @@ always been — require_platform_role on each route.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
@@ -105,6 +107,9 @@ def change_password(
         raise AppError(ErrorCode.UNAUTHENTICATED, "Current password is incorrect")
 
     user.password_hash = hash_password(payload.new_password)
+    # Only this path sets it: from here on the password in force is one
+    # nobody else has ever seen.
+    user.password_changed_at = datetime.now(timezone.utc)
     db.flush()
 
     record_audit_event(

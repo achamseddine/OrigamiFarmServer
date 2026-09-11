@@ -6,6 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 
 const NAV: { section: string; items: { href: string; label: string }[] }[] = [
+  // First, and on its own: someone opening this console for the first time
+  // has no way to know which of the screens below to touch first.
+  {
+    section: "Start here",
+    items: [{ href: "/guide", label: "Getting started" }],
+  },
   {
     section: "Monitor",
     items: [
@@ -60,6 +66,12 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
         <p className="page-subtitle">
           A platform super admin can grant one from Staff &amp; access.
         </p>
+        {me.password_set_by_someone_else && (
+          <p className="page-subtitle">
+            Whoever created this account also chose its password, so change it once you have
+            access.
+          </p>
+        )}
         <button className="btn btn-secondary" onClick={logout}>
           Sign out
         </button>

@@ -8,7 +8,7 @@ import { ErrorBanner, PageHeader, describeError } from "@/lib/ui";
 const MIN_LENGTH = 12;
 
 export default function AccountPage() {
-  const { me } = useAuth();
+  const { me, refresh } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -33,6 +33,10 @@ export default function AccountPage() {
         body: { current_password: current, new_password: next },
       });
       setNotice("Password changed. It applies the next time you sign in.");
+      // So the "someone else knows this password" notice, here and on the
+      // Getting started checklist, stops being shown the moment it stops
+      // being true.
+      await refresh();
       setCurrent("");
       setNext("");
       setConfirm("");
@@ -46,6 +50,13 @@ export default function AccountPage() {
   return (
     <div>
       <PageHeader title="My account" subtitle="Your identity and platform access." />
+
+      {me?.password_set_by_someone_else && !notice && (
+        <div className="notice-banner">
+          The password on this account is still the one whoever created it typed for you, so they
+          know it too. Change it below.
+        </div>
+      )}
 
       <div className="panel">
         <div className="meta-grid">

@@ -9,6 +9,8 @@ interface Me {
   email: string;
   display_name: string;
   platform_roles: string[];
+  /** True while the password in force is one an admin typed for them. */
+  password_set_by_someone_else: boolean;
 }
 
 interface AuthState {

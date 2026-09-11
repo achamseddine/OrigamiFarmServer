@@ -39,6 +39,8 @@ class StaffOut(BaseModel):
     # identity that only ever arrived through OIDC, which the console
     # should not offer a password reset for.
     has_password: bool
+    # True while they are still on a password an admin typed for them.
+    password_set_by_someone_else: bool
 
 
 class StaffCreateRequest(BaseModel):
@@ -66,6 +68,7 @@ def _staff_out(db: Session, user: UserIdentity) -> StaffOut:
         display_name=user.display_name,
         platform_roles=list(roles),
         has_password=bool(user.password_hash),
+        password_set_by_someone_else=bool(user.password_hash and user.password_changed_at is None),
     )
 
 
@@ -229,6 +232,10 @@ def reset_staff_password(
     """
     user = _get_staff_or_404(db, user_id)
     user.password_hash = hash_password(payload.new_password)
+    # Cleared, not left as it was: whatever they chose before, the password
+    # in force now is one this admin knows, and the checklist should say so
+    # until they replace it themselves.
+    user.password_changed_at = None
     db.flush()
     record_audit_event(
         db,

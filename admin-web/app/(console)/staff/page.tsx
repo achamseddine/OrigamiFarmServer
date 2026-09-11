@@ -171,6 +171,11 @@ export default function StaffPage() {
                     </td>
                     <td style={{ color: "var(--farmos-muted)", fontSize: "0.8rem" }}>
                       {person.has_password ? "Password" : "No password (OIDC only)"}
+                      {person.password_set_by_someone_else && (
+                        <div style={{ color: "var(--farmos-warning)" }}>
+                          Not yet changed by them
+                        </div>
+                      )}
                     </td>
                     {isSuperAdmin && (
                       <td>
