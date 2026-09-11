@@ -37,6 +37,16 @@
 
 FROM node:20-bookworm-slim AS console
 
+# Node builds a V8 worker pool sized to the CPU count before it runs a
+# single line, and on a thread-starved Docker VM that abort()s at startup:
+#   Assertion failed: (0) == (uv_thread_create(...))
+# which kills `npm ci` with exit 134 and looks like a broken install rather
+# than a starved builder. Pool size 0 runs those tasks on the main thread.
+# Same class of failure as pip's progress-bar thread further down, and the
+# same caveat: this makes the build survive a squeezed VM, it does not fix
+# one — see ../docs/AZURE_DEPLOYMENT.md.
+ENV NODE_OPTIONS=--v8-pool-size=0
+
 WORKDIR /build
 COPY admin-web/package.json admin-web/package-lock.json ./
 RUN npm ci --no-audit --no-fund

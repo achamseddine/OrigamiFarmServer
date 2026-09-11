@@ -86,13 +86,18 @@ container databases live — it can wipe another project's local Postgres
 data. Or raise the ceiling instead of clearing it: Docker Desktop →
 Settings → Resources → Virtual disk limit.
 
-**`RuntimeError: can't start new thread`**, or a step failing because a
-subprocess/shell couldn't start (e.g. `E: Sub-process returned an error
-code` from a hook that ends in `|| true`, which can't fail any other way).
-These mean the Docker VM can't create threads or processes — resource
-starvation, not a bug in the step that reported it. The Dockerfile avoids
-the known trigger (`pip --progress-bar off`), but the VM still needs fixing
-or it will resurface at runtime, where uvicorn forks its workers:
+**`RuntimeError: can't start new thread`**, or
+**`Assertion failed: (0) == (uv_thread_create(...))`** with `npm ci` exiting
+134, or a step failing because a subprocess/shell couldn't start (e.g. `E:
+Sub-process returned an error code` from a hook that ends in `|| true`,
+which can't fail any other way). These all mean the same thing: the Docker
+VM can't create threads or processes — resource starvation, not a bug in
+the step that reported it. The Node variant is the loudest because Node
+builds a V8 worker pool before running any code at all. The Dockerfile
+avoids both known triggers (`pip --progress-bar off`, and
+`NODE_OPTIONS=--v8-pool-size=0` in the console stage), but the VM still
+needs fixing or it will resurface at runtime, where uvicorn forks its
+workers:
 
 - Docker Desktop → Settings → Resources: raise **Memory** (4 GB+) and CPUs.
 - Restart Docker Desktop — the VM accumulates pressure over a long session.
