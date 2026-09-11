@@ -35,16 +35,27 @@
 # The Node stage is pinned to the same Debian release for the same reason,
 # and needs no apt either — npm ships in the base image.
 
-FROM node:20-bookworm-slim AS console
-
-# Node builds a V8 worker pool sized to the CPU count before it runs a
-# single line, and on a thread-starved Docker VM that abort()s at startup:
+# Bullseye, not bookworm, and deliberately older than the Python stages.
+# Node has to create threads before it runs a line of code, and bookworm's
+# glibc creates them with clone3(), which the default seccomp profile on
+# Docker Engine older than 20.10.10 rejects with EPERM. The result is:
 #   Assertion failed: (0) == (uv_thread_create(...))
-# which kills `npm ci` with exit 134 and looks like a broken install rather
-# than a starved builder. Pool size 0 runs those tasks on the main thread.
-# Same class of failure as pip's progress-bar thread further down, and the
-# same caveat: this makes the build survive a squeezed VM, it does not fix
-# one — see ../docs/AZURE_DEPLOYMENT.md.
+# killing `npm ci` with exit 134 — which reads as a broken dependency
+# install rather than a daemon that is too old for the base image. The
+# Python stages don't trip it because nothing there needs a thread.
+# Bullseye's glibc uses plain clone() and sidesteps it entirely.
+#
+# This costs nothing: the stage is thrown away after the build and only its
+# compiled static files reach the final image, so its distro never ships
+# and never ages into a runtime vulnerability.
+FROM node:20-bullseye-slim AS console
+
+# Belt and braces for the same failure on a VM that is merely starved
+# rather than seccomp-blocked: Node sizes a V8 worker pool to the CPU count
+# at startup, and pool size 0 runs that work on the main thread instead.
+# Same class of problem as pip's progress-bar thread further down, and the
+# same caveat — it survives a squeezed VM, it does not fix one. See
+# ../docs/AZURE_DEPLOYMENT.md.
 ENV NODE_OPTIONS=--v8-pool-size=0
 
 WORKDIR /build

@@ -99,6 +99,22 @@ avoids both known triggers (`pip --progress-bar off`, and
 needs fixing or it will resurface at runtime, where uvicorn forks its
 workers:
 
+First separate the two causes, because only one of them is yours to fix:
+
+```bash
+docker run --rm node:20-bullseye-slim node -e "console.log('ok')"
+```
+
+If that prints `ok`, the VM is merely starved — raise its resources below.
+If it aborts with the same `uv_thread_create` assertion, the daemon is
+refusing thread creation outright and no change to this repo can help:
+Docker Engine older than 20.10.10 ships a seccomp profile that rejects the
+`clone3()` syscall newer glibc uses for threads. Update Docker Desktop, or
+build in Azure with `az acr build` (below) and skip the local daemon
+entirely. `docker version --format '{{.Server.Version}}'` tells you which
+engine you are on; "Sending build context to Docker daemon" instead of
+`[+] Building` is another sign it is an old one.
+
 - Docker Desktop → Settings → Resources: raise **Memory** (4 GB+) and CPUs.
 - Restart Docker Desktop — the VM accumulates pressure over a long session.
 - Confirm with `docker run --rm python:3.12-slim-bookworm python -c "import
