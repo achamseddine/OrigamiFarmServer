@@ -36,6 +36,7 @@ from app.platform.metrics import (
     tenant_farm_data_usage,
     tenants_created_per_month,
 )
+from app.platform.revenue import invoice_totals, revenue_snapshot
 from app.tenants.models import PlatformRoleAssignment, Tenant, TenantMembership
 
 router = APIRouter()
@@ -177,6 +178,65 @@ def metrics_overview(
         "renewals_due_30d": renewals_due,
         "audit_events_per_day": audit_events_per_day(db, audit_days),
         "tenants_created_per_month": tenants_created_per_month(db, 6),
+    }
+
+
+@router.get("/metrics/revenue")
+def metrics_revenue(
+    db: Session = Depends(get_control_db),
+    _identity: Identity = Depends(
+        require_platform_role(
+            PlatformRole.PLATFORM_SUPER_ADMIN,
+            PlatformRole.PLATFORM_COMMERCIAL_ADMIN,
+            PlatformRole.PLATFORM_AUDITOR,
+        )
+    ),
+) -> dict:
+    """Recurring revenue and the commercial pipeline behind it.
+
+    Support admins are excluded: troubleshooting a tenant's data does not
+    require knowing what the business charges.
+    """
+    snapshot = revenue_snapshot(db)
+    now = datetime.now(timezone.utc)
+
+    tenants_by_month = tenants_created_per_month(db, 12)
+
+    return {
+        "generated_at": now.isoformat(),
+        "currency": snapshot.currency,
+        "currencies_present": snapshot.currencies_present,
+        "mrr_cents": snapshot.mrr_cents,
+        "arr_cents": snapshot.arr_cents,
+        "arpa_cents": round(snapshot.mrr_cents / snapshot.paying_tenants)
+        if snapshot.paying_tenants
+        else 0,
+        "paying_tenants": snapshot.paying_tenants,
+        "trial_tenants": snapshot.trial_tenants,
+        "at_risk_tenants": snapshot.at_risk_tenants,
+        "at_risk_mrr_cents": snapshot.at_risk_mrr_cents,
+        "lost_tenants": snapshot.lost_tenants,
+        "renewals_due_30d": snapshot.renewals_due_30d,
+        "renewals_due_30d_mrr_cents": snapshot.renewals_due_30d_mrr_cents,
+        # The two numbers that say whether this report can be trusted as a
+        # complete picture of the book.
+        "unpriced_subscriptions": snapshot.unpriced_subscriptions,
+        "tenants_without_subscription": snapshot.tenants_without_subscription,
+        "by_plan": [
+            {
+                "plan_code": entry.plan_code,
+                "plan_name": entry.plan_name,
+                "currency": entry.currency,
+                "monthly_price_cents": entry.monthly_price_cents,
+                "annual_price_cents": entry.annual_price_cents,
+                "subscriptions": entry.subscriptions,
+                "mrr_cents": entry.mrr_cents,
+                "unpriced_subscriptions": entry.unpriced_subscriptions,
+            }
+            for entry in snapshot.by_plan
+        ],
+        "tenants_created_per_month": tenants_by_month,
+        "invoicing": invoice_totals(db),
     }
 
 

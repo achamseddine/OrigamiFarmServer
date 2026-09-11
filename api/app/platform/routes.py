@@ -50,6 +50,7 @@ from app.platform.schemas import (
     ModuleOut,
     PlanCreateRequest,
     PlanOut,
+    PlanUpdateRequest,
     PlatformMeOut,
     SubscriptionOut,
     SubscriptionUpsertRequest,
@@ -326,6 +327,42 @@ def create_plan(
     plan = Plan(**payload.model_dump())
     db.add(plan)
     db.flush()
+    return plan
+
+
+@router.patch("/plans/{plan_id}", response_model=PlanOut)
+def update_plan(
+    plan_id: uuid.UUID,
+    payload: PlanUpdateRequest,
+    db: Session = Depends(get_control_db),
+    identity: Identity = Depends(require_platform_role(*_STAFF)),
+) -> Plan:
+    """Repricing a plan is audited: it changes what every tenant on that
+    plan contributes to recurring revenue, so it should never be a silent
+    edit.
+    """
+    plan = db.get(Plan, plan_id)
+    if plan is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No such plan")
+
+    changes = payload.model_dump(exclude_unset=True)
+    before = {field: getattr(plan, field) for field in changes}
+    for field, value in changes.items():
+        setattr(plan, field, value)
+    db.flush()
+
+    if before != changes:
+        record_audit_event(
+            db,
+            actor_id=identity.user_id,
+            actor_type=ActorType.PLATFORM_USER,
+            action="plan.updated",
+            entity_type="plan",
+            entity_id=str(plan.id),
+            before=before,
+            after=changes,
+            summary=f"Updated plan {plan.code}",
+        )
     return plan
 
 

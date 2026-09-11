@@ -173,6 +173,48 @@ export interface Plan {
   name: string;
   status: string;
   limits: Record<string, unknown>;
+  currency: string;
+  monthly_price_cents: number | null;
+  annual_price_cents: number | null;
+}
+
+export interface PlanRevenue {
+  plan_code: string;
+  plan_name: string;
+  currency: string;
+  monthly_price_cents: number | null;
+  annual_price_cents: number | null;
+  subscriptions: number;
+  mrr_cents: number;
+  unpriced_subscriptions: number;
+}
+
+export interface MetricsRevenue {
+  generated_at: string;
+  currency: string;
+  currencies_present: string[];
+  mrr_cents: number;
+  arr_cents: number;
+  arpa_cents: number;
+  paying_tenants: number;
+  trial_tenants: number;
+  at_risk_tenants: number;
+  at_risk_mrr_cents: number;
+  lost_tenants: number;
+  renewals_due_30d: number;
+  renewals_due_30d_mrr_cents: number;
+  unpriced_subscriptions: number;
+  tenants_without_subscription: number;
+  by_plan: PlanRevenue[];
+  tenants_created_per_month: { month: string; tenants: number }[];
+  invoicing: {
+    invoices_recorded: number;
+    billed_cents: number;
+    collected_cents: number;
+    outstanding_cents: number;
+    overdue_cents: number;
+    billing_configured: boolean;
+  };
 }
 
 export interface Subscription {

@@ -90,6 +90,20 @@ export function daysUntil(value: string): number {
   return Math.round((new Date(value).getTime() - Date.now()) / 86_400_000);
 }
 
+/** Money is stored in cents everywhere so it is never held as a float. */
+export function formatMoney(cents: number, currency: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+  }).format(cents / 100);
+}
+
+/** A price that has never been set reads as "not priced", never as zero. */
+export function formatPrice(cents: number | null, currency: string): string {
+  return cents === null ? "Not priced" : formatMoney(cents, currency);
+}
+
 // --- charts -----------------------------------------------------------
 //
 // Both charts below plot a single series, so there is no legend: the title

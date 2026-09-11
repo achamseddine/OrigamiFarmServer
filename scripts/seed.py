@@ -11,7 +11,7 @@ Run from api/ with the venv active:
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api"))
@@ -22,15 +22,17 @@ from app.auth.models import UserIdentity  # noqa: E402
 from app.auth.passwords import hash_password  # noqa: E402
 from app.common.db import ControlSessionLocal  # noqa: E402
 from app.common.enums import (  # noqa: E402
+    BillingCycle,
     EntitlementSource,
     EntitlementStatus,
     MembershipStatus,
     PlatformRole,
+    SubscriptionStatus,
     TenantRole,
     TenantStatus,
 )
 from app.common.tenant_router import TenantDataRouter  # noqa: E402
-from app.plans.models import ModuleCatalog, TenantEntitlement  # noqa: E402
+from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement  # noqa: E402
 from app.tenant_api.models import Animal  # noqa: E402
 from app.tenants.models import Farm, PlatformRoleAssignment, Tenant, TenantMembership  # noqa: E402
 
@@ -239,6 +241,45 @@ def main() -> None:
             )
         else:
             membership_b.role = "owner"
+
+        print("Seeding priced plans and demo subscriptions...")
+        # Demo commercial data, so the Business dashboard has something to
+        # show locally. These prices are invented for the demo — a real
+        # deployment prices its own plans in the console.
+        plans = {}
+        for code, name, monthly, annual in (
+            ("STARTER", "Starter", 9_900, 99_000),
+            ("GROWTH", "Growth", 24_900, 249_000),
+        ):
+            plan = db.execute(select(Plan).where(Plan.code == code)).scalar_one_or_none()
+            if plan is None:
+                plan = Plan(code=code, name=name, currency="USD")
+                db.add(plan)
+            plan.monthly_price_cents = monthly
+            plan.annual_price_cents = annual
+            db.flush()
+            plans[code] = plan
+
+        for tenant, plan_code, cycle in (
+            (tenant_a, "GROWTH", BillingCycle.MONTHLY),
+            (tenant_b, "STARTER", BillingCycle.ANNUAL),
+        ):
+            existing_sub = db.execute(
+                select(Subscription).where(Subscription.tenant_id == tenant.id)
+            ).scalar_one_or_none()
+            if existing_sub is None:
+                now = datetime.now(timezone.utc)
+                db.add(
+                    Subscription(
+                        tenant_id=tenant.id,
+                        plan_id=plans[plan_code].id,
+                        status=SubscriptionStatus.ACTIVE,
+                        billing_cycle=cycle,
+                        starts_at=now - timedelta(days=60),
+                        renews_at=now + timedelta(days=20),
+                    )
+                )
+        db.flush()
 
         print("Granting Tenant B its licensed add-ons (Mouneh, Farm Visits)...")
         for license_code, plan in (("mouneh", "mouneh_addon"), ("visits_agritourism", "farmos_experience")):

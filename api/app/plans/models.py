@@ -22,6 +22,14 @@ class Plan(UUIDPrimaryKeyMixin, TimestampMixin, ControlBase):
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
     limits: Mapped[dict] = mapped_column(JSONB, default=dict)
 
+    # List price per billing cycle. Null means nobody has priced this plan
+    # yet, which the revenue reporting treats as unknown rather than as
+    # free — a subscription on an unpriced plan is excluded from MRR and
+    # counted separately, so a missing price can never quietly read as zero.
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    monthly_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    annual_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
 
 class ModuleCatalog(ControlBase):
     __tablename__ = "module_catalog"

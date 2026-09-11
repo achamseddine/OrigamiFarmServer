@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.common.enums import (
     EntitlementStatus,
@@ -94,6 +94,20 @@ class PlanCreateRequest(BaseModel):
     code: str
     name: str
     limits: dict = {}
+    currency: str = "USD"
+    # Optional, and left unset rather than zeroed when unknown: an unpriced
+    # plan is excluded from revenue rather than counted as free.
+    monthly_price_cents: int | None = Field(default=None, ge=0)
+    annual_price_cents: int | None = Field(default=None, ge=0)
+
+
+class PlanUpdateRequest(BaseModel):
+    name: str | None = None
+    status: str | None = None
+    limits: dict | None = None
+    currency: str | None = None
+    monthly_price_cents: int | None = Field(default=None, ge=0)
+    annual_price_cents: int | None = Field(default=None, ge=0)
 
 
 class PlanOut(BaseModel):
@@ -102,6 +116,9 @@ class PlanOut(BaseModel):
     name: str
     status: str
     limits: dict
+    currency: str
+    monthly_price_cents: int | None
+    annual_price_cents: int | None
 
     model_config = {"from_attributes": True}
 
