@@ -177,6 +177,9 @@ export interface Plan {
   currency: string;
   monthly_price_cents: number | null;
   annual_price_cents: number | null;
+  /** The modules this plan sells. Always sent with the plan: a price
+   *  without its contents cannot be read as an offer. */
+  module_codes: string[];
 }
 
 export interface PlanRevenue {
@@ -248,4 +251,36 @@ export interface SetupState {
   steps_done: number;
   steps_total: number;
   complete: boolean;
+}
+
+/** What PATCH /tenants/{id}/subscription did — the commercial record plus
+ *  the modules putting them on that plan switched on. */
+export interface SubscriptionSaveResult {
+  subscription: Subscription;
+  plan_code: string;
+  modules_granted: string[];
+  modules_already_active: string[];
+  modules_not_in_plan: string[];
+}
+
+/** Where an invited tenant user has got to, without exposing their link. */
+export interface InvitationStatus {
+  membership_id: string;
+  email: string;
+  display_name: string;
+  has_password: boolean;
+  invitation_sent_at: string | null;
+  invitation_expires_at: string | null;
+  invitation_accepted_at: string | null;
+  state: "no_invitation" | "pending" | "expired" | "accepted";
+}
+
+/** The invitation link itself — returned once, never readable again. */
+export interface IssuedInvitation {
+  invitation_id: string;
+  email: string;
+  url: string;
+  expires_at: string;
+  delivery: "email" | "manual" | "failed";
+  delivery_detail: string;
 }

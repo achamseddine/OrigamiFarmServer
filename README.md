@@ -40,13 +40,21 @@ Built, tested, and running end to end:
   Licensing / Audit) with working activate/deactivate/revoke actions, staff and platform-role
   administration, the plan/module catalog with per-cycle pricing, a global audit log, and
   self-service password change.
+- Plans mean something: a plan is a bundle of modules at a price, editable from the console, and
+  putting a tenant on one records what they pay **and** grants the modules it includes in a single
+  step — the response names exactly what it turned on. A downgrade reports what the new plan does
+  not cover rather than silently switching a working farm's module off.
+- Tenant-user invitations: inviting someone issues a hashed, single-use, expiring link they open to
+  choose their own password and land straight in the tablet app (`/activate`). It is emailed when
+  SMTP is configured and shown to the admin to pass on when it is not — it never claims to have
+  sent mail it did not send.
 - A **Getting started** screen (`/guide`) that draws the whole operating sequence — set yourself
   up, sign a customer, settle into a rhythm — as a flow, with each box's state read from
   `GET /platform/v1/setup` rather than asserted: the platform checks its own database for a
   self-set password, a second staff account, priced plans, a customer, a subscription per
   customer, and a paired tablet, so the diagram says where this deployment has actually got to.
   The Overview banner names the next outstanding step.
-- 131 automated tests against a real Postgres instance, including every mandatory isolation,
+- 154 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 

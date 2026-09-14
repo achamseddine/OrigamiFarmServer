@@ -103,6 +103,16 @@ class PlanCreateRequest(BaseModel):
     # plan is excluded from revenue rather than counted as free.
     monthly_price_cents: int | None = Field(default=None, ge=0)
     annual_price_cents: int | None = Field(default=None, ge=0)
+    # What the plan sells. A plan with none is a price with no contents —
+    # legal, since the modules can be chosen afterwards, but it grants a
+    # subscriber nothing until they are.
+    module_codes: list[str] = []
+
+
+class PlanModulesRequest(BaseModel):
+    """The complete set of modules a plan includes — not an addition to it."""
+
+    module_codes: list[str]
 
 
 class PlanUpdateRequest(BaseModel):
@@ -123,6 +133,9 @@ class PlanOut(BaseModel):
     currency: str
     monthly_price_cents: int | None
     annual_price_cents: int | None
+    # Always sent with the plan: a price without its contents cannot be
+    # read as an offer.
+    module_codes: list[str] = []
 
     model_config = {"from_attributes": True}
 
@@ -157,6 +170,10 @@ class SubscriptionUpsertRequest(BaseModel):
     # nothing in the codebase assigned it, so every customer stayed an
     # onboarding trial and MRR could never be anything but zero.
     status: SubscriptionStatus = SubscriptionStatus.ONBOARDING_TRIAL
+    # On by default because the opposite default is the bug this fixes: a
+    # customer recorded as subscribed who can open nothing. Turn it off to
+    # record a commercial fact without touching what they may use.
+    apply_plan_modules: bool = True
 
 
 class SubscriptionOut(BaseModel):
@@ -171,6 +188,21 @@ class SubscriptionOut(BaseModel):
     grace_until: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class SubscriptionSaveResponse(BaseModel):
+    """The subscription, plus what putting the tenant on that plan changed.
+
+    modules_not_in_plan is reported, never revoked: moving a customer to a
+    smaller plan must not switch off the module a farm is recording with
+    today. The console shows the list so somebody decides.
+    """
+
+    subscription: SubscriptionOut
+    plan_code: str
+    modules_granted: list[str]
+    modules_already_active: list[str]
+    modules_not_in_plan: list[str]
 
 
 class EntitlementActivateRequest(BaseModel):
@@ -246,6 +278,46 @@ class MembershipOut(BaseModel):
     role: str
     default_farm_id: uuid.UUID | None = None
     has_password: bool
+
+
+class InvitationCreateRequest(BaseModel):
+    ttl_hours: int = Field(default=168, ge=1, le=720)
+    # Attempted only when this deployment has a mail server; the response
+    # says which of the two actually happened rather than assuming.
+    send_email: bool = True
+
+
+class InvitationOut(BaseModel):
+    """The link, returned exactly once.
+
+    url is the plaintext token in a URL, so this response is a credential:
+    it is shown to the admin who created it and never recoverable
+    afterwards — a lost link is reissued, not looked up.
+    """
+
+    invitation_id: uuid.UUID
+    email: str
+    url: str
+    expires_at: datetime
+    # "email" when it was sent, "manual" when no mail server is configured,
+    # "failed" when one is and the send did not work. The console shows the
+    # link to copy in the latter two cases.
+    delivery: str
+    delivery_detail: str
+
+
+class InvitationStatusOut(BaseModel):
+    """Where this person is in getting started, without exposing the token."""
+
+    membership_id: uuid.UUID
+    email: str
+    display_name: str
+    has_password: bool
+    invitation_sent_at: datetime | None
+    invitation_expires_at: datetime | None
+    invitation_accepted_at: datetime | None
+    # What to show: "no_invitation", "pending", "expired", "accepted".
+    state: str
 
 
 class MembershipStatusChangeRequest(BaseModel):

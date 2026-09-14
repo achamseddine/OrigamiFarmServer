@@ -292,7 +292,7 @@ def test_the_whole_commercial_loop_works_through_the_api(client, control_db):
         headers=headers,
     )
     assert trial.status_code == 200, trial.text
-    assert trial.json()["status"] == "ONBOARDING_TRIAL"
+    assert trial.json()["subscription"]["status"] == "ONBOARDING_TRIAL"
     assert revenue(client, token)["mrr_cents"] == before, "a trial is pipeline, not revenue"
 
     # Trial converts.
@@ -308,7 +308,7 @@ def test_the_whole_commercial_loop_works_through_the_api(client, control_db):
         headers=headers,
     )
     assert converted.status_code == 200, converted.text
-    assert converted.json()["status"] == "ACTIVE"
+    assert converted.json()["subscription"]["status"] == "ACTIVE"
 
     after = revenue(client, token)
     assert after["mrr_cents"] == before + 30_000

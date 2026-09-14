@@ -187,3 +187,43 @@ class TenantDataLocator(TimestampMixin, ControlBase):
 
 
 Index("ix_farm_tenant_active", Farm.tenant_id, Farm.active)
+
+
+class MembershipInvitation(UUIDPrimaryKeyMixin, TimestampMixin, ControlBase):
+    """A one-time, hashed, expiring invitation for a tenant user to set
+    their own password and start using the tablet app.
+
+    Before this existed, inviting a tenant owner created an identity with
+    no password and told nobody: the account could not sign in anywhere,
+    and there was no mechanism — email or otherwise — to hand over. The
+    row is the mechanism, and it deliberately mirrors DeviceActivation
+    (see app/devices/models.py): the plaintext token is shown to the
+    inviter once and never stored, only its SHA-256 hash, so a leaked
+    database gives nobody a way into a tenant's data.
+
+    One live invitation per membership: issuing another supersedes the
+    last, which is what "resend" means and stops a stack of working links
+    accumulating for one person.
+    """
+
+    __tablename__ = "membership_invitation"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), index=True
+    )
+    membership_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenant_membership.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column()
+    accepted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Superseded by a later invitation, rather than used. Kept rather than
+    # deleted so the audit trail of who was invited when stays intact.
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user_identity.id", ondelete="SET NULL"), nullable=True
+    )
+    # How the link actually reached them, recorded because "we sent it" and
+    # "we showed it to an admin to pass on" are different promises to make
+    # to a customer chasing their login.
+    delivery: Mapped[str] = mapped_column(String(16), default="manual")

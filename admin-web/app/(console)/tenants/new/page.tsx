@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
-import { ModuleCatalogItem, Tenant } from "@/lib/types";
+import { IssuedInvitation, ModuleCatalogItem, Tenant } from "@/lib/types";
 
 const STEPS = ["Company profile", "First farm", "Modules", "Tenant Owner", "Review"];
 
@@ -31,6 +31,8 @@ export default function CreateTenantWizard() {
 
   const [owner, setOwner] = useState({ email: "", display_name: "" });
   const [ownerInvited, setOwnerInvited] = useState(false);
+  const [invitation, setInvitation] = useState<IssuedInvitation | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (step === 2 && modules.length === 0) {
@@ -100,10 +102,20 @@ export default function CreateTenantWizard() {
     setBusy(true);
     setError(null);
     try {
-      await apiFetch(`/platform/v1/tenants/${tenant.id}/memberships`, {
-        method: "POST",
-        body: { ...owner, tenant_role: "TENANT_OWNER" },
-      });
+      const membership = await apiFetch<{ id: string }>(
+        `/platform/v1/tenants/${tenant.id}/memberships`,
+        { method: "POST", body: { ...owner, tenant_role: "TENANT_OWNER" } }
+      );
+      // Creating the membership alone leaves them with an account and no
+      // password, which is what made a brand-new owner unable to open
+      // anything. The invitation is the half that lets them in, so it is
+      // issued here rather than left as a step somebody has to know about.
+      setInvitation(
+        await apiFetch<IssuedInvitation>(
+          `/platform/v1/tenants/${tenant.id}/memberships/${membership.id}/invitation`,
+          { method: "POST", body: { send_email: true } }
+        )
+      );
       setOwnerInvited(true);
       setStep(4);
     } catch (err) {
@@ -230,6 +242,10 @@ export default function CreateTenantWizard() {
                 onChange={(e) => setOwner({ ...owner, display_name: e.target.value })}
               />
             </div>
+            <p className="chart-note" style={{ marginTop: -6, marginBottom: 14 }}>
+              This creates their account and issues an invitation link so they can choose their own
+              password. If this deployment has no mail server the link is shown for you to send on.
+            </p>
             <button className="btn btn-primary" disabled={busy || !owner.email} onClick={handleInviteOwner}>
               {busy ? "Inviting…" : "Invite owner & continue"}
             </button>
@@ -249,6 +265,37 @@ export default function CreateTenantWizard() {
               <li>Modules: {modulesActivated ? "activated" : "none activated yet"}</li>
               <li>Tenant Owner: {ownerInvited ? owner.email : "not invited yet"}</li>
             </ul>
+
+            {invitation && (
+              <div className="notice-banner" style={{ marginBottom: 16 }}>
+                <strong>
+                  {invitation.delivery === "email"
+                    ? `Invitation emailed to ${invitation.email}.`
+                    : `Send this link to ${invitation.email} so they can set a password:`}
+                </strong>
+                <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+                  <input readOnly value={invitation.url} style={{ flex: 1, fontSize: "0.78rem" }} />
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(invitation.url);
+                      setCopied(true);
+                    }}
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <div style={{ marginTop: 8, fontSize: "0.78rem" }}>
+                  It works once and cannot be shown again — issue a new one from the customer&apos;s
+                  Access tab if it is lost.
+                </div>
+              </div>
+            )}
+
+            <p style={{ fontSize: "0.88rem" }}>
+              <strong>Next:</strong> record what they pay on the Subscription tab. That is what
+              switches on the modules in their plan and puts them into the revenue figures.
+            </p>
             <button className="btn btn-primary" onClick={() => router.push(`/tenants/detail/?id=${tenant.id}`)}>
               Go to Tenant 360 →
             </button>

@@ -94,6 +94,7 @@ from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
 from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
+from app.farmos.routes_invitations import router as farmos_invitations_router  # noqa: E402
 from app.farmos.routes_modules import router as farmos_modules_router  # noqa: E402
 from app.farmos.routes_mouneh import router as farmos_mouneh_router  # noqa: E402
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
@@ -118,6 +119,7 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
 # The FarmOS tablet contract (docs/FARMOS_API.md) — every path relative to
 # /api/v1, matched exactly against the reference backend's OpenAPI schema.
 app.include_router(farmos_auth_router, prefix="/api/v1", tags=["FarmOS: Auth"])
+app.include_router(farmos_invitations_router, prefix="/api/v1", tags=["FarmOS: Invitations"])
 app.include_router(farmos_employees_router, prefix="/api/v1", tags=["FarmOS: Employees"])
 app.include_router(farmos_farms_router, prefix="/api/v1", tags=["FarmOS: Farm"])
 app.include_router(farmos_animals_router, prefix="/api/v1", tags=["FarmOS: Animals"])

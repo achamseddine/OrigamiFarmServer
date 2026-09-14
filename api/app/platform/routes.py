@@ -27,9 +27,17 @@ from app.common.enums import (
     TenantStatus,
 )
 from app.common.errors import AppError, ErrorCode
+from app.config.settings import get_settings
 from app.devices.models import Device, DeviceActivation, LicenseLease
 from app.devices.service import generate_activation_code, hash_activation_code
 from app.entitlements.state_machine import transition_entitlement, transition_tenant_status
+from app.notifications.email import EmailResult, invitation_email, send_email
+from app.plans.contents import (
+    PlanApplication,
+    apply_plan_to_tenant,
+    plan_module_codes,
+    set_plan_modules,
+)
 from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement
 from app.platform.schemas import (
     AuditEventOut,
@@ -42,6 +50,9 @@ from app.platform.schemas import (
     EntitlementOut,
     FarmCreateRequest,
     FarmOut,
+    InvitationCreateRequest,
+    InvitationOut,
+    InvitationStatusOut,
     LicenseLeaseOut,
     MembershipInviteRequest,
     MembershipOut,
@@ -49,10 +60,12 @@ from app.platform.schemas import (
     ModuleCreateRequest,
     ModuleOut,
     PlanCreateRequest,
+    PlanModulesRequest,
     PlanOut,
     PlanUpdateRequest,
     PlatformMeOut,
     SubscriptionOut,
+    SubscriptionSaveResponse,
     SubscriptionUpsertRequest,
     TenantCreateRequest,
     TenantListOut,
@@ -60,7 +73,14 @@ from app.platform.schemas import (
     TenantStatusChangeRequest,
     TenantUpdateRequest,
 )
-from app.tenants.models import Farm, PlatformRoleAssignment, Tenant, TenantMembership
+from app.tenants.invitations import issue_invitation
+from app.tenants.models import (
+    Farm,
+    MembershipInvitation,
+    PlatformRoleAssignment,
+    Tenant,
+    TenantMembership,
+)
 
 router = APIRouter()
 
@@ -322,16 +342,41 @@ def list_farms(
 # --- Plans & Modules -------------------------------------------------------
 
 
+def _plan_out(db: Session, plan: Plan) -> PlanOut:
+    """A plan is only meaningful alongside what it contains, so the two
+    always travel together — a caller that sees a price but not the
+    modules behind it cannot tell what it is selling.
+    """
+    return PlanOut(
+        id=plan.id,
+        code=plan.code,
+        name=plan.name,
+        status=plan.status,
+        limits=plan.limits,
+        currency=plan.currency,
+        monthly_price_cents=plan.monthly_price_cents,
+        annual_price_cents=plan.annual_price_cents,
+        module_codes=plan_module_codes(db, plan.id),
+    )
+
+
 @router.post("/plans", response_model=PlanOut, status_code=201)
 def create_plan(
     payload: PlanCreateRequest,
     db: Session = Depends(get_control_db),
     _identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> Plan:
-    plan = Plan(**payload.model_dump())
+) -> PlanOut:
+    fields = payload.model_dump()
+    module_codes = fields.pop("module_codes")
+    plan = Plan(**fields)
     db.add(plan)
     db.flush()
-    return plan
+    if module_codes:
+        try:
+            set_plan_modules(db, plan, module_codes)
+        except ValueError as exc:
+            raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+    return _plan_out(db, plan)
 
 
 @router.patch("/plans/{plan_id}", response_model=PlanOut)
@@ -345,9 +390,7 @@ def update_plan(
     plan contributes to recurring revenue, so it should never be a silent
     edit.
     """
-    plan = db.get(Plan, plan_id)
-    if plan is None:
-        raise AppError(ErrorCode.NOT_FOUND, "No such plan")
+    plan = _get_plan_or_404(db, plan_id)
 
     changes = payload.model_dump(exclude_unset=True)
     before = {field: getattr(plan, field) for field in changes}
@@ -367,15 +410,61 @@ def update_plan(
             after=changes,
             summary=f"Updated plan {plan.code}",
         )
-    return plan
+    return _plan_out(db, plan)
 
 
 @router.get("/plans", response_model=list[PlanOut])
 def list_plans(
     db: Session = Depends(get_control_db),
     _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
-) -> list[Plan]:
-    return list(db.execute(select(Plan)).scalars().all())
+) -> list[PlanOut]:
+    plans = db.execute(select(Plan).order_by(Plan.code)).scalars().all()
+    return [_plan_out(db, plan) for plan in plans]
+
+
+def _get_plan_or_404(db: Session, plan_id: uuid.UUID) -> Plan:
+    plan = db.get(Plan, plan_id)
+    if plan is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No such plan")
+    return plan
+
+
+@router.put("/plans/{plan_id}/modules", response_model=PlanOut)
+def set_modules_on_plan(
+    plan_id: uuid.UUID,
+    payload: PlanModulesRequest,
+    db: Session = Depends(get_control_db),
+    identity: Identity = Depends(require_platform_role(*_STAFF)),
+) -> PlanOut:
+    """Defines what this plan sells.
+
+    Audited, and worth auditing: this is the list every future subscriber
+    is granted, so changing it changes what the product means, not just a
+    row. It does not reach back into tenants already on the plan — their
+    entitlements were granted at the point they subscribed, and quietly
+    withdrawing a module from a working farm is not something a price-list
+    edit should be able to do (see app/plans/contents.py).
+    """
+    plan = _get_plan_or_404(db, plan_id)
+    before = plan_module_codes(db, plan.id)
+    try:
+        after = set_plan_modules(db, plan, payload.module_codes)
+    except ValueError as exc:
+        raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+
+    if before != after:
+        record_audit_event(
+            db,
+            actor_id=identity.user_id,
+            actor_type=ActorType.PLATFORM_USER,
+            action="plan.modules_changed",
+            entity_type="plan",
+            entity_id=str(plan.id),
+            before={"module_codes": before},
+            after={"module_codes": after},
+            summary=f"Set the modules included in plan {plan.code}",
+        )
+    return _plan_out(db, plan)
 
 
 @router.post("/modules", response_model=ModuleOut, status_code=201)
@@ -413,23 +502,35 @@ def get_subscription(
     return db.execute(select(Subscription).where(Subscription.tenant_id == tenant_id)).scalar_one_or_none()
 
 
-@router.patch("/tenants/{tenant_id}/subscription", response_model=SubscriptionOut)
+@router.patch("/tenants/{tenant_id}/subscription", response_model=SubscriptionSaveResponse)
 def upsert_subscription(
     tenant_id: uuid.UUID,
     payload: SubscriptionUpsertRequest,
     db: Session = Depends(get_control_db),
     identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> Subscription:
+) -> SubscriptionSaveResponse:
+    """Puts a tenant on a plan — and gives them what the plan contains.
+
+    Recording the commercial fact and granting the modules used to be two
+    unrelated jobs, which meant a customer could be subscribed to a plan
+    and still able to open nothing. They are one job here, and the
+    response says exactly which modules that turned on so the console can
+    show it rather than leave the operator guessing.
+    """
     _get_tenant_or_404(db, tenant_id)
+    fields = payload.model_dump()
+    apply_modules = fields.pop("apply_plan_modules")
+
+    plan = _get_plan_or_404(db, payload.plan_id)
     subscription = db.execute(
         select(Subscription).where(Subscription.tenant_id == tenant_id)
     ).scalar_one_or_none()
     is_new = subscription is None
     if subscription is None:
-        subscription = Subscription(tenant_id=tenant_id, **payload.model_dump())
+        subscription = Subscription(tenant_id=tenant_id, **fields)
         db.add(subscription)
     else:
-        for key, value in payload.model_dump().items():
+        for key, value in fields.items():
             setattr(subscription, key, value)
     db.flush()
     record_audit_event(
@@ -442,7 +543,26 @@ def upsert_subscription(
         entity_id=str(subscription.id),
         after={"plan_id": str(subscription.plan_id), "status": subscription.status.value},
     )
-    return subscription
+
+    applied = (
+        apply_plan_to_tenant(
+            db,
+            tenant_id=tenant_id,
+            plan=plan,
+            actor_id=identity.user_id,
+            reason=f"Included in plan {plan.code}",
+        )
+        if apply_modules
+        else PlanApplication()
+    )
+
+    return SubscriptionSaveResponse(
+        subscription=SubscriptionOut.model_validate(subscription),
+        plan_code=plan.code,
+        modules_granted=applied.granted,
+        modules_already_active=applied.already_active,
+        modules_not_in_plan=applied.not_in_plan,
+    )
 
 
 # --- Entitlements -----------------------------------------------------------
@@ -654,6 +774,150 @@ def invite_membership(
     return _membership_out(user, membership)
 
 
+def _get_membership_or_404(
+    db: Session, tenant_id: uuid.UUID, membership_id: uuid.UUID
+) -> TenantMembership:
+    """Both ids are checked together on purpose: a membership id alone
+    would let one tenant's id address another tenant's row.
+    """
+    membership = db.execute(
+        select(TenantMembership).where(
+            TenantMembership.id == membership_id, TenantMembership.tenant_id == tenant_id
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No such membership in this tenant")
+    return membership
+
+
+def _latest_invitation(db: Session, membership_id: uuid.UUID) -> MembershipInvitation | None:
+    return db.execute(
+        select(MembershipInvitation)
+        .where(MembershipInvitation.membership_id == membership_id)
+        .order_by(MembershipInvitation.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _invitation_status(
+    db: Session, user: UserIdentity, membership: TenantMembership
+) -> InvitationStatusOut:
+    invitation = _latest_invitation(db, membership.id)
+    if invitation is None:
+        state = "no_invitation"
+    elif invitation.accepted_at is not None:
+        state = "accepted"
+    elif invitation.expires_at <= datetime.now(timezone.utc):
+        state = "expired"
+    else:
+        state = "pending"
+
+    return InvitationStatusOut(
+        membership_id=membership.id,
+        email=user.email,
+        display_name=user.display_name,
+        has_password=bool(user.password_hash),
+        invitation_sent_at=invitation.created_at if invitation else None,
+        invitation_expires_at=invitation.expires_at if invitation else None,
+        invitation_accepted_at=invitation.accepted_at if invitation else None,
+        state=state,
+    )
+
+
+@router.get(
+    "/tenants/{tenant_id}/memberships/{membership_id}/invitation",
+    response_model=InvitationStatusOut,
+)
+def get_invitation_status(
+    tenant_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_control_db),
+    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
+) -> InvitationStatusOut:
+    """Whether this person can actually get in yet.
+
+    Never returns the token — only whether one is outstanding. A link that
+    could be read back later would be a password reset for anybody with
+    console access, which is not what an invitation is.
+    """
+    membership = _get_membership_or_404(db, tenant_id, membership_id)
+    user = db.get(UserIdentity, membership.user_id)
+    if user is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No such user")
+    return _invitation_status(db, user, membership)
+
+
+@router.post(
+    "/tenants/{tenant_id}/memberships/{membership_id}/invitation",
+    response_model=InvitationOut,
+    status_code=201,
+)
+def create_invitation(
+    tenant_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    payload: InvitationCreateRequest,
+    db: Session = Depends(get_control_db),
+    identity: Identity = Depends(require_platform_role(*_STAFF_AND_SUPPORT)),
+) -> InvitationOut:
+    """Issues the link that lets an invited person set their password.
+
+    This is what was missing: creating a membership made an identity with
+    no password and no way to obtain one, so a tenant owner was handed a
+    farm they could not open. Emailing is attempted when this deployment
+    has a mail server and the link is returned either way, because an
+    admin who can read it off the screen is a working fallback and a
+    silent failure is not.
+    """
+    tenant = _get_tenant_or_404(db, tenant_id)
+    membership = _get_membership_or_404(db, tenant_id, membership_id)
+    user = db.get(UserIdentity, membership.user_id)
+    if user is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No such user")
+
+    settings = get_settings()
+    issued = issue_invitation(
+        db,
+        membership=membership,
+        base_url=settings.public_base_url,
+        invited_by=identity.user_id,
+        ttl_hours=payload.ttl_hours,
+    )
+
+    result = EmailResult(sent=False, delivery="manual", detail="Email was not requested.")
+    if payload.send_email:
+        subject, body = invitation_email(
+            display_name=user.display_name,
+            tenant_name=tenant.display_name,
+            url=issued.url,
+            expires_in_days=max(1, payload.ttl_hours // 24),
+        )
+        result = send_email(settings, to=user.email, subject=subject, body=body)
+
+    issued.invitation.delivery = result.delivery
+    db.flush()
+
+    record_audit_event(
+        db,
+        actor_id=identity.user_id,
+        actor_type=ActorType.PLATFORM_USER,
+        tenant_id=tenant_id,
+        action="membership.invitation_issued",
+        entity_type="tenant_membership",
+        entity_id=str(membership.id),
+        after={"email": user.email, "delivery": result.delivery},
+        summary=f"Issued an invitation for {user.email}",
+    )
+
+    return InvitationOut(
+        invitation_id=issued.invitation.id,
+        email=user.email,
+        url=issued.url,
+        expires_at=issued.invitation.expires_at,
+        delivery=result.delivery,
+        delivery_detail=result.detail,
+    )
+
+
 def _membership_out(user: UserIdentity, membership: TenantMembership) -> MembershipOut:
     return MembershipOut(
         id=membership.id,
@@ -707,14 +971,7 @@ def set_membership_status(
     deactivates employees: their name is attached to records they entered,
     and history is never silently rewritten.
     """
-    membership = db.execute(
-        select(TenantMembership).where(
-            TenantMembership.id == membership_id, TenantMembership.tenant_id == tenant_id
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise AppError(ErrorCode.NOT_FOUND, "No such membership in this tenant")
-
+    membership = _get_membership_or_404(db, tenant_id, membership_id)
     user = db.get(UserIdentity, membership.user_id)
     assert user is not None  # FK-guaranteed
 

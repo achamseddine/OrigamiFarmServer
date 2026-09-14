@@ -57,6 +57,23 @@ class Settings(BaseSettings):
     # without a console — that is the normal state for a test run.
     admin_web_dir: str = "../admin-web/out"
 
+    # Outbound mail. Unset by default, and the product is honest about
+    # that rather than silently dropping messages: an invitation whose
+    # email cannot be sent is still shown to the admin as a link to pass
+    # on by hand (see app/notifications/email.py).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_starttls: bool = True
+    smtp_use_ssl: bool = False
+    email_from: str = ""
+
+    # The address invited people are sent to — this deployment's own public
+    # URL. Used to build invitation links, so it has to be what a customer
+    # can actually open, not an internal hostname.
+    public_base_url: str = "http://localhost:8000"
+
     # FarmOS tablet app's own username/password login (app/farmos/) — a
     # long TTL is deliberate: "log in once, stay logged in" per the
     # contract, with GET /auth/me re-validating the stored token on each

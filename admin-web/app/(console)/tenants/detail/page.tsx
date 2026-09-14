@@ -8,21 +8,25 @@ import {
   DeviceItem,
   Entitlement,
   Farm,
+  IssuedInvitation,
   LicenseLease,
   Membership,
   Plan,
   Subscription,
+  SubscriptionSaveResult,
   ModuleCatalogItem,
   Tenant,
   TenantUsage,
 } from "@/lib/types";
 import { StatusChip } from "@/components/StatusChip";
+import Link from "next/link";
 import {
   Loading,
   RankedBars,
   StatTile,
   daysUntil,
   describeError,
+  formatDate,
   formatDateTime,
   formatPrice,
   useResource,
@@ -437,6 +441,27 @@ function AccessTab({ tenantId }: { tenantId: string }) {
     `/platform/v1/tenants/${tenantId}/memberships`
   );
   const [actionError, setActionError] = useState<string | null>(null);
+  // The invitation link, held only until the admin has copied it: the API
+  // returns it once and cannot be asked for it again.
+  const [invitation, setInvitation] = useState<IssuedInvitation | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function invite(membershipId: string) {
+    setActionError(null);
+    setInvitation(null);
+    setCopied(false);
+    try {
+      setInvitation(
+        await apiFetch<IssuedInvitation>(
+          `/platform/v1/tenants/${tenantId}/memberships/${membershipId}/invitation`,
+          { method: "POST", body: { send_email: true } }
+        )
+      );
+      reload();
+    } catch (err) {
+      setActionError(describeError(err));
+    }
+  }
 
   async function setActive(membershipId: string, active: boolean) {
     const reason = active ? null : window.prompt("Reason for suspending this person's access:");
@@ -457,10 +482,43 @@ function AccessTab({ tenantId }: { tenantId: string }) {
   return (
     <div>
       {(error || actionError) && <div className="error-banner">{error || actionError}</div>}
+      {invitation && (
+        <div className="panel" style={{ borderColor: "var(--farmos-olive)" }}>
+          <div className="chart-title" style={{ marginBottom: 4 }}>
+            {invitation.delivery === "email"
+              ? `Invitation emailed to ${invitation.email}`
+              : `Send this link to ${invitation.email}`}
+          </div>
+          <div className="chart-note">
+            {invitation.delivery_detail}{" "}
+            {invitation.delivery !== "email" &&
+              "Copy the link and send it to them yourself — by WhatsApp, SMS, or your own email."}{" "}
+            It works once, expires on {formatDate(invitation.expires_at)}, and cannot be shown
+            again — issue a new one if it is lost.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+            <input readOnly value={invitation.url} style={{ flex: 1, fontSize: "0.8rem" }} />
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                navigator.clipboard?.writeText(invitation.url);
+                setCopied(true);
+              }}
+            >
+              {copied ? "Copied" : "Copy link"}
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setInvitation(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="panel">
         <div className="chart-note" style={{ marginBottom: 12 }}>
-          Everyone who can reach this tenant&apos;s farm data. Suspending keeps the record — their
-          name stays attached to everything they entered.
+          Everyone who can reach this tenant&apos;s farm data. A person with no password cannot sign
+          in anywhere yet — send them an invitation and they choose their own. Suspending keeps the
+          record: their name stays attached to everything they entered.
         </div>
         {data && data.length === 0 ? (
           <div className="empty-note">Nobody has been given access yet.</div>
@@ -491,10 +549,27 @@ function AccessTab({ tenantId }: { tenantId: string }) {
                     <td>
                       <StatusChip status={member.status} />
                     </td>
-                    <td style={{ fontSize: "0.78rem", color: "var(--farmos-muted)" }}>
-                      {member.has_password ? "Tablet password set" : "No password"}
+                    <td style={{ fontSize: "0.78rem" }}>
+                      {member.has_password ? (
+                        <span style={{ color: "var(--farmos-muted)" }}>Can sign in</span>
+                      ) : (
+                        <span style={{ color: "var(--farmos-warning)" }}>
+                          Cannot sign in yet
+                        </span>
+                      )}
                     </td>
                     <td>
+                      <div className="inline-actions">
+                      {member.status === "ACTIVE" && (
+                        <button
+                          className={`btn btn-sm ${
+                            member.has_password ? "btn-secondary" : "btn-primary"
+                          }`}
+                          onClick={() => invite(member.id)}
+                        >
+                          {member.has_password ? "Resend invitation" : "Send invitation"}
+                        </button>
+                      )}
                       {member.status === "ACTIVE" ? (
                         <button
                           className="btn btn-danger btn-sm"
@@ -510,6 +585,7 @@ function AccessTab({ tenantId }: { tenantId: string }) {
                           Restore
                         </button>
                       )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -601,6 +677,10 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
   const plans = useResource<Plan[]>("/platform/v1/plans");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // What the last save actually did to their modules. Kept rather than
+  // folded into the notice text because "these five modules are now on"
+  // is the answer to the question the operator is really asking.
+  const [result, setResult] = useState<SubscriptionSaveResult | null>(null);
   const [form, setForm] = useState({
     plan_id: "",
     billing_cycle: "MONTHLY",
@@ -627,16 +707,20 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
     setError(null);
     setNotice(null);
     try {
-      await apiFetch(`/platform/v1/tenants/${tenantId}/subscription`, {
-        method: "PATCH",
-        body: {
-          plan_id: form.plan_id,
-          billing_cycle: form.billing_cycle,
-          status: form.status,
-          starts_at: new Date(form.starts_at || Date.now()).toISOString(),
-          renews_at: form.renews_at ? new Date(form.renews_at).toISOString() : null,
-        },
-      });
+      const result = await apiFetch<SubscriptionSaveResult>(
+        `/platform/v1/tenants/${tenantId}/subscription`,
+        {
+          method: "PATCH",
+          body: {
+            plan_id: form.plan_id,
+            billing_cycle: form.billing_cycle,
+            status: form.status,
+            starts_at: new Date(form.starts_at || Date.now()).toISOString(),
+            renews_at: form.renews_at ? new Date(form.renews_at).toISOString() : null,
+          },
+        }
+      );
+      setResult(result);
       setNotice("Subscription saved. It is counted on the Business screen from now on.");
       await subscription.reload();
     } catch (err) {
@@ -672,8 +756,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
           What this customer pays
         </div>
         <div className="chart-note">
-          Recording this is what puts them into the revenue figures — it is separate from the
-          modules they can use.
+          Choosing a plan does two things at once: it puts this customer into the revenue figures,
+          and it switches on the modules the plan includes.
         </div>
 
         <form onSubmit={save} style={{ marginTop: 14 }}>
@@ -756,11 +840,57 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
             />
           </div>
 
+          {selectedPlan && (
+            <div className="notice-banner" style={{ marginBottom: 16 }}>
+              {selectedPlan.module_codes.length === 0 ? (
+                <>
+                  <strong>{selectedPlan.name} includes no modules yet.</strong> Saving this records
+                  what they pay but switches nothing on. Choose the plan&rsquo;s modules under{" "}
+                  <Link href="/catalog" style={{ fontWeight: 600 }}>
+                    Plans &amp; modules
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>
+                  Saving turns on the {selectedPlan.module_codes.length} module
+                  {selectedPlan.module_codes.length === 1 ? "" : "s"} in {selectedPlan.name}:{" "}
+                  {selectedPlan.module_codes.join(", ")}.
+                </>
+              )}
+            </div>
+          )}
+
           <button className="btn btn-primary" type="submit">
             {subscription.data ? "Update subscription" : "Record subscription"}
           </button>
         </form>
       </div>
+
+      {result && (
+        <div className="panel" style={{ maxWidth: 560 }}>
+          <div className="chart-title" style={{ marginBottom: 10 }}>
+            What saving that changed
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.88rem", lineHeight: 1.7 }}>
+            <li>
+              {result.modules_granted.length > 0
+                ? `Turned on: ${result.modules_granted.join(", ")}.`
+                : "No new modules needed turning on."}
+            </li>
+            {result.modules_already_active.length > 0 && (
+              <li>Already on: {result.modules_already_active.join(", ")}.</li>
+            )}
+            {result.modules_not_in_plan.length > 0 && (
+              <li>
+                <strong>Left on, though {result.plan_code} does not include them:</strong>{" "}
+                {result.modules_not_in_plan.join(", ")}. Nothing is switched off automatically —
+                use the Modules tab if you mean to withdraw one.
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
