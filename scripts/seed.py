@@ -32,7 +32,13 @@ from app.common.enums import (  # noqa: E402
     TenantStatus,
 )
 from app.common.tenant_router import TenantDataRouter  # noqa: E402
+from app.plans.licensing_map import MODULE_LICENCES  # noqa: E402
 from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement  # noqa: E402
+
+
+def _licence(module_code: str) -> str:
+    return MODULE_LICENCES[module_code]
+
 from app.tenant_api.models import Animal  # noqa: E402
 from app.tenants.models import Farm, PlatformRoleAssignment, Tenant, TenantMembership  # noqa: E402
 
@@ -56,34 +62,38 @@ MODULE_CATALOG = {
 }
 
 # FarmOS tablet contract (GET /modules/catalog): code -> (label_en, label_ar,
-# group, license_code). license_code is None for modules included in every
-# plan; set for the two paid add-ons (Mouneh, Farm Visits), which must also
-# have a matching TenantEntitlement row before GET /modules/catalog reports
-# licensed_active=true for them — see app/farmos/routes_employees.py.
+# group, license_code). Every module names the licence that gates it, taken
+# from the single source of truth in app/plans/licensing_map.py rather than
+# repeated here — a module whose licence the tenant does not hold is
+# reported licensed_active=false (app/farmos/routes_employees.py), which is
+# what makes a plan mean anything in the app.
 FARMOS_MODULE_CATALOG: dict[str, tuple[str, str, str, str | None]] = {
-    "morning_operations": ("Morning Operations", "عمليات الصباح", "operations", None),
-    "animals": ("Animals", "الحيوانات", "livestock", None),
-    "animal_health": ("Animal Health", "صحة الحيوان", "livestock", None),
-    "feed_nutrition": ("Feed & Nutrition", "الأعلاف والتغذية", "livestock", None),
-    "milk_production": ("Milk Production", "إنتاج الحليب", "livestock", None),
-    "egg_production": ("Egg Production", "إنتاج البيض", "livestock", None),
-    "agriculture": ("Agriculture", "الزراعة", "crops", None),
-    "produce_harvest": ("Produce & Harvest", "المحاصيل والحصاد", "crops", None),
-    "inventory": ("Inventory", "المخزون", "operations", None),
-    "tasks": ("Tasks", "المهام", "operations", None),
-    "sales": ("Sales", "المبيعات", "finance", None),
-    "expenses": ("Expenses", "المصروفات", "finance", None),
-    "finance": ("Finance", "المالية", "finance", None),
-    "employees": ("Employees", "الموظفون", "management", None),
-    "reports": ("Reports", "التقارير", "management", None),
-    "settings": ("Settings", "الإعدادات", "management", None),
-    "ai_intelligence": ("AI Intelligence", "الذكاء الاصطناعي", "intelligence", None),
-    "mouneh_production": ("Mouneh Production", "إنتاج المونة", "addon", "mouneh"),
-    "mouneh_inventory": ("Mouneh Inventory", "مخزون المونة", "addon", "mouneh"),
-    "farm_visits": ("Farm Visits", "زيارات المزرعة", "addon", "visits_agritourism"),
-    # License SKUs themselves (rows GET /modules can reference by
-    # module_code) — not permission-grid modules, so they carry no
-    # license_code of their own.
+    "morning_operations": (
+        "Morning Operations", "عمليات الصباح", "operations", _licence("morning_operations"),
+    ),
+    "animals": ("Animals", "الحيوانات", "livestock", _licence("animals")),
+    "animal_health": ("Animal Health", "صحة الحيوان", "livestock", _licence("animal_health")),
+    "feed_nutrition": ("Feed & Nutrition", "الأعلاف والتغذية", "livestock", _licence("feed_nutrition")),
+    "milk_production": ("Milk Production", "إنتاج الحليب", "livestock", _licence("milk_production")),
+    "egg_production": ("Egg Production", "إنتاج البيض", "livestock", _licence("egg_production")),
+    "agriculture": ("Agriculture", "الزراعة", "crops", _licence("agriculture")),
+    "produce_harvest": ("Produce & Harvest", "المحاصيل والحصاد", "crops", _licence("produce_harvest")),
+    "inventory": ("Inventory", "المخزون", "operations", _licence("inventory")),
+    "tasks": ("Tasks", "المهام", "operations", _licence("tasks")),
+    "sales": ("Sales", "المبيعات", "finance", _licence("sales")),
+    "expenses": ("Expenses", "المصروفات", "finance", _licence("expenses")),
+    "finance": ("Finance", "المالية", "finance", _licence("finance")),
+    "employees": ("Employees", "الموظفون", "management", _licence("employees")),
+    "reports": ("Reports", "التقارير", "management", _licence("reports")),
+    "settings": ("Settings", "الإعدادات", "management", _licence("settings")),
+    "ai_intelligence": ("AI Intelligence", "الذكاء الاصطناعي", "intelligence", _licence("ai_intelligence")),
+    "mouneh_production": ("Mouneh Production", "إنتاج المونة", "addon", _licence("mouneh_production")),
+    "mouneh_inventory": ("Mouneh Inventory", "مخزون المونة", "addon", _licence("mouneh_inventory")),
+    "farm_visits": ("Farm Visits", "زيارات المزرعة", "addon", _licence("farm_visits")),
+    # The two add-on licences are catalog rows in their own right, because
+    # the tablet contract addresses them by name
+    # (POST /api/v1/modules/mouneh/activate) and plan_module has a foreign
+    # key to module_catalog. They gate nothing themselves.
     "mouneh": ("Mouneh Add-on", "إضافة المونة", "addon", None),
     "visits_agritourism": ("Farm Visits Add-on", "إضافة زيارات المزرعة", "addon", None),
 }
@@ -338,7 +348,8 @@ def main() -> None:
     print("  Platform admin: admin@origami-platform.com (use /api/v1/auth/dev-login in AUTH_DEV_MODE)")
     print(f"  Tenant A: FARM-A / {tenant_a_id}  owner: owner@farm-a-demo.com")
     print(f"  Tenant B: FARM-B / {tenant_b_id}  owner: owner@farm-b-demo.com")
-    print(f"  FarmOS tablet login (POST /api/v1/auth/login): either owner email above, password '{DEMO_PASSWORD}'")
+    print("  FarmOS tablet login (POST /api/v1/auth/login): either owner email above,")
+    print(f"    password '{DEMO_PASSWORD}'")
 
 
 if __name__ == "__main__":

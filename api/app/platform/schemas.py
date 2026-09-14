@@ -140,6 +140,25 @@ class PlanOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LicenceOut(BaseModel):
+    """A licence code and what holding it opens in the tablet app.
+
+    The console builds its plan picker from these rather than from the
+    module list, because only a code some module actually points at gates
+    anything — offering the rest is how a plan ends up selling nothing.
+    """
+
+    license_code: str
+    name: str
+    # Tablet module codes this licence unlocks, with their display names.
+    unlocks: list[str]
+    unlocks_labels: list[str]
+    # True for the paid add-ons; the rest are ordinary parts of a plan.
+    is_addon: bool
+    # How many tenants hold it today.
+    tenants_licensed: int
+
+
 class ModuleCreateRequest(BaseModel):
     module_code: str
     name_en: str

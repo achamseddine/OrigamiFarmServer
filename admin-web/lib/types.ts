@@ -284,3 +284,18 @@ export interface IssuedInvitation {
   delivery: "email" | "manual" | "failed";
   delivery_detail: string;
 }
+
+/** A licence code and what holding it opens in the tablet app.
+ *
+ * The plan picker is built from these rather than from the module list:
+ * only a code some module's license_code points at gates anything, and
+ * offering the rest is how a plan ends up selling nothing.
+ */
+export interface Licence {
+  license_code: string;
+  name: string;
+  unlocks: string[];
+  unlocks_labels: string[];
+  is_addon: boolean;
+  tenants_licensed: number;
+}

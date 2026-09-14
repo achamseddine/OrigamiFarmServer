@@ -40,10 +40,16 @@ Built, tested, and running end to end:
   Licensing / Audit) with working activate/deactivate/revoke actions, staff and platform-role
   administration, the plan/module catalog with per-cycle pricing, a global audit log, and
   self-service password change.
-- Plans mean something: a plan is a bundle of modules at a price, editable from the console, and
-  putting a tenant on one records what they pay **and** grants the modules it includes in a single
-  step — the response names exactly what it turned on. A downgrade reports what the new plan does
-  not cover rather than silently switching a working farm's module off.
+- Plans mean something, all the way to the tablet: a plan is a bundle of **licences** at a price,
+  and every one of the tablet app's 20 modules names the licence that opens it
+  (`api/app/plans/licensing_map.py`). Putting a tenant on a plan records what they pay **and**
+  grants those licences, so `GET /api/v1/modules/catalog` starts reporting the screens as
+  `licensed_active` and they appear in the app. A downgrade reports what the new plan does not
+  cover rather than silently switching a working farm's module off. The console's picker is built
+  from the licences the catalog actually points at, so a plan cannot be assembled out of codes
+  that gate nothing — which is exactly how an earlier version of this shipped.
+  Note the licence gates what the app **shows**: per-request authorization is still the tenant
+  permission grid (`require_permission`), not the entitlement.
 - Tenant-user invitations: inviting someone issues a hashed, single-use, expiring link they open to
   choose their own password and land straight in the tablet app (`/activate`). It is emailed when
   SMTP is configured and shown to the admin to pass on when it is not — it never claims to have
@@ -54,7 +60,7 @@ Built, tested, and running end to end:
   self-set password, a second staff account, priced plans, a customer, a subscription per
   customer, and a paired tablet, so the diagram says where this deployment has actually got to.
   The Overview banner names the next outstanding step.
-- 154 automated tests against a real Postgres instance, including every mandatory isolation,
+- 161 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 

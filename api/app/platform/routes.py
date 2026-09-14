@@ -53,6 +53,7 @@ from app.platform.schemas import (
     InvitationCreateRequest,
     InvitationOut,
     InvitationStatusOut,
+    LicenceOut,
     LicenseLeaseOut,
     MembershipInviteRequest,
     MembershipOut,
@@ -488,6 +489,51 @@ def list_modules(
     _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
 ) -> list[ModuleCatalog]:
     return list(db.execute(select(ModuleCatalog)).scalars().all())
+
+
+@router.get("/licences", response_model=list[LicenceOut])
+def list_licences(
+    db: Session = Depends(get_control_db),
+    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
+) -> list[LicenceOut]:
+    """What can actually be sold, and what each one opens in the app.
+
+    Read from the catalog's own license_code column rather than from a
+    list kept by hand, so this can only ever name codes that really gate
+    something. That is the fix for the defect this replaced: the console
+    offered every module code for sale, including seventeen that no module
+    pointed at, and a plan built from those switched on nothing in the
+    tablet app while reporting success.
+    """
+    catalog = db.execute(select(ModuleCatalog)).scalars().all()
+    labels = {module.module_code: module.name_en for module in catalog}
+
+    unlocks: dict[str, list[str]] = {}
+    for module in catalog:
+        if module.license_code:
+            unlocks.setdefault(module.license_code, []).append(module.module_code)
+
+    held = dict(
+        db.execute(
+            select(TenantEntitlement.module_code, func.count(func.distinct(TenantEntitlement.tenant_id)))
+            .where(TenantEntitlement.status.in_([EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]))
+            .group_by(TenantEntitlement.module_code)
+        ).all()
+    )
+
+    return [
+        LicenceOut(
+            license_code=code,
+            name=labels.get(code, code),
+            unlocks=sorted(modules),
+            unlocks_labels=[labels.get(module, module) for module in sorted(modules)],
+            # The two the tablet contract names by lowercase path are the
+            # paid add-ons; everything else is part of an ordinary plan.
+            is_addon=code != code.upper(),
+            tenants_licensed=held.get(code, 0),
+        )
+        for code, modules in sorted(unlocks.items())
+    ]
 
 
 # --- Subscriptions ---------------------------------------------------------

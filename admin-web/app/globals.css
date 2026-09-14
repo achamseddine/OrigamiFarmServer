@@ -769,6 +769,77 @@ a.flow-node:hover {
   line-height: 1.5;
 }
 
+/* --- licence picker --------------------------------------------------
+   Each option names a licence and the screens it opens, because the code
+   alone ("SALES") does not tell an operator that it covers expenses and
+   finance too. */
+
+.licence-editor {
+  background: var(--farmos-mist);
+  border: 1px solid var(--farmos-olive);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+}
+
+.licence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.licence-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  background: var(--farmos-card);
+  border: 1px solid var(--farmos-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.licence-pick[data-on="true"] {
+  border-color: var(--farmos-olive);
+  background: #f2f9f4;
+}
+
+.licence-pick .mark {
+  font-weight: 700;
+  color: var(--farmos-muted);
+  line-height: 1.3;
+}
+
+.licence-pick[data-on="true"] .mark {
+  color: var(--farmos-olive);
+}
+
+.licence-pick .code {
+  display: block;
+  font-weight: 600;
+  font-size: 0.84rem;
+  color: var(--farmos-ink);
+}
+
+.licence-pick .code em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--farmos-warning);
+  font-size: 0.76rem;
+}
+
+.licence-pick .opens {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--farmos-muted);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
 /* --- misc ------------------------------------------------------------ */
 
 .empty-note {

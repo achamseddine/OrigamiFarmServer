@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 from app.common.enums import EntitlementSource, EntitlementStatus, MembershipStatus, TenantStatus
 from app.plans.models import TenantEntitlement
 from tests.conftest import farmos_headers, farmos_login, unique_code
-from tests.helpers import FARMOS_DEMO_PASSWORD, add_farmos_user, create_tenant
+from tests.helpers import (
+    FARMOS_DEMO_PASSWORD,
+    add_farmos_user,
+    create_tenant,
+    ensure_farmos_catalog,
+)
 
 
 def test_root_health_is_unauthenticated_and_cheap(client):
@@ -98,6 +103,10 @@ def test_worker_sees_only_their_own_granted_modules(client, control_db):
 def test_modules_catalog_reflects_this_farms_own_licence(client, control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
     add_farmos_user(control_db, tenant, "catalog@origami-demo.com", role="owner")
+    # The catalog with each module's real licence, as scripts/seed.py
+    # builds it — without this the rows carry no licence and every module
+    # reads as free, which is the state this test exists to disprove.
+    ensure_farmos_catalog(control_db)
     control_db.add(
         TenantEntitlement(
             tenant_id=tenant.id,
@@ -123,9 +132,25 @@ def test_modules_catalog_reflects_this_farms_own_licence(client, control_db):
     # Farm Visits keys off "visits_agritourism", which this farm never
     # purchased — inactive, and the app hides the module entirely.
     assert by_code["farm_visits"]["licensed_active"] is False
-    # An ordinary included module always reports active with no licence.
-    assert by_code["animals"]["license_code"] is None
-    assert by_code["animals"]["licensed_active"] is True
+    # Every other module names a licence too, which it did not used to:
+    # seventeen of them carried none and were therefore free for every
+    # farm forever, so a plan could not control them. This farm bought
+    # only the Mouneh add-on, so the ordinary screens stay shut.
+    assert by_code["animals"]["license_code"] == "ANIMALS"
+    assert by_code["animals"]["licensed_active"] is False
+
+    control_db.add(
+        TenantEntitlement(
+            tenant_id=tenant.id,
+            module_code="ANIMALS",
+            status=EntitlementStatus.ACTIVE,
+            source=EntitlementSource.PLAN,
+            effective_from=datetime.now(timezone.utc),
+        )
+    )
+    control_db.commit()
+    reread = client.get("/api/v1/modules/catalog", headers=farmos_headers(token)).json()
+    assert {entry["code"]: entry for entry in reread}["animals"]["licensed_active"] is True
 
 
 def test_farms_me_returns_this_users_own_farm(client, control_db):

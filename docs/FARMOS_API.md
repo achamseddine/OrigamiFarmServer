@@ -16,6 +16,34 @@ group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_m
 `InventoryItem`/`InventoryMovement` — extended, not replaced, since `app/sync/` already depended on
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
 
+
+## Module licensing
+
+`GET /modules/catalog` returns every module with `license_code` and
+`licensed_active`. The rule is one line (`app/farmos/routes_employees.py`):
+
+```
+licensed_active = license_code is None or license_code in <tenant's ACTIVE/TRIAL entitlements>
+```
+
+Every one of the 20 modules now names a licence — see
+`app/plans/licensing_map.py`, the single source of truth. Seventeen of them
+carried no `license_code` until then, which meant they were open to every
+farm whatever it had bought, and a plan sold in the admin console changed
+nothing here.
+
+The two paid add-ons keep lowercase licence codes, `mouneh` and
+`visits_agritourism`, because this contract addresses them by name in
+`POST /modules/{module_code}/activate`; the rest use the platform's own
+codes (`ANIMALS`, `MILK`, `SALES`, …). One licence can open several
+modules: `SALES` opens sales, expenses and finance.
+
+**Scope of the gate.** `licensed_active` tells the app which screens to
+show. Per-request authorization is unchanged — it is the tenant's own
+permission grid via `require_permission(module, action)`, which does not
+consult entitlements. A client that ignores the catalog can still reach a
+module's routes if the signed-in user's permission grid allows it.
+
 ## Four things worth knowing before touching this code
 
 **`GET /me/access` drives the whole UI.** Navigation and every Add/Edit/Delete button in the app is
