@@ -299,3 +299,25 @@ export interface Licence {
   is_addon: boolean;
   tenants_licensed: number;
 }
+
+/** The whole customer handover, returned exactly once.
+ *
+ * Both the key and the URL are credentials the API cannot read back, so
+ * this is shown and copied now or reissued later — never looked up.
+ */
+export interface LicencePack {
+  tenant_id: string;
+  company_code: string;
+  display_name: string;
+  plan_code: string | null;
+  plan_name: string | null;
+  licences: string[];
+  licence_key: string;
+  licence_key_expires_at: string;
+  owner_email: string;
+  owner_name: string;
+  activation_url: string;
+  activation_expires_at: string;
+  delivery: "email" | "manual" | "failed";
+  delivery_detail: string;
+}

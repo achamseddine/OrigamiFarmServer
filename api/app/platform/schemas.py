@@ -159,6 +159,47 @@ class LicenceOut(BaseModel):
     tenants_licensed: int
 
 
+class LicenceIssueRequest(BaseModel):
+    """How long each half of the pack stays good for."""
+
+    # A week by default: a customer who gets the email on Friday should
+    # still be able to act on it when they are next at the farm office.
+    key_ttl_hours: int = Field(default=168, ge=1, le=8760)
+    invitation_ttl_hours: int = Field(default=168, ge=1, le=720)
+    # Pin the key to one site. Left unset it works for any of the
+    # customer's farms, which is what a single-site customer wants.
+    farm_id: uuid.UUID | None = None
+    send_email: bool = True
+
+
+class LicenceIssueOut(BaseModel):
+    """The whole handover, returned exactly once.
+
+    Both the key and the URL are credentials: neither is stored in a form
+    that can be read back, so a pack that is lost is reissued rather than
+    looked up.
+    """
+
+    tenant_id: uuid.UUID
+    company_code: str
+    display_name: str
+    plan_code: str | None
+    plan_name: str | None
+    # The licences this customer holds — what the key will actually open.
+    licences: list[str]
+
+    licence_key: str
+    licence_key_expires_at: datetime
+
+    owner_email: str
+    owner_name: str
+    activation_url: str
+    activation_expires_at: datetime
+
+    delivery: str
+    delivery_detail: str
+
+
 class ModuleCreateRequest(BaseModel):
     module_code: str
     name_en: str

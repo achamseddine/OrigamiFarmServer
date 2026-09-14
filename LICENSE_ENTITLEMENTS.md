@@ -40,6 +40,35 @@ record is exactly as it was. Proven by
 `api/tests/test_entitlements.py::test_module_deactivation_preserves_data_but_blocks_access`, which
 reads the row directly through `TenantDataRouter` after deactivation and asserts it's unchanged.
 
+
+## Issuing a licence to a customer
+
+`POST /platform/v1/tenants/{id}/licence` produces the whole handover in one
+call, because issuing half of it is the mistake worth designing out — a
+customer with a tablet key and no way to sign in, or an account with
+nothing to pair a device with, and no screen saying which half is missing.
+
+It returns, exactly once:
+
+| | What it is | Backed by |
+|---|---|---|
+| **Licence key** | `ORG-XMRH-M3ND-XFR6` — typed into the app to pair one device | `device_activation`, hashed |
+| **Activation link** | `/activate/?token=…` — the owner sets their own password | `membership_invitation`, hashed |
+
+Neither is stored in a readable form, so a lost pack is reissued rather
+than recovered. Issuing again revokes the outstanding key and supersedes
+the outstanding invitation: a customer never has two live keys.
+
+The key's alphabet excludes one of each confusable pair (`0/O`, `1/I/L`,
+`5/S`, `8/B`) because it gets read down a phone line, and redemption
+normalises case and dashes for the same reason. Codes issued before this
+format still redeem exactly as they did — the lookup tries the literal
+string first.
+
+When SMTP is configured both halves go to the owner in a single email.
+When it is not, the response says so plainly and the console shows both
+for an admin to send on; it never reports mail it did not send.
+
 ## Tenant status
 
 ```

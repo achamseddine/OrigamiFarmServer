@@ -840,6 +840,112 @@ a.flow-node:hover {
   margin-top: 2px;
 }
 
+/* --- licence pack ----------------------------------------------------
+   Both halves of the handover on one card, numbered in the order the
+   customer does them. Shown once: the API cannot read either back. */
+
+.licence-pack {
+  background: var(--farmos-card);
+  border: 2px solid var(--farmos-olive);
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-bottom: 24px;
+}
+
+.licence-pack .pack-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.licence-pack .pack-head .k {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--farmos-olive);
+  font-weight: 700;
+}
+
+.licence-pack .pack-head h3 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  margin: 2px 0 0 0;
+  color: var(--farmos-cedar);
+}
+
+.licence-pack .pack-row {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 14px;
+  align-items: start;
+  padding: 16px 0;
+  border-top: 1px solid var(--farmos-border);
+}
+
+.licence-pack .pack-row .n {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--farmos-cedar);
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.licence-pack .pack-row .t {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--farmos-ink);
+}
+
+.licence-pack .pack-row .d {
+  font-size: 0.8rem;
+  color: var(--farmos-muted);
+  margin: 3px 0 10px 0;
+  line-height: 1.5;
+}
+
+.licence-pack .copyline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.licence-pack .copyline input {
+  flex: 1 1 260px;
+  font-size: 0.78rem;
+}
+
+/* The key is read aloud and typed by hand, so it is set large, spaced and
+   monospaced rather than squeezed into a form field. */
+.licence-key {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 1.15rem;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--farmos-cedar);
+  background: var(--farmos-mist);
+  border: 1px dashed var(--farmos-olive);
+  border-radius: 8px;
+  padding: 10px 16px;
+}
+
+.licence-pack .pack-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  border-top: 1px solid var(--farmos-border);
+  padding-top: 12px;
+  font-size: 0.8rem;
+  color: var(--farmos-muted);
+}
+
 /* --- misc ------------------------------------------------------------ */
 
 .empty-note {

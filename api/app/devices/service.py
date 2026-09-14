@@ -23,6 +23,39 @@ def generate_activation_code() -> str:
     return secrets.token_urlsafe(9)
 
 
+# No 0/O, 1/I/L, 5/S, 8/B: a licence key gets read down a phone line and
+# typed on a tablet in a field, and those are the pairs people get wrong.
+LICENCE_KEY_ALPHABET = "ACDEFGHJKMNPQRTUVWXY2346789"
+LICENCE_KEY_PREFIX = "ORG"
+LICENCE_KEY_GROUPS = 3
+LICENCE_KEY_GROUP_SIZE = 4
+
+
+def generate_licence_key() -> str:
+    """A readable key in the shape ORG-XXXX-XXXX-XXXX.
+
+    Twelve characters from a 27-letter alphabet is a little over 57 bits,
+    which is plenty for a credential that expires, is single-use, and is
+    stored only as a hash.
+    """
+    groups = [
+        "".join(secrets.choice(LICENCE_KEY_ALPHABET) for _ in range(LICENCE_KEY_GROUP_SIZE))
+        for _ in range(LICENCE_KEY_GROUPS)
+    ]
+    return "-".join([LICENCE_KEY_PREFIX, *groups])
+
+
+def normalise_licence_key(code: str) -> str:
+    """What the key means regardless of how it was typed.
+
+    Somebody reading a key off an email into a tablet will lose the
+    dashes or use lower case, and refusing that is a support call rather
+    than security. Only keys generated in the readable format are stored
+    under their normalised hash, so older codes are unaffected.
+    """
+    return "".join(ch for ch in code if ch.isalnum()).upper()
+
+
 def active_modules_for_tenant(db: Session, tenant_id: uuid.UUID) -> list[str]:
     entitlements = EntitlementService(db)
     codes = db.execute(

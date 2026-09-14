@@ -54,13 +54,20 @@ Built, tested, and running end to end:
   choose their own password and land straight in the tablet app (`/activate`). It is emailed when
   SMTP is configured and shown to the admin to pass on when it is not — it never claims to have
   sent mail it did not send.
+- **Issue licence** hands over both halves of a customer setup in one action
+  (`POST /platform/v1/tenants/{id}/licence`): the readable licence key their tablet pairs with
+  (`ORG-XMRH-M3ND-XFR6`, an alphabet with no confusable characters, accepted in any case and with
+  or without dashes) and the activation link their owner opens to set a password. Both are
+  credentials stored only as hashes, shown once, and sent as a single email when SMTP is
+  configured. Issuing again supersedes whatever was outstanding, so a customer never has two live
+  keys.
 - A **Getting started** screen (`/guide`) that draws the whole operating sequence — set yourself
   up, sign a customer, settle into a rhythm — as a flow, with each box's state read from
   `GET /platform/v1/setup` rather than asserted: the platform checks its own database for a
   self-set password, a second staff account, priced plans, a customer, a subscription per
   customer, and a paired tablet, so the diagram says where this deployment has actually got to.
   The Overview banner names the next outstanding step.
-- 161 automated tests against a real Postgres instance, including every mandatory isolation,
+- 172 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 

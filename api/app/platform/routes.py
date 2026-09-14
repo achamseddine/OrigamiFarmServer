@@ -39,6 +39,12 @@ from app.plans.contents import (
     set_plan_modules,
 )
 from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement
+from app.platform.licence_pack import (
+    LicencePackError,
+    find_tenant_owner,
+    issue_licence_pack,
+    licence_pack_email,
+)
 from app.platform.schemas import (
     AuditEventOut,
     DeviceActivationCreateRequest,
@@ -53,6 +59,8 @@ from app.platform.schemas import (
     InvitationCreateRequest,
     InvitationOut,
     InvitationStatusOut,
+    LicenceIssueOut,
+    LicenceIssueRequest,
     LicenceOut,
     LicenseLeaseOut,
     MembershipInviteRequest,
@@ -746,6 +754,106 @@ def create_device_activation(
     )
     return DeviceActivationCreateResponse(
         activation_id=activation.id, activation_code=code, expires_at=expires_at
+    )
+
+
+@router.post("/tenants/{tenant_id}/licence", response_model=LicenceIssueOut, status_code=201)
+def issue_licence(
+    tenant_id: uuid.UUID,
+    payload: LicenceIssueRequest,
+    db: Session = Depends(get_control_db),
+    identity: Identity = Depends(require_platform_role(*_STAFF_AND_SUPPORT)),
+) -> LicenceIssueOut:
+    """Everything a new customer needs, in one action.
+
+    The licence key their tablet pairs with and the link their owner opens
+    to set a password are generated together, returned together, and sent
+    as one email — because issuing one without the other leaves a customer
+    with a tablet they cannot use or an account they cannot reach, and
+    nothing on any screen said which half was missing.
+
+    Both are shown once. Neither is stored in a readable form, so a lost
+    pack is reissued rather than recovered, and reissuing supersedes what
+    was outstanding.
+    """
+    tenant = _get_tenant_or_404(db, tenant_id)
+    try:
+        membership, owner = find_tenant_owner(db, tenant_id)
+    except LicencePackError as exc:
+        raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+
+    if payload.farm_id is not None:
+        farm = db.get(Farm, payload.farm_id)
+        if farm is None or farm.tenant_id != tenant_id:
+            raise AppError(ErrorCode.NOT_FOUND, "No such farm for this customer")
+
+    licences = list(
+        db.execute(
+            select(TenantEntitlement.module_code)
+            .where(
+                TenantEntitlement.tenant_id == tenant_id,
+                TenantEntitlement.status.in_(
+                    [EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]
+                ),
+            )
+            .order_by(TenantEntitlement.module_code)
+        ).scalars()
+    )
+
+    settings = get_settings()
+    pack = issue_licence_pack(
+        db,
+        tenant=tenant,
+        membership=membership,
+        base_url=settings.public_base_url,
+        issued_by=identity.user_id,
+        licences=licences,
+        key_ttl_hours=payload.key_ttl_hours,
+        invitation_ttl_hours=payload.invitation_ttl_hours,
+        farm_id=payload.farm_id,
+    )
+
+    result = EmailResult(sent=False, delivery="manual", detail="Email was not requested.")
+    if payload.send_email:
+        subject, body = licence_pack_email(pack)
+        result = send_email(settings, to=owner.email, subject=subject, body=body)
+
+    if pack.invitation is not None:
+        pack.invitation.invitation.delivery = result.delivery
+    db.flush()
+
+    record_audit_event(
+        db,
+        actor_id=identity.user_id,
+        actor_type=ActorType.PLATFORM_USER,
+        tenant_id=tenant_id,
+        action="licence.issued",
+        entity_type="tenant",
+        entity_id=str(tenant_id),
+        after={
+            "owner": owner.email,
+            "licences": pack.licences,
+            "delivery": result.delivery,
+        },
+        summary=f"Issued a licence pack for {tenant.display_name} to {owner.email}",
+    )
+
+    assert pack.invitation is not None  # issue_licence_pack always makes one
+    return LicenceIssueOut(
+        tenant_id=tenant.id,
+        company_code=tenant.company_code,
+        display_name=tenant.display_name,
+        plan_code=pack.plan.code if pack.plan else None,
+        plan_name=pack.plan.name if pack.plan else None,
+        licences=pack.licences,
+        licence_key=pack.licence_key,
+        licence_key_expires_at=pack.licence_key_expires_at,
+        owner_email=owner.email,
+        owner_name=owner.display_name,
+        activation_url=pack.invitation.url,
+        activation_expires_at=pack.invitation.invitation.expires_at,
+        delivery=result.delivery,
+        delivery_detail=result.detail,
     )
 
 

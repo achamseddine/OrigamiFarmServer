@@ -9,6 +9,7 @@ import {
   Entitlement,
   Farm,
   IssuedInvitation,
+  LicencePack,
   LicenseLease,
   Membership,
   Plan,
@@ -602,12 +603,135 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
   const { data, error, loading } = useResource<LicenseLease[]>(
     `/platform/v1/tenants/${tenantId}/leases`
   );
+  // The pack is returned once and cannot be read back, so it is held here
+  // until the admin has copied it or sent it on.
+  const [pack, setPack] = useState<LicencePack | null>(null);
+  const [issuing, setIssuing] = useState(false);
+  const [issueError, setIssueError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function issueLicence() {
+    setIssuing(true);
+    setIssueError(null);
+    setPack(null);
+    setCopied(null);
+    try {
+      setPack(
+        await apiFetch<LicencePack>(`/platform/v1/tenants/${tenantId}/licence`, {
+          method: "POST",
+          body: { send_email: true },
+        })
+      );
+    } catch (err) {
+      setIssueError(describeError(err));
+    } finally {
+      setIssuing(false);
+    }
+  }
+
+  function copy(what: string, value: string) {
+    navigator.clipboard?.writeText(value);
+    setCopied(what);
+  }
 
   if (loading) return <Loading what="leases" />;
 
   return (
     <div>
       {error && <div className="error-banner">{error}</div>}
+      {issueError && <div className="error-banner">{issueError}</div>}
+
+      <div className="panel">
+        <div className="chart-title" style={{ marginBottom: 4 }}>
+          Issue this customer&rsquo;s licence
+        </div>
+        <div className="chart-note">
+          Generates both halves of the handover at once: the licence key their tablet is paired
+          with, and the link their owner opens to choose a password. Emailed to the owner when a
+          mail server is configured, and shown here either way. Issuing again replaces whatever is
+          outstanding.
+        </div>
+        <button
+          className="btn btn-primary"
+          style={{ marginTop: 12 }}
+          onClick={issueLicence}
+          disabled={issuing}
+        >
+          {issuing ? "Issuing…" : pack ? "Issue a new licence" : "Issue licence"}
+        </button>
+      </div>
+
+      {pack && (
+        <div className="licence-pack">
+          <div className="pack-head">
+            <div>
+              <div className="k">Licence issued</div>
+              <h3>{pack.display_name}</h3>
+            </div>
+            <span className="chip chip-active">
+              {pack.delivery === "email" ? `Emailed to ${pack.owner_email}` : "Not emailed"}
+            </span>
+          </div>
+
+          <p className="chart-note" style={{ marginTop: 0 }}>
+            {pack.delivery_detail}{" "}
+            {pack.delivery !== "email" &&
+              "Send both of the following to the customer yourself."}{" "}
+            Neither can be shown again — issue a new licence if they are lost.
+          </p>
+
+          <div className="pack-row">
+            <div className="n">1</div>
+            <div>
+              <div className="t">Set a password — for {pack.owner_name}</div>
+              <div className="d">
+                {pack.owner_email} opens this and chooses their own password. Works once, expires{" "}
+                {formatDate(pack.activation_expires_at)}.
+              </div>
+              <div className="copyline">
+                <input readOnly value={pack.activation_url} />
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => copy("link", pack.activation_url)}
+                >
+                  {copied === "link" ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="pack-row">
+            <div className="n">2</div>
+            <div>
+              <div className="t">Pair a tablet — licence key</div>
+              <div className="d">
+                Typed into the Origami app to pair one device. Case and dashes do not matter.
+                Expires {formatDate(pack.licence_key_expires_at)}.
+              </div>
+              <div className="copyline">
+                <code className="licence-key">{pack.licence_key}</code>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => copy("key", pack.licence_key)}
+                >
+                  {copied === "key" ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="pack-foot">
+            <span>
+              <strong>Plan:</strong> {pack.plan_name ?? "not recorded yet"}
+            </span>
+            <span>
+              <strong>Opens:</strong>{" "}
+              {pack.licences.length > 0 ? pack.licences.join(", ") : "nothing yet"}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="panel">
         <div className="chart-title" style={{ marginBottom: 4 }}>
           Offline license leases

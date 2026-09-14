@@ -22,6 +22,7 @@ from app.devices.service import (
     active_modules_for_tenant,
     farm_ids_for_device,
     hash_activation_code,
+    normalise_licence_key,
     permission_profile_hash_for,
 )
 from app.tenants.models import Tenant
@@ -94,9 +95,19 @@ def activate_device(
     """No bearer token required: the one-time activation code itself is the
     credential. See LICENSE_ENTITLEMENTS.md for the activation lifecycle.
     """
-    code_hash = hash_activation_code(payload.activation_code)
+    # Exact first, so codes issued before the readable key format keep
+    # working unchanged; then the normalised form, so a licence key typed
+    # in lower case or without its dashes still pairs the device. Anything
+    # that matches neither is simply invalid.
     activation_row = db.execute(
-        select(DeviceActivation).where(DeviceActivation.code_hash == code_hash)
+        select(DeviceActivation).where(
+            DeviceActivation.code_hash.in_(
+                [
+                    hash_activation_code(payload.activation_code),
+                    hash_activation_code(normalise_licence_key(payload.activation_code)),
+                ]
+            )
+        )
     ).scalar_one_or_none()
     if activation_row is None:
         raise AppError(ErrorCode.ACTIVATION_CODE_INVALID)
