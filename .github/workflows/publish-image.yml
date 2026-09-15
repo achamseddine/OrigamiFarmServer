@@ -1,0 +1,153 @@
+name: Build and publish the image to GHCR
+
+# Builds api/Dockerfile and publishes the result two ways, because the two
+# are useful in different situations:
+#
+#   1. Pushed to GitHub Container Registry (ghcr.io). Best when you can log
+#      in to a registry: Azure can pull it straight across with
+#      `az acr import`, no download to your laptop at all.
+#   2. Uploaded to this workflow run as a gzipped `docker save` tarball.
+#      Best when you want the file in your hands — download it from the run
+#      page in a browser, `docker load` it, retag, push to ACR.
+#
+# Needs no secrets. GITHUB_TOKEN is issued to the run automatically and the
+# `packages: write` permission below is what lets it push to ghcr.io.
+#
+# See docs/AZURE_DEPLOYMENT.md for what to do with the image once it exists.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Extra tag to publish alongside the commit SHA"
+        required: false
+        default: latest
+        type: string
+  push:
+    branches:
+      - main
+      - "claude/**"
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io rejects a repository path with capitals, and this repo has
+      # them. Lowercase it here rather than hardcoding the owner, so a fork
+      # publishes to its own namespace without editing this file.
+      - name: Work out the image name and tags
+        id: names
+        run: |
+          image="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/origami-api"
+          sha="sha-$(git rev-parse --short HEAD)"
+
+          # The commit tag is the one to deploy with — it names exactly one
+          # build. `latest` moves, and a branch tag moves too; they exist so
+          # there is something short to type while testing.
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            extra="${{ inputs.image_tag }}"
+          else
+            extra="$(echo '${{ github.ref_name }}' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c1-120)"
+          fi
+
+          {
+            echo "image=$image"
+            echo "sha_tag=$sha"
+            echo "extra_tag=$extra"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing $image:$sha, $image:$extra and $image:latest"
+
+      - name: Log in to GHCR
+        run: |
+          echo '${{ secrets.GITHUB_TOKEN }}' \
+            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      # Build context is the repository root, not ./api — the image needs
+      # admin-web/ and scripts/ too. See the header of api/Dockerfile.
+      - name: Build the image
+        run: |
+          docker build \
+            -f api/Dockerfile \
+            -t '${{ steps.names.outputs.image }}:${{ steps.names.outputs.sha_tag }}' \
+            .
+
+      - name: Add the moving tags
+        run: |
+          for tag in '${{ steps.names.outputs.extra_tag }}' latest; do
+            if [ -n "$tag" ]; then
+              docker tag \
+                '${{ steps.names.outputs.image }}:${{ steps.names.outputs.sha_tag }}' \
+                "${{ steps.names.outputs.image }}:$tag"
+            fi
+          done
+
+      - name: Check the image actually starts
+        run: |
+          # No database is reachable here, so migrations are off and this
+          # only proves the image is runnable and the entrypoint is sane —
+          # not that the app is healthy. /health needs no database
+          # (app/main.py), which is what makes it usable as a probe. Key
+          # generation stays on, because that part of the entrypoint runs
+          # on every real boot too and is worth exercising.
+          docker run -d --name smoke -p 8000:8000 \
+            -e RUN_MIGRATIONS=false \
+            '${{ steps.names.outputs.image }}:${{ steps.names.outputs.sha_tag }}'
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/health; then
+              echo "  image responds on /health"
+              docker rm -f smoke
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::the built image never answered /health"
+          docker logs smoke
+          docker rm -f smoke
+          exit 1
+
+      - name: Push to GHCR
+        run: docker push --all-tags '${{ steps.names.outputs.image }}'
+
+      # The downloadable copy. `docker save` writes the same image the push
+      # sent, so whichever route you take you are deploying the same bytes.
+      - name: Save the image as a downloadable file
+        run: |
+          docker save '${{ steps.names.outputs.image }}:${{ steps.names.outputs.sha_tag }}' \
+            | gzip > origami-api-${{ steps.names.outputs.sha_tag }}.tar.gz
+          ls -lh origami-api-*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: origami-api-image-${{ steps.names.outputs.sha_tag }}
+          path: origami-api-*.tar.gz
+          retention-days: 30
+          compression-level: 0
+
+      - name: Summary
+        run: |
+          image='${{ steps.names.outputs.image }}'
+          sha='${{ steps.names.outputs.sha_tag }}'
+          extra='${{ steps.names.outputs.extra_tag }}'
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "$image:$sha"
+            if [ -n "$extra" ]; then echo "$image:$extra"; fi
+            echo "$image:latest"
+            echo '```'
+            echo
+            echo "**Pull it:** \`docker pull $image:$sha\`"
+            echo
+            echo "**Or download it:** the \`origami-api-image-$sha\` artifact on this run page."
+            echo
+            echo "Then see \`docs/AZURE_DEPLOYMENT.md\` for getting it into ACR and onto the Web App."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -57,6 +57,50 @@ Service Linux containers run on `amd64`, and a plain `arm64` push there fails at
 (Cloud-build alternative, no local Docker needed: `az acr build --registry "$ACR_NAME" --image
 origami-api:latest --file api/Dockerfile .` — uploads the repository and builds it server-side.)
 
+### Or: take the image GitHub already built
+
+You don't have to build it at all. `.github/workflows/publish-image.yml` builds this same
+Dockerfile on every push to `main` or a `claude/**` branch, smoke-tests that the image starts and
+answers `/health`, and publishes it two ways. It needs no secrets — the token GitHub issues to the
+run is enough to push to that repository's own container registry.
+
+Images land at `ghcr.io/achamseddine/origamifarmserver/origami-api`, tagged three ways:
+`sha-<commit>` (names exactly one build — **deploy with this one**), the branch name, and `latest`.
+
+**Route A — registry to registry, nothing downloaded.** Azure pulls it straight across:
+
+```bash
+# A GitHub personal access token with the read:packages scope.
+# Skip --username/--password entirely if you have made the package public.
+az acr import \
+  --name "$ACR_NAME" \
+  --source ghcr.io/achamseddine/origamifarmserver/origami-api:latest \
+  --image origami-api:latest \
+  --username <your-github-username> \
+  --password <github-pat-with-read:packages>
+```
+
+**Route B — download the file, push it yourself.** Every run also uploads the image as a gzipped
+tarball, so you can take it from the browser without logging in to any registry. Open the run under
+the repository's **Actions** tab, download the `origami-api-image-sha-<commit>` artifact, then:
+
+```bash
+unzip origami-api-image-sha-*.zip        # GitHub wraps every artifact in a zip
+docker load  -i origami-api-sha-*.tar.gz
+docker tag   ghcr.io/achamseddine/origamifarmserver/origami-api:sha-<commit> \
+             "$ACR_NAME.azurecr.io/origami-api:latest"
+az acr login --name "$ACR_NAME"
+docker push  "$ACR_NAME.azurecr.io/origami-api:latest"
+```
+
+The runner is `amd64`, so neither route can hit the Apple Silicon architecture trap above.
+
+A newly published GHCR package is **private**, and it is a separate permission from the repository
+itself — someone with repository access still cannot pull it until either the package is made
+public (its page → Package settings → Change visibility) or they hold a token with `read:packages`.
+Route B sidesteps that question entirely: the artifact is downloadable by anyone who can open the
+Actions run.
+
 ### If the build fails
 
 **Anything mentioning `apt-get`, `NO_PUBKEY`, `is not signed`, or
