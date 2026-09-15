@@ -78,6 +78,11 @@ string first.
 instead of a sign-in link, which is the workable procedure when nothing can
 deliver a link. The whole handover then fits in a phone call:
 
+The create-customer wizard (**Tenants → + Create Tenant**) does all of this
+in one pass — company, farm, plan, owner — and its last screen is the
+handover itself, so a customer created there needs nothing afterwards. For
+a customer that already exists:
+
 1. **Tenants → the customer → Licensing → Issue with a password.**
 2. Read them three things: their email address, the password, and the
    pairing key.

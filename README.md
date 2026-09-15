@@ -35,7 +35,9 @@ Built, tested, and running end to end:
 - Admin Web (Next.js), served by the API itself at `/`: password sign-in, a platform overview with
   live counts and audit-volume history, a business dashboard (MRR/ARR, pipeline, renewals, revenue
   by plan), usage and licensing dashboards derived from real rows, a tenant list with
-  search/filter/pagination, a multi-step create-tenant wizard where every step is a real API call,
+  search/filter/pagination, a five-step create-customer wizard that finishes the job — company,
+  first farm, plan (which records the subscription and grants its licences), owner, and a final
+  screen handing over the owner's email, password and the tablet pairing key —
   a Tenant 360 page (Overview / Usage / Subscription / Access / Farms / Modules / Devices /
   Licensing / Audit) with working activate/deactivate/revoke actions, staff and platform-role
   administration, the plan/module catalog with per-cycle pricing, a global audit log, and
