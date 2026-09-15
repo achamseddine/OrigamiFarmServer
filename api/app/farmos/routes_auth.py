@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.service import record_audit_event
 from app.auth.models import UserIdentity
-from app.auth.passwords import verify_password
+from app.auth.passwords import hash_password, verify_password
 from app.common.db import get_control_db
-from app.common.enums import MembershipStatus
+from app.common.enums import ActorType, MembershipStatus
 from app.config import get_settings
 from app.farmos.deps import AccessContext, get_access_context
 from app.farmos.schemas import LoginRequest, LoginResponse, UserProfileOut
@@ -66,4 +70,52 @@ def me(
         department=membership.department,
         language=membership.language,
         active=membership.status == MembershipStatus.ACTIVE,
+    )
+
+
+class ChangeMyPasswordRequest(BaseModel):
+    current_password: str
+    # Eight, matching the invitation flow: this is a farm worker on a
+    # tablet, and a longer rule pushes them to write it on the device.
+    new_password: str = Field(min_length=8)
+
+
+@router.post("/auth/change-password", status_code=204, response_model=None)
+def change_my_password(
+    payload: ChangeMyPasswordRequest,
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_control_db),
+) -> None:
+    """Lets a farm user replace their own password.
+
+    Added because the alternative made a promise the product could not
+    keep: an admin can now set a password for an owner directly, which is
+    the workable answer when there is no mail server, but without this
+    that owner would be stuck forever with a password somebody else chose
+    and read down a phone line. Setting one for somebody is only
+    acceptable if they can take it back.
+    """
+    user = db.get(UserIdentity, access.user_id)
+    if user is None or not user.password_hash:
+        raise HTTPException(
+            status_code=403, detail="This account does not sign in with a password."
+        )
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Your current password is not correct.")
+
+    user.password_hash = hash_password(payload.new_password)
+    # Their own choice now, not one handed to them — the same distinction
+    # the console tracks for staff accounts.
+    user.password_changed_at = datetime.now(timezone.utc)
+    db.flush()
+
+    record_audit_event(
+        db,
+        actor_id=user.id,
+        actor_type=ActorType.TENANT_USER,
+        tenant_id=access.tenant_id,
+        action="tenant_user.password_changed",
+        entity_type="user_identity",
+        entity_id=str(user.id),
+        summary=f"{user.email} changed their own password",
     )

@@ -316,8 +316,19 @@ export interface LicencePack {
   licence_key_expires_at: string;
   owner_email: string;
   owner_name: string;
-  activation_url: string;
-  activation_expires_at: string;
+  /** Exactly one of these, per the credential asked for: a one-time
+   *  sign-in link, or a password set for the owner here. */
+  activation_url: string | null;
+  activation_expires_at: string | null;
+  owner_password: string | null;
   delivery: "email" | "manual" | "failed";
   delivery_detail: string;
+}
+
+/** A password set for a farm user by an admin — shown once. */
+export interface MemberPassword {
+  email: string;
+  display_name: string;
+  password: string;
+  must_change: boolean;
 }

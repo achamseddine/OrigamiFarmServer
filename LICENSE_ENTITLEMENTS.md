@@ -72,6 +72,32 @@ normalises case and dashes for the same reason. Codes issued before this
 format still redeem exactly as they did — the lookup tries the literal
 string first.
 
+### No mail server? Issue with a password
+
+`credential: "password"` sets the owner's password directly and returns it
+instead of a sign-in link, which is the workable procedure when nothing can
+deliver a link. The whole handover then fits in a phone call:
+
+1. **Tenants → the customer → Licensing → Issue with a password.**
+2. Read them three things: their email address, the password, and the
+   pairing key.
+3. They sign in on the tablet with the first two, and type the third in
+   when the app asks.
+
+The password is generated from the same unambiguous alphabet as the key but
+in lower case with no `ORG-` prefix, so the two are never confused while
+being read out together. It is stored as a bcrypt hash like any other, and
+`password_changed_at` is left null — the console keeps showing "not yet
+changed by them" until the owner replaces it from the tablet
+(`POST /api/v1/auth/change-password`). That endpoint exists precisely
+because setting somebody's password is only defensible if they can take it
+back. Every admin-set password is audited as
+`tenant_user.password_set_by_admin` against the admin who did it, because
+what matters is who could have known it.
+
+`POST /platform/v1/tenants/{id}/memberships/{mid}/password` does the same
+for any farm user, one at a time, from the Access tab.
+
 When SMTP is configured both halves go to the owner in a single email.
 When it is not, the response says so plainly and the console shows both
 for an admin to send on; it never reports mail it did not send.

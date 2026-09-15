@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
+
+from app.auth.models import UserIdentity
+from app.auth.passwords import GENERATED_PASSWORD_ALPHABET
 from app.common.enums import DeviceActivationStatus, PlatformRole
 from app.devices.models import DeviceActivation
 from app.devices.service import LICENCE_KEY_ALPHABET
@@ -236,3 +240,152 @@ def test_a_farm_from_another_customer_is_refused(client, control_db):
         headers=headers,
     )
     assert resp.status_code == 404
+
+
+# --- The no-email path: set a password instead of sending a link ---------
+
+
+def test_a_licence_can_hand_over_a_password_instead_of_a_link(client, control_db):
+    """The whole point of this mode: no mail server, no link to pass on.
+
+    An admin issues the licence, reads two things to the customer over the
+    phone, and the customer is working.
+    """
+    headers = admin_headers(client, control_db, "pack-pw@test.com")
+    tenant_id, email = tenant_with_owner(client, headers, control_db, "FARM-PW")
+
+    pack = issue(client, headers, tenant_id, credential="password")
+
+    assert pack["owner_password"], "a password mode must return a password"
+    assert pack["activation_url"] is None, "and not also a link — one way in, as asked"
+    assert pack["licence_key"].startswith("ORG-")
+
+    # It is a working password straight away.
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": email, "password": pack["owner_password"]}
+        ).status_code
+        == 200
+    )
+
+
+def test_the_generated_password_can_be_read_down_a_phone_line(client, control_db):
+    headers = admin_headers(client, control_db, "pack-pwshape@test.com")
+    tenant_id, _ = tenant_with_owner(client, headers, control_db, "FARM-PWS")
+
+    password = issue(client, headers, tenant_id, credential="password")["owner_password"]
+    groups = password.split("-")
+    assert len(groups) == 3 and all(len(group) == 4 for group in groups)
+    assert all(ch in GENERATED_PASSWORD_ALPHABET for ch in password.replace("-", ""))
+    # Lower case and no ORG prefix, so it is never mistaken for the pairing
+    # key it is handed over beside.
+    assert password.islower()
+    assert not password.startswith("org")
+
+
+def test_an_admin_set_password_is_flagged_until_its_owner_replaces_it(client, control_db):
+    """Somebody else chose it, and every screen should keep saying so."""
+    headers = admin_headers(client, control_db, "pack-flag@test.com")
+    tenant_id, email = tenant_with_owner(client, headers, control_db, "FARM-FLAG")
+    membership_id = client.get(
+        f"/platform/v1/tenants/{tenant_id}/memberships", headers=headers
+    ).json()[0]["id"]
+
+    resp = client.post(
+        f"/platform/v1/tenants/{tenant_id}/memberships/{membership_id}/password",
+        json={},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    password = resp.json()["password"]
+    assert resp.json()["must_change"] is True
+
+    user = control_db.execute(
+        select(UserIdentity).where(UserIdentity.email == email)
+    ).scalar_one()
+    control_db.refresh(user)
+    assert user.password_changed_at is None, "not a password its holder chose"
+
+    # And once they change it themselves, the flag clears.
+    token = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    ).json()["access_token"]
+    changed = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": password, "new_password": "my-own-choice-9"},
+        headers=auth_headers(token),
+    )
+    assert changed.status_code == 204, changed.text
+    control_db.refresh(user)
+    assert user.password_changed_at is not None
+
+
+def test_a_farm_user_can_change_their_own_password(client, control_db):
+    """Without this, an admin-set password could never be taken back."""
+    headers = admin_headers(client, control_db, "pack-selfchange@test.com")
+    tenant_id, email = tenant_with_owner(client, headers, control_db, "FARM-SELF")
+    password = issue(client, headers, tenant_id, credential="password")["owner_password"]
+
+    token = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    ).json()["access_token"]
+
+    wrong = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "not-it", "new_password": "something-else-1"},
+        headers=auth_headers(token),
+    )
+    assert wrong.status_code == 401
+
+    client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": password, "new_password": "chosen-by-them-1"},
+        headers=auth_headers(token),
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": email, "password": password}
+        ).status_code
+        == 401
+    ), "the old password must stop working"
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": email, "password": "chosen-by-them-1"}
+        ).status_code
+        == 200
+    )
+
+
+def test_an_admin_can_choose_the_password_rather_than_generate_one(client, control_db):
+    headers = admin_headers(client, control_db, "pack-chosen@test.com")
+    tenant_id, email = tenant_with_owner(client, headers, control_db, "FARM-CHOSEN")
+    membership_id = client.get(
+        f"/platform/v1/tenants/{tenant_id}/memberships", headers=headers
+    ).json()[0]["id"]
+
+    resp = client.post(
+        f"/platform/v1/tenants/{tenant_id}/memberships/{membership_id}/password",
+        json={"new_password": "riyak-farm-2026"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["password"] == "riyak-farm-2026"
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": email, "password": "riyak-farm-2026"}
+        ).status_code
+        == 200
+    )
+
+
+def test_setting_a_password_is_audited_against_the_admin_who_did_it(client, control_db):
+    """It matters who could have known it, not just that one was set."""
+    headers = admin_headers(client, control_db, "pack-audit@test.com")
+    tenant_id, _ = tenant_with_owner(client, headers, control_db, "FARM-PAUD")
+    issue(client, headers, tenant_id, credential="password")
+
+    events = client.get(
+        f"/platform/v1/audit-events?tenant_id={tenant_id}", headers=headers
+    ).json()
+    actions = [event["action"] for event in events]
+    assert "tenant_user.password_set_by_admin" in actions

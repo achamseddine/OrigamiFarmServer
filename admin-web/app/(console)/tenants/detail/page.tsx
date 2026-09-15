@@ -11,6 +11,7 @@ import {
   IssuedInvitation,
   LicencePack,
   LicenseLease,
+  MemberPassword,
   Membership,
   Plan,
   Subscription,
@@ -481,6 +482,25 @@ function AccessTab({ tenantId }: { tenantId: string }) {
   // returns it once and cannot be asked for it again.
   const [invitation, setInvitation] = useState<IssuedInvitation | null>(null);
   const [copied, setCopied] = useState(false);
+  // Shown once, same as an invitation: the API cannot read it back.
+  const [credentials, setCredentials] = useState<MemberPassword | null>(null);
+
+  async function setPassword(membershipId: string) {
+    setActionError(null);
+    setInvitation(null);
+    setCredentials(null);
+    try {
+      setCredentials(
+        await apiFetch<MemberPassword>(
+          `/platform/v1/tenants/${tenantId}/memberships/${membershipId}/password`,
+          { method: "POST", body: {} }
+        )
+      );
+      reload();
+    } catch (err) {
+      setActionError(describeError(err));
+    }
+  }
 
   async function invite(membershipId: string) {
     setActionError(null);
@@ -518,6 +538,37 @@ function AccessTab({ tenantId }: { tenantId: string }) {
   return (
     <div>
       {(error || actionError) && <div className="error-banner">{error || actionError}</div>}
+      {credentials && (
+        <div className="licence-pack">
+          <div className="pack-head">
+            <div>
+              <div className="k">Password set</div>
+              <h3>Read these to {credentials.display_name}</h3>
+            </div>
+          </div>
+          <p className="chart-note" style={{ marginTop: 0 }}>
+            They sign in on the tablet with these. Shown only now — set another if it is lost. Ask
+            them to change it from Settings once they are in; until they do, this screen keeps
+            showing that somebody else chose it.
+          </p>
+          <div className="copyline" style={{ marginBottom: 8 }}>
+            <code className="licence-key">{credentials.email}</code>
+          </div>
+          <div className="copyline">
+            <code className="licence-key">{credentials.password}</code>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => navigator.clipboard?.writeText(credentials.password)}
+            >
+              Copy
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setCredentials(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {invitation && (
         <div className="panel" style={{ borderColor: "var(--farmos-olive)" }}>
           <div className="chart-title" style={{ marginBottom: 4 }}>
@@ -553,8 +604,9 @@ function AccessTab({ tenantId }: { tenantId: string }) {
       <div className="panel">
         <div className="chart-note" style={{ marginBottom: 12 }}>
           Everyone who can reach this tenant&apos;s farm data. A person with no password cannot sign
-          in anywhere yet — send them an invitation and they choose their own. Suspending keeps the
-          record: their name stays attached to everything they entered.
+          in anywhere yet — either set one for them and read it out, or send a link and let them
+          choose their own. Suspending keeps the record: their name stays attached to everything
+          they entered.
         </div>
         {data && data.length === 0 ? (
           <div className="empty-note">Nobody has been given access yet.</div>
@@ -597,14 +649,22 @@ function AccessTab({ tenantId }: { tenantId: string }) {
                     <td>
                       <div className="inline-actions">
                       {member.status === "ACTIVE" && (
-                        <button
-                          className={`btn btn-sm ${
-                            member.has_password ? "btn-secondary" : "btn-primary"
-                          }`}
-                          onClick={() => invite(member.id)}
-                        >
-                          {member.has_password ? "Resend invitation" : "Send invitation"}
-                        </button>
+                        <>
+                          <button
+                            className={`btn btn-sm ${
+                              member.has_password ? "btn-secondary" : "btn-primary"
+                            }`}
+                            onClick={() => setPassword(member.id)}
+                          >
+                            Set a password
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => invite(member.id)}
+                          >
+                            {member.has_password ? "Resend link" : "Send link"}
+                          </button>
+                        </>
                       )}
                       {member.status === "ACTIVE" ? (
                         <button
@@ -645,7 +705,7 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
   const [issueError, setIssueError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  async function issueLicence() {
+  async function issueLicence(credential: "link" | "password") {
     setIssuing(true);
     setIssueError(null);
     setPack(null);
@@ -654,7 +714,7 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
       setPack(
         await apiFetch<LicencePack>(`/platform/v1/tenants/${tenantId}/licence`, {
           method: "POST",
-          body: { send_email: true },
+          body: { send_email: true, credential },
         })
       );
     } catch (err) {
@@ -681,19 +741,32 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
           Issue this customer&rsquo;s licence
         </div>
         <div className="chart-note">
-          Generates both halves of the handover at once: the licence key their tablet is paired
-          with, and the link their owner opens to choose a password. Emailed to the owner when a
-          mail server is configured, and shown here either way. Issuing again replaces whatever is
-          outstanding.
+          Generates everything the customer needs at once: the pairing key their tablet is typed
+          into, and a way for their owner to sign in. Emailed when a mail server is configured, and
+          shown here either way. Issuing again replaces whatever is outstanding.
         </div>
-        <button
-          className="btn btn-primary"
-          style={{ marginTop: 12 }}
-          onClick={issueLicence}
-          disabled={issuing}
-        >
-          {issuing ? "Issuing…" : pack ? "Issue a new licence" : "Issue licence"}
-        </button>
+        <div className="inline-actions" style={{ marginTop: 14 }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => issueLicence("password")}
+            disabled={issuing}
+          >
+            {issuing ? "Issuing…" : "Issue with a password"}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => issueLicence("link")}
+            disabled={issuing}
+          >
+            Issue with a sign-in link
+          </button>
+        </div>
+        <div className="chart-note" style={{ marginTop: 10, marginBottom: 0 }}>
+          <strong>With a password</strong> is the one to use when you have no mail server: you read
+          the email address and password to the customer and they are in.{" "}
+          <strong>With a link</strong> lets them choose their own password, but somebody has to
+          receive the link.
+        </div>
       </div>
 
       {pack && (
@@ -718,20 +791,43 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
           <div className="pack-row">
             <div className="n">1</div>
             <div>
-              <div className="t">Set a password — for {pack.owner_name}</div>
-              <div className="d">
-                {pack.owner_email} opens this and chooses their own password. Works once, expires{" "}
-                {formatDate(pack.activation_expires_at)}.
-              </div>
-              <div className="copyline">
-                <input readOnly value={pack.activation_url} />
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => copy("link", pack.activation_url)}
-                >
-                  {copied === "link" ? "Copied" : "Copy"}
-                </button>
-              </div>
+              <div className="t">Sign in — for {pack.owner_name}</div>
+              {pack.owner_password ? (
+                <>
+                  <div className="d">
+                    Read these two to the customer. They sign in with them on the tablet, and
+                    should change the password from Settings once they are in.
+                  </div>
+                  <div className="copyline" style={{ marginBottom: 8 }}>
+                    <code className="licence-key">{pack.owner_email}</code>
+                  </div>
+                  <div className="copyline">
+                    <code className="licence-key">{pack.owner_password}</code>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => copy("password", pack.owner_password ?? "")}
+                    >
+                      {copied === "password" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="d">
+                    {pack.owner_email} opens this and chooses their own password. Works once,
+                    expires {formatDate(pack.activation_expires_at)}.
+                  </div>
+                  <div className="copyline">
+                    <input readOnly value={pack.activation_url ?? ""} />
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => copy("link", pack.activation_url ?? "")}
+                    >
+                      {copied === "link" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

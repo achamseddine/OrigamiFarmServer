@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -159,8 +160,35 @@ class LicenceOut(BaseModel):
     tenants_licensed: int
 
 
+class MemberPasswordRequest(BaseModel):
+    """Set a tenant user's password directly, instead of sending a link.
+
+    The no-email answer: an admin sets it and reads it to the customer.
+    Leave new_password unset and one is generated that can be dictated
+    over the phone without spelling out ambiguous characters.
+    """
+
+    new_password: str | None = Field(default=None, min_length=8)
+
+
+class MemberPasswordOut(BaseModel):
+    email: str
+    display_name: str
+    # Returned once. Whether it was generated here or supplied, the admin
+    # needs to see what to tell the customer.
+    password: str
+    # Always true straight after this: the holder did not choose it, so the
+    # console keeps saying so until they replace it themselves.
+    must_change: bool
+
+
 class LicenceIssueRequest(BaseModel):
     """How long each half of the pack stays good for."""
+
+    # How the owner gets in. "link" emails or shows a one-time sign-in
+    # link; "password" sets one directly and shows it, which is what a
+    # deployment with no mail server actually needs.
+    credential: Literal["link", "password"] = "link"
 
     # A week by default: a customer who gets the email on Friday should
     # still be able to act on it when they are next at the farm office.
@@ -193,8 +221,11 @@ class LicenceIssueOut(BaseModel):
 
     owner_email: str
     owner_name: str
-    activation_url: str
-    activation_expires_at: datetime
+    # Exactly one of these is filled in, depending on `credential`. A pack
+    # carrying both would be two ways in where one was asked for.
+    activation_url: str | None = None
+    activation_expires_at: datetime | None = None
+    owner_password: str | None = None
 
     delivery: str
     delivery_detail: str

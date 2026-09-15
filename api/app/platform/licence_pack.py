@@ -34,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserIdentity
+from app.auth.passwords import generate_password, hash_password
 from app.common.enums import DeviceActivationStatus, MembershipStatus, TenantRole
 from app.devices.models import DeviceActivation
 from app.devices.service import generate_licence_key, hash_activation_code, normalise_licence_key
@@ -54,7 +55,11 @@ class LicencePack:
     licence_key: str = ""
     licence_key_expires_at: datetime | None = None
     activation: DeviceActivation | None = None
+    # Exactly one of these, per the caller's choice of credential: a
+    # sign-in link the owner redeems, or a password set for them here.
+    # Issuing both would be two ways in where one was asked for.
     invitation: IssuedInvitation | None = None
+    owner_password: str | None = None
     owner: UserIdentity | None = None
 
 
@@ -94,6 +99,7 @@ def issue_licence_pack(
     key_ttl_hours: int,
     invitation_ttl_hours: int,
     farm_id: uuid.UUID | None = None,
+    credential: str = "link",
 ) -> LicencePack:
     now = datetime.now(timezone.utc)
 
@@ -121,13 +127,26 @@ def issue_licence_pack(
     db.add(activation)
     db.flush()
 
-    invitation = issue_invitation(
-        db,
-        membership=membership,
-        base_url=base_url,
-        invited_by=issued_by,
-        ttl_hours=invitation_ttl_hours,
-    )
+    owner = db.get(UserIdentity, membership.user_id)
+
+    invitation = None
+    owner_password = None
+    if credential == "password":
+        # No mail server, no link to pass around: the admin reads this to
+        # the customer. set_member_password records that they did not
+        # choose it themselves, so every screen keeps saying so until they
+        # replace it from the tablet app.
+        if owner is None:
+            raise LicencePackError("This customer's owner account is missing.")
+        owner_password = set_member_password(db, user=owner, password=None)
+    else:
+        invitation = issue_invitation(
+            db,
+            membership=membership,
+            base_url=base_url,
+            invited_by=issued_by,
+            ttl_hours=invitation_ttl_hours,
+        )
 
     subscription = db.execute(
         select(Subscription).where(Subscription.tenant_id == tenant.id)
@@ -142,8 +161,24 @@ def issue_licence_pack(
         licence_key_expires_at=activation.expires_at,
         activation=activation,
         invitation=invitation,
-        owner=db.get(UserIdentity, membership.user_id),
+        owner_password=owner_password,
+        owner=owner,
     )
+
+
+def set_member_password(db: Session, *, user: UserIdentity, password: str | None) -> str:
+    """Sets a tenant user's password on their behalf and returns it once.
+
+    password_changed_at is cleared, not stamped: somebody else chose this,
+    which is a different security position from a password its holder
+    picked, and the console shows that difference until they replace it
+    (POST /api/v1/auth/change-password on the tablet).
+    """
+    chosen = password or generate_password()
+    user.password_hash = hash_password(chosen)
+    user.password_changed_at = None
+    db.flush()
+    return chosen
 
 
 def licence_pack_email(pack: LicencePack) -> tuple[str, str]:
@@ -164,9 +199,17 @@ def licence_pack_email(pack: LicencePack) -> tuple[str, str]:
         f"{pack.tenant.display_name} is set up on Origami.\n\n"
         f"{plan_line}"
         f"Includes: {includes}\n\n"
-        "1. Set your password\n"
-        "   Open this link and choose a password. It works once:\n\n"
-        f"   {pack.invitation.url if pack.invitation else ''}\n\n"
+        + (
+            "1. Sign in\n"
+            "   Open this link and choose a password. It works once:\n\n"
+            f"   {pack.invitation.url}\n\n"
+            if pack.invitation
+            else "1. Sign in\n"
+            f"   Your email:    {pack.owner.email if pack.owner else ''}\n"
+            f"   Your password: {pack.owner_password}\n\n"
+            "   Please change it once you are in, from Settings in the app.\n\n"
+        )
+        +
         "2. Pair your tablet\n"
         "   Install the Origami app, and type this pairing key into it when it asks:\n\n"
         f"   {pack.licence_key}\n\n"

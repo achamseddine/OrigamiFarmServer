@@ -64,14 +64,17 @@ Built, tested, and running end to end:
   `/welcome` now recognises a pasted `ORG-…` key and says what it actually is. Both are
   credentials stored only as hashes, shown once, and sent as a single email when SMTP is
   configured. Issuing again supersedes whatever was outstanding, so a customer never has two live
-  keys.
+  keys. **With no mail server**, `Issue with a password` sets the owner's password directly and
+  shows it instead of a link, so the whole handover fits in a phone call — and the farm user can
+  replace it themselves via `POST /api/v1/auth/change-password`, without which setting somebody's
+  password would trap them with it.
 - A **Getting started** screen (`/guide`) that draws the whole operating sequence — set yourself
   up, sign a customer, settle into a rhythm — as a flow, with each box's state read from
   `GET /platform/v1/setup` rather than asserted: the platform checks its own database for a
   self-set password, a second staff account, priced plans, a customer, a subscription per
   customer, and a paired tablet, so the diagram says where this deployment has actually got to.
   The Overview banner names the next outstanding step.
-- 174 automated tests against a real Postgres instance, including every mandatory isolation,
+- 180 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 

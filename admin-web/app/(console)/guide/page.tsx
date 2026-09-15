@@ -73,9 +73,9 @@ const PHASE_TWO: Node[] = [
   },
   {
     keys: ["device"],
-    title: "Send the tablet code",
+    title: "Issue their licence",
     detail:
-      "A one-time code on the customer's Devices tab. Their worker types it into the app to pair it.",
+      "On their Licensing tab. One action gives you a password for the owner and a pairing key for the tablet — read both down the phone. No email needed.",
     href: "/tenants",
   },
   {
