@@ -36,11 +36,31 @@ def login(payload: LoginRequest, db: Session = Depends(get_control_db)) -> Login
     if user is None or not user.password_hash or not verify_password(payload.password, user.password_hash):
         raise generic_error
 
-    membership = db.execute(
-        select(TenantMembership).where(
-            TenantMembership.user_id == user.id, TenantMembership.status == MembershipStatus.ACTIVE
+    # `.first()` on an ordered query, not `.scalar_one_or_none()`: one
+    # person can hold an active membership in more than one tenant, and
+    # that is ordinary rather than exceptional — an operator running two
+    # farms under one email, or an admin who re-created a customer while
+    # testing and left the old one in place. Asking for exactly one row
+    # there raised MultipleResultsFound, which reached the tablet as a 500
+    # and read as "the password is wrong" to everyone looking at it.
+    #
+    # The tablet contract has no way to choose between them (one login per
+    # device, no tenant picker, unlike the console's X-Membership-Id), so
+    # the newest wins: the membership created last is the customer whoever
+    # is signing in was most recently set up on, which is what an admin
+    # reading out a freshly issued password expects to happen.
+    membership = (
+        db.execute(
+            select(TenantMembership)
+            .where(
+                TenantMembership.user_id == user.id,
+                TenantMembership.status == MembershipStatus.ACTIVE,
+            )
+            .order_by(TenantMembership.created_at.desc(), TenantMembership.id.desc())
         )
-    ).scalar_one_or_none()
+        .scalars()
+        .first()
+    )
     if membership is None:
         raise generic_error
 
@@ -97,9 +117,7 @@ def change_my_password(
     """
     user = db.get(UserIdentity, access.user_id)
     if user is None or not user.password_hash:
-        raise HTTPException(
-            status_code=403, detail="This account does not sign in with a password."
-        )
+        raise HTTPException(status_code=403, detail="This account does not sign in with a password.")
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Your current password is not correct.")
 

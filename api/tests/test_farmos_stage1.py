@@ -52,6 +52,31 @@ def test_login_rejects_wrong_password_with_a_farmer_facing_message(client, contr
     assert resp.json() == {"detail": "Incorrect email or password."}
 
 
+def test_login_works_when_the_same_person_owns_more_than_one_tenant(client, control_db):
+    """One email, two customers — and the newest one is where they land.
+
+    This used to raise MultipleResultsFound and reach the tablet as a 500,
+    which is indistinguishable from a wrong password to the person holding
+    it. Owning two farms under one address is ordinary (and an admin
+    re-creating a customer while testing produces it immediately), so it
+    has to sign in rather than fail.
+    """
+    older = create_tenant(control_db, company_code=unique_code("FARM-DUP"), display_name="First Farm")
+    add_farmos_user(control_db, older, "two-farms@origami-demo.com", role="owner")
+    control_db.commit()
+
+    newer = create_tenant(control_db, company_code=unique_code("FARM-DUP"), display_name="Second Farm")
+    add_farmos_user(control_db, newer, "two-farms@origami-demo.com", role="owner")
+    control_db.commit()
+
+    token = farmos_login(client, "two-farms@origami-demo.com", FARMOS_DEMO_PASSWORD)
+
+    me = client.get("/api/v1/auth/me", headers=farmos_headers(token))
+    assert me.status_code == 200, me.text
+    # farm_id carries the tenant on this contract — the most recent one.
+    assert me.json()["farm_id"] == str(newer.id)
+
+
 def test_owner_gets_full_access_grid_with_all_twenty_modules(client, control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
     add_farmos_user(control_db, tenant, "owner@origami-demo.com", role="owner")
@@ -167,9 +192,7 @@ def test_farms_me_returns_this_users_own_farm(client, control_db):
 
 
 def test_suspended_farm_blocks_access_with_a_farmer_facing_message(client, control_db):
-    tenant = create_tenant(
-        control_db, company_code=unique_code("FARM-S1"), status=TenantStatus.SUSPENDED
-    )
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"), status=TenantStatus.SUSPENDED)
     add_farmos_user(control_db, tenant, "suspended@origami-demo.com", role="owner")
     control_db.commit()
     token = farmos_login(client, "suspended@origami-demo.com", FARMOS_DEMO_PASSWORD)
