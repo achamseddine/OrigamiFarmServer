@@ -57,7 +57,7 @@ def test_issuing_a_licence_returns_the_key_and_the_activation_link(client, contr
     pack = issue(client, headers, tenant_id)
 
     assert pack["licence_key"].startswith("ORG-")
-    assert "/activate/?token=" in pack["activation_url"]
+    assert "/welcome/?token=" in pack["activation_url"]
     assert pack["owner_email"] == email
     assert pack["licence_key_expires_at"] and pack["activation_expires_at"]
 

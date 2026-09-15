@@ -42,8 +42,14 @@ def hash_invitation_token(token: str) -> str:
 
 
 def invitation_url(base_url: str, token: str) -> str:
-    """Where the invited person goes. The console serves /activate."""
-    return f"{base_url.rstrip('/')}/activate/?token={token}"
+    """Where the invited person goes. The console serves /welcome.
+
+    Not /activate, which is what this was: the product already had "device
+    activation codes" for pairing a tablet, and two different credentials
+    both called activation is a trap somebody walks into. The old path
+    still forwards here so links already sent keep working.
+    """
+    return f"{base_url.rstrip('/')}/welcome/?token={token}"
 
 
 @dataclass

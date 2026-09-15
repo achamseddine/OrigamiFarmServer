@@ -51,13 +51,17 @@ Built, tested, and running end to end:
   Note the licence gates what the app **shows**: per-request authorization is still the tenant
   permission grid (`require_permission`), not the entitlement.
 - Tenant-user invitations: inviting someone issues a hashed, single-use, expiring link they open to
-  choose their own password and land straight in the tablet app (`/activate`). It is emailed when
+  choose their own password and land straight in the tablet app (`/welcome`; the earlier
+  `/activate` path still forwards there so links already sent keep working). It is emailed when
   SMTP is configured and shown to the admin to pass on when it is not — it never claims to have
   sent mail it did not send.
 - **Issue licence** hands over both halves of a customer setup in one action
   (`POST /platform/v1/tenants/{id}/licence`): the readable licence key their tablet pairs with
   (`ORG-XMRH-M3ND-XFR6`, an alphabet with no confusable characters, accepted in any case and with
-  or without dashes) and the activation link their owner opens to set a password. Both are
+  or without dashes — the same format the Devices tab issues) and the sign-in link their owner
+  opens to set a password. The two are named apart on purpose: both were once called
+  "activation", and a pairing key pasted into the sign-in URL is a mistake the product invited.
+  `/welcome` now recognises a pasted `ORG-…` key and says what it actually is. Both are
   credentials stored only as hashes, shown once, and sent as a single email when SMTP is
   configured. Issuing again supersedes whatever was outstanding, so a customer never has two live
   keys.
@@ -67,7 +71,7 @@ Built, tested, and running end to end:
   self-set password, a second staff account, priced plans, a customer, a subscription per
   customer, and a paired tablet, so the diagram says where this deployment has actually got to.
   The Overview banner names the next outstanding step.
-- 172 automated tests against a real Postgres instance, including every mandatory isolation,
+- 174 automated tests against a real Postgres instance, including every mandatory isolation,
   entitlement, device, sync, support-session, audit, and platform-role scenario from the product
   brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 

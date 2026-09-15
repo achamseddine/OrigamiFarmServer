@@ -52,12 +52,19 @@ It returns, exactly once:
 
 | | What it is | Backed by |
 |---|---|---|
-| **Licence key** | `ORG-XMRH-M3ND-XFR6` — typed into the app to pair one device | `device_activation`, hashed |
-| **Activation link** | `/activate/?token=…` — the owner sets their own password | `membership_invitation`, hashed |
+| **Pairing key** | `ORG-XMRH-M3ND-XFR6` — typed into the app to pair one device | `device_activation`, hashed |
+| **Sign-in link** | `/welcome/?token=…` — the owner sets their own password | `membership_invitation`, hashed |
 
 Neither is stored in a readable form, so a lost pack is reissued rather
 than recovered. Issuing again revokes the outstanding key and supersedes
 the outstanding invitation: a customer never has two live keys.
+
+The two are deliberately named apart. They were both called "activation"
+once — the tablet code and the account page — and an admin duly pasted a
+pairing key into `/activate/?token=`, which is a reasonable thing to do
+when the product uses one word for two credentials. The page is now
+`/welcome`, `/activate` forwards to it so links already sent survive, and
+`/welcome` recognises a pasted `ORG-…` key and says what it actually is.
 
 The key's alphabet excludes one of each confusable pair (`0/O`, `1/I/L`,
 `5/S`, `8/B`) because it gets read down a phone line, and redemption

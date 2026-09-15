@@ -287,6 +287,7 @@ function DevicesTab({ tenantId }: { tenantId: string }) {
   const [devices, setDevices] = useState<DeviceItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastCode, setLastCode] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const load = useCallback(() => {
     apiFetch<DeviceItem[]>(`/platform/v1/tenants/${tenantId}/devices`).then(setDevices);
@@ -301,6 +302,7 @@ function DevicesTab({ tenantId }: { tenantId: string }) {
         { method: "POST", body: { ttl_hours: 24 } }
       );
       setLastCode(result.activation_code);
+      setCopiedCode(false);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Failed to create activation code");
     }
@@ -320,12 +322,45 @@ function DevicesTab({ tenantId }: { tenantId: string }) {
   return (
     <div>
       {error && <div className="error-banner">{error}</div>}
-      <button className="btn btn-primary" onClick={createActivation} style={{ marginBottom: 16 }}>
-        + Generate device activation code
-      </button>
+
+      <div className="panel">
+        <div className="chart-title" style={{ marginBottom: 4 }}>
+          Pair a tablet
+        </div>
+        <div className="chart-note">
+          A pairing key is <strong>typed into the Origami app</strong> on the tablet, on the screen
+          that asks for it. It is not a web address and it is not how somebody signs in — the
+          owner&rsquo;s sign-in link comes from{" "}
+          <strong>Licensing → Issue licence</strong> or the Access tab. One key pairs one device.
+        </div>
+        <button className="btn btn-primary" onClick={createActivation} style={{ marginTop: 12 }}>
+          {lastCode ? "Generate another pairing key" : "Generate a pairing key"}
+        </button>
+      </div>
+
       {lastCode && (
-        <div className="panel" style={{ background: "var(--farmos-mist)" }}>
-          One-time activation code (shown only now): <code style={{ fontSize: "1.1rem" }}>{lastCode}</code>
+        <div className="licence-pack">
+          <div className="pack-head">
+            <div>
+              <div className="k">Pairing key</div>
+              <h3>Type this into the app on the tablet</h3>
+            </div>
+          </div>
+          <p className="chart-note" style={{ marginTop: 0 }}>
+            Shown only now — generate another if it is lost. Case and dashes do not matter.
+          </p>
+          <div className="copyline">
+            <code className="licence-key">{lastCode}</code>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                navigator.clipboard?.writeText(lastCode);
+                setCopiedCode(true);
+              }}
+            >
+              {copiedCode ? "Copied" : "Copy"}
+            </button>
+          </div>
         </div>
       )}
       <div className="panel" style={{ padding: 0 }}>

@@ -8,8 +8,13 @@ and believe the customer was set up.
 
 This assembles the whole handover in one call:
 
-  * the licence key their tablet is paired with, and
-  * the link their owner opens to choose a password.
+  * the pairing key their tablet is typed into, and
+  * the sign-in link their owner opens to choose a password.
+
+Named apart deliberately. They were both "activation" once — the tablet
+code and the account page — and an admin duly pasted a pairing key into
+/activate/?token=, which is a reasonable thing to do when one word covers
+two different credentials.
 
 Both are credentials and both are returned exactly once. The key is stored
 only as a hash (it reuses device activation, so there is one pairing
@@ -56,9 +61,9 @@ class LicencePack:
 def find_tenant_owner(db: Session, tenant_id: uuid.UUID) -> tuple[TenantMembership, UserIdentity]:
     """The person the pack is addressed to.
 
-    Explicitly the tenant owner rather than "any member": the activation
-    link sets a password, and handing that to whichever membership happens
-    to sort first is not something to leave to chance.
+    Explicitly the tenant owner rather than "any member": the sign-in link
+    sets a password, and handing that to whichever membership happens to
+    sort first is not something to leave to chance.
     """
     row = db.execute(
         select(TenantMembership, UserIdentity)
@@ -73,7 +78,7 @@ def find_tenant_owner(db: Session, tenant_id: uuid.UUID) -> tuple[TenantMembersh
     if row is None:
         raise LicencePackError(
             "This customer has no active owner yet. Add one on the Access tab first — "
-            "the activation link sets that person's password."
+            "the sign-in link sets that person's password."
         )
     return row[0], row[1]
 
@@ -163,9 +168,10 @@ def licence_pack_email(pack: LicencePack) -> tuple[str, str]:
         "   Open this link and choose a password. It works once:\n\n"
         f"   {pack.invitation.url if pack.invitation else ''}\n\n"
         "2. Pair your tablet\n"
-        "   Install the Origami app, and enter this licence key when it asks:\n\n"
+        "   Install the Origami app, and type this pairing key into it when it asks:\n\n"
         f"   {pack.licence_key}\n\n"
-        "   The key pairs one device. Ask us for another if you have more tablets.\n\n"
+        "   This is typed into the app, not opened in a browser. It pairs one\n"
+        "   device — ask us for another if you have more tablets.\n\n"
         "If you were not expecting this, you can ignore this message.\n"
     )
     return subject, body

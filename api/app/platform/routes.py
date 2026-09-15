@@ -29,7 +29,11 @@ from app.common.enums import (
 from app.common.errors import AppError, ErrorCode
 from app.config.settings import get_settings
 from app.devices.models import Device, DeviceActivation, LicenseLease
-from app.devices.service import generate_activation_code, hash_activation_code
+from app.devices.service import (
+    generate_licence_key,
+    hash_activation_code,
+    normalise_licence_key,
+)
 from app.entitlements.state_machine import transition_entitlement, transition_tenant_status
 from app.notifications.email import EmailResult, invitation_email, send_email
 from app.plans.contents import (
@@ -731,12 +735,14 @@ def create_device_activation(
     identity: Identity = Depends(require_platform_role(*_STAFF_AND_SUPPORT)),
 ) -> DeviceActivationCreateResponse:
     _get_tenant_or_404(db, tenant_id)
-    code = generate_activation_code()
+    # The same readable format the licence pack issues, so a customer is
+    # never handed two different-looking things that do the same job.
+    code = generate_licence_key()
     expires_at = datetime.now(timezone.utc) + timedelta(hours=payload.ttl_hours)
     activation = DeviceActivation(
         tenant_id=tenant_id,
         farm_id=payload.farm_id,
-        code_hash=hash_activation_code(code),
+        code_hash=hash_activation_code(normalise_licence_key(code)),
         status=DeviceActivationStatus.PENDING,
         expires_at=expires_at,
         created_by=identity.user_id,

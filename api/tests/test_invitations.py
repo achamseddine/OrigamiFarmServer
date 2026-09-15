@@ -307,3 +307,45 @@ def test_the_membership_is_active_so_the_owner_lands_in_their_own_tenant(client,
     mine = next(item for item in memberships if item["email"] == email)
     assert mine["status"] == MembershipStatus.ACTIVE.value
     assert mine["has_password"] is True
+
+
+def test_the_sign_in_link_is_not_called_activation(client, control_db):
+    """The rename exists because one word for two credentials is a trap.
+
+    An admin pasted a tablet pairing code into /activate/?token= and
+    reasonably expected it to work, because the product called both things
+    activation. The page is /welcome now; /activate stays as a forward so
+    links already sent survive, which is why this asserts the built URL
+    rather than the route's existence.
+    """
+    headers = admin_headers(client, control_db, "inv-name@test.com")
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-NAME"))
+    control_db.commit()
+    membership = invite_owner(
+        client, headers, str(tenant.id), f"name-{unique_code('x')}@farm-invite.com"
+    )
+
+    url = issue(client, headers, str(tenant.id), membership["id"])["url"]
+    assert "/welcome/?token=" in url
+    assert "/activate/" not in url
+
+
+def test_a_pairing_key_is_not_accepted_as_a_sign_in_token(client, control_db):
+    """The two credentials must never be interchangeable, however similar
+    the words around them once were.
+    """
+    headers = admin_headers(client, control_db, "inv-notkey@test.com")
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-NOTKEY"))
+    control_db.commit()
+
+    key = client.post(
+        f"/platform/v1/tenants/{tenant.id}/device-activations",
+        json={"ttl_hours": 24},
+        headers=headers,
+    )
+    assert key.status_code == 201, key.text
+
+    check = client.post(
+        "/api/v1/auth/invitation/check", json={"token": key.json()["activation_code"]}
+    )
+    assert check.json()["valid"] is False
