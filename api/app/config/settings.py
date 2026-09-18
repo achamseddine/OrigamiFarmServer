@@ -47,7 +47,19 @@ class Settings(BaseSettings):
     platform_session_ttl_hours: int = 12
 
     app_secret_key: str = "change-me-in-every-environment"
-    cors_allowed_origins: str = "http://localhost:3000"
+    # Who may call this API from a browser. Comma-separated, and compared
+    # against the Origin header, which is scheme://host[:port] and never
+    # carries a path or a trailing slash — cors_origins_list below strips
+    # one if it is given anyway, because pasting a URL from the address bar
+    # is the obvious way to fill this in and a silent non-match is a
+    # miserable thing to debug.
+    #
+    # The deployed host is here so an image works out of the box where it
+    # is actually running; localhost:3000 stays for admin-web's dev server.
+    # Neither covers a tablet app, whose origin is its own (a WebView's
+    # localhost, or null from a file:// build) — set CORS_ALLOWED_ORIGINS
+    # for the deployment to add it.
+    cors_allowed_origins: str = "https://leb-container-test-staging.azurewebsites.net,http://localhost:3000"
     log_level: str = "INFO"
 
     # Built admin console (admin-web's static export), served by this app at
@@ -82,7 +94,21 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+        """The allowlist, normalised to what a browser actually sends.
+
+        A trailing slash is stripped rather than honoured: an Origin header
+        is only ever scheme://host[:port], so "https://example.com/" would
+        match nothing, and the failure is invisible — the browser blocks
+        the request and the server logs nothing at all. "*" is left alone;
+        it is a wildcard, not a URL.
+        """
+        origins = []
+        for raw in self.cors_allowed_origins.split(","):
+            origin = raw.strip()
+            if not origin:
+                continue
+            origins.append(origin if origin == "*" else origin.rstrip("/"))
+        return origins
 
     @property
     def is_production(self) -> bool:
