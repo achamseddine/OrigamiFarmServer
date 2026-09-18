@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { VersionStamp } from "@/lib/version";
 
 const NAV: { section: string; items: { href: string; label: string }[] }[] = [
   // First, and on its own: someone opening this console for the first time
@@ -109,6 +110,9 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
           <button className="btn btn-secondary" style={{ width: "100%" }} onClick={logout}>
             Sign out
           </button>
+          <div style={{ marginTop: 10 }}>
+            <VersionStamp align="center" />
+          </div>
         </div>
       </aside>
       <main className="main-content">{children}</main>

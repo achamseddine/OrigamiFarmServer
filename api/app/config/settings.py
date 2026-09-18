@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     # carries platform-wide authority, the tablet's carries one farm's.
     platform_session_ttl_hours: int = 12
 
+    # Which build this is. Stamped into the image at build time from the
+    # commit it was built from (see api/Dockerfile's APP_VERSION arg), so
+    # every commit produces a different value with nobody having to
+    # remember to bump anything. "dev" means running from a checkout.
+    #
+    # It is reported by /health, which needs no authentication, so "is my
+    # change actually deployed?" is answerable with one URL and no login —
+    # the question that otherwise costs an afternoon of guessing.
+    app_version: str = "dev"
+    app_built_at: str = ""
+
     app_secret_key: str = "change-me-in-every-environment"
     # Who may call this API from a browser. Comma-separated, and compared
     # against the Origin header, which is scheme://host[:port] and never

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
+import { VersionStamp } from "@/lib/version";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -95,6 +96,11 @@ export default function LoginPage() {
           <code>scripts/create_platform_admin.py</code>, which is also how a lost password is
           reset.
         </p>
+        {/* Before anyone signs in, because "is the new build up?" is asked
+            most often by someone who cannot get in yet. */}
+        <div style={{ marginTop: 20, paddingTop: 14, borderTop: "1px solid var(--farmos-line, #ddd)" }}>
+          <VersionStamp />
+        </div>
       </form>
     </div>
   );

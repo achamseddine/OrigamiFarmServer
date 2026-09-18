@@ -72,10 +72,15 @@ jobs:
 
       # Build context is the repository root, not ./api — the image needs
       # admin-web/ and scripts/ too. See the header of api/Dockerfile.
+      # APP_VERSION is the same string as the image tag on purpose: what
+      # /health reports and what you deployed are then the same words, and
+      # checking one against the other needs no translation.
       - name: Build the image
         run: |
           docker build \
             -f api/Dockerfile \
+            --build-arg APP_VERSION='${{ steps.names.outputs.sha_tag }}' \
+            --build-arg APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -t '${{ steps.names.outputs.image }}:${{ steps.names.outputs.sha_tag }}' \
             .
 
@@ -101,10 +106,21 @@ jobs:
             -e RUN_MIGRATIONS=false \
             '${{ steps.names.outputs.image }}:${{ steps.names.outputs.sha_tag }}'
           for i in $(seq 1 20); do
-            if curl -fsS http://localhost:8000/health; then
-              echo "  image responds on /health"
+            body=$(curl -fsS http://localhost:8000/health || true)
+            if [ -n "$body" ]; then
+              echo "  /health says: $body"
+              # The version has to have survived the build arg, or the one
+              # thing this stamp exists for — telling a deployed build
+              # apart from the last one — is quietly broken.
+              case "$body" in
+                *'"version":"${{ steps.names.outputs.sha_tag }}"'*)
+                  docker rm -f smoke
+                  exit 0
+                  ;;
+              esac
+              echo "::error::/health did not report version ${{ steps.names.outputs.sha_tag }}"
               docker rm -f smoke
-              exit 0
+              exit 1
             fi
             sleep 3
           done

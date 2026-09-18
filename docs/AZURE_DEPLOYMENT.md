@@ -233,8 +233,46 @@ means nothing about registry access lives in plaintext config.
 
 ## 4. Application settings
 
+### Checking which build is live
+
+Before anything else, this answers "did my deploy actually land?" without a login:
+
+```bash
+curl https://<your-app>.azurewebsites.net/health
+# {"status":"ok","version":"sha-72ed295","built_at":"2026-09-18T07:59:41Z"}
+```
+
+`version` is the commit the image was built from — the same string as its image tag, so it
+compares directly against what you deployed. The console shows it too, on the login page and at
+the bottom of the sidebar, read live from this endpoint rather than compiled into the page, so a
+cached console cannot show you a version that isn't running. An image built outside the workflow
+reports `unknown`; a checkout reports `dev`.
+
+### Debug mode
+
+`LOG_LEVEL=DEBUG` logs every request with its method, path, status and `Origin` — and logs a
+CORS refusal by name, which is otherwise completely silent (the browser blocks the request, and
+the server records nothing):
+
+```bash
+az webapp config appsettings set -g "$RG" -n "$APP" --settings LOG_LEVEL=DEBUG
+```
+
+```json
+{"method":"OPTIONS","path":"/api/v1/auth/login","status":400,
+ "origin":"https://tablet.example","cors":"REFUSED — origin not in CORS_ALLOWED_ORIGINS",
+ "cors_allowed":["https://…azurewebsites.net","http://localhost:3000"],
+ "event":"cors_origin_refused","level":"warning"}
+```
+
+Bodies and headers are never logged, so turning this on cannot leak a password or a bearer token
+into the log stream. Set it back to `INFO` when you're done — it's noisy, one line per request.
+
+### The rest
+
 Everything the app reads is an environment variable (`app/config/settings.py`) — nothing is
-baked into the image. Generate a real secret rather than using the placeholder below:
+baked into the image except `APP_VERSION`. Generate a real secret rather than using the
+placeholder below:
 
 ```bash
 APP_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")

@@ -20,7 +20,13 @@ from tests.helpers import (
 def test_root_health_is_unauthenticated_and_cheap(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    # status is the contract the tablet app reads; version and built_at
+    # were added alongside it so a deployment can be identified without
+    # signing in. Additive on purpose — a client checking only the status
+    # code, as the app does, is unaffected.
+    assert body["status"] == "ok"
+    assert set(body) == {"status", "version", "built_at"}
 
 
 def test_login_and_restore_session_via_auth_me(client, control_db):

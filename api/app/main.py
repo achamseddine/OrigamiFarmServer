@@ -8,7 +8,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.common.errors import AppError
-from app.common.logging import CorrelationIdMiddleware, SecurityHeadersMiddleware, configure_logging
+from app.common.logging import (
+    CorrelationIdMiddleware,
+    RequestTraceMiddleware,
+    SecurityHeadersMiddleware,
+    configure_logging,
+)
 from app.config import get_settings
 from app.farmos.idempotency import IdempotencyMiddleware
 
@@ -37,6 +42,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last, which in Starlette means outermost — so it still sees a
+# request that CORSMiddleware rejects. That rejection is the whole reason
+# this exists, and a middleware nested inside CORS would never run to
+# report it.
+app.add_middleware(RequestTraceMiddleware, allowed_origins=settings.cors_origins_list)
 
 
 @app.exception_handler(AppError)
@@ -47,9 +57,25 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+def _health_payload() -> dict:
+    """Liveness, plus which build is answering.
+
+    The version is here rather than behind a login because the question it
+    answers — "did my deploy actually land?" — is asked most often by
+    someone who cannot yet get in, and a deployment that silently serves
+    last week's image is the failure this exists to make impossible. It
+    reveals nothing a caller could not learn from the public image tags.
+    """
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "built_at": settings.app_built_at,
+    }
+
+
 @app.get("/healthz", tags=["Health"])
 def healthz() -> dict:
-    return {"status": "ok"}
+    return _health_payload()
 
 
 @app.get("/health", tags=["Health"])
@@ -59,8 +85,11 @@ def health() -> dict:
     module's own route group, a different thing entirely). Unauthenticated
     and as cheap as /healthz on purpose: the app calls this just to decide
     whether it's online, and anything under 500 counts as reachable.
+
+    The extra keys are additive: a client that only checks the status code,
+    as the tablet app does, is unaffected.
     """
-    return {"status": "ok"}
+    return _health_payload()
 
 
 @app.get("/readyz", tags=["Health"])

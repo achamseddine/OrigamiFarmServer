@@ -116,6 +116,20 @@ COPY api/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
     && chown origami:origami /app
 
+# Which build this is. Passed in by .github/workflows/publish-image.yml as
+# the commit it built, and reported by /health and on every console screen,
+# so "is my change deployed?" is answered by looking rather than guessing.
+# Defaulted rather than required: a plain `docker build` still works, it
+# just produces an image that admits it does not know which one it is.
+#
+# Deliberately below every COPY and install above: these two change on
+# every single commit, and a layer that always changes has to sit at the
+# bottom or it invalidates the expensive layers cached behind it.
+ARG APP_VERSION=unknown
+ARG APP_BUILT_AT=""
+ENV APP_VERSION=$APP_VERSION \
+    APP_BUILT_AT=$APP_BUILT_AT
+
 USER origami
 
 EXPOSE 8000
