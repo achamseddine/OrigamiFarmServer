@@ -45,14 +45,27 @@ needs `admin-web/` and `scripts/` alongside `api/`:
 ```bash
 az acr login --name "$ACR_NAME"
 
-docker build -f ./api/Dockerfile -t "$ACR_NAME.azurecr.io/origami-api:latest" .
+./scripts/build-image.sh "$ACR_NAME.azurecr.io/origami-api:latest"
 docker push "$ACR_NAME.azurecr.io/origami-api:latest"
 ```
 
-If Docker Desktop is on Apple Silicon (M-series Mac), it builds `arm64` by default — Azure App
-Service Linux containers run on `amd64`, and a plain `arm64` push there fails at container start
-(exec-format error), not at build/push time, so it's a confusing one to hit blind. Add
-`--platform linux/amd64` to the `docker build` above if that's your machine.
+Use the script rather than `docker build` directly. It fills in the version stamp from the commit
+you are on and forces `--platform linux/amd64`, and both matter:
+
+- **Without the stamp**, `/health` reports `version: "unknown"` and you are back to not knowing
+  whether a deployment landed — the thing the stamp exists to tell you.
+- **Without the platform flag on Apple Silicon (M-series Mac)**, Docker builds `arm64`, and Azure
+  App Service Linux containers run `amd64`. That mismatch fails at *container start* with an
+  exec-format error, not at build or push, so it is a confusing one to hit blind.
+
+The equivalent by hand, if you would rather not use the script:
+
+```bash
+docker build --platform linux/amd64 -f api/Dockerfile \
+  --build-arg APP_VERSION="$(git rev-parse --short HEAD)" \
+  --build-arg APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t "$ACR_NAME.azurecr.io/origami-api:latest" .
+```
 
 (Cloud-build alternative, no local Docker needed: `az acr build --registry "$ACR_NAME" --image
 origami-api:latest --file api/Dockerfile .` — uploads the repository and builds it server-side.)

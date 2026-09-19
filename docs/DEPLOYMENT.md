@@ -10,8 +10,14 @@ One image containing both halves of the product. The Dockerfile lives in `api/` 
 the repository root**, because it needs `admin-web/` and `scripts/` too:
 
 ```bash
-docker build -f api/Dockerfile -t origami-api .
-docker run -p 8000:8000 --env-file .env origami-api
+# Stamps the image with the commit you are on, so GET /health can tell you
+# which build is running. A plain `docker build` works too, but reports
+# version "unknown".
+./scripts/build-image.sh origami-api:latest
+docker run -p 8000:8000 --env-file .env origami-api:latest
+
+curl localhost:8000/health
+# {"status":"ok","version":"6fc450c","built_at":"2026-09-19T08:43:39Z"}
 ```
 
 `admin-web` compiles to static files in a Node build stage; the runtime stage is Python only and
