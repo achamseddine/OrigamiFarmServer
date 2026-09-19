@@ -22,6 +22,29 @@ from app.tenants.models import TenantMembership
 router = APIRouter()
 
 
+def _profile_of(user: UserIdentity, membership: TenantMembership) -> UserProfileOut:
+    """The profile shape both /auth/login and /auth/me return.
+
+    One function because the tablet app takes its profile from whichever
+    of the two it happened to call — login on a fresh sign-in, /auth/me on
+    a relaunch — and two constructions that drift apart would give the
+    same person a different name or role depending on how they got in.
+    """
+    return UserProfileOut(
+        id=str(user.id),
+        # The tablet contract calls the tenant "farm_id": one customer is
+        # one farm from the app's point of view.
+        farm_id=str(membership.tenant_id),
+        name=user.display_name,
+        email=user.email,
+        phone=membership.phone,
+        role=membership.role,
+        department=membership.department,
+        language=membership.language,
+        active=membership.status == MembershipStatus.ACTIVE,
+    )
+
+
 @router.post("/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_control_db)) -> LoginResponse:
     """Not one of the 92 verified endpoints (the reference app's call sites
@@ -66,7 +89,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_control_db)) -> Login
 
     settings = get_settings()
     token = issue_access_token(settings, user_id=user.id, tenant_id=membership.tenant_id, email=user.email)
-    return LoginResponse(access_token=token)
+    return LoginResponse(access_token=token, user=_profile_of(user, membership))
 
 
 @router.get("/auth/me", response_model=UserProfileOut)
@@ -80,17 +103,9 @@ def me(
     """
     membership = db.get(TenantMembership, access.membership_id)
     assert membership is not None  # get_access_context already verified this membership exists
-    return UserProfileOut(
-        id=str(access.user_id),
-        farm_id=str(access.tenant_id),
-        name=access.display_name,
-        email=access.email,
-        phone=membership.phone,
-        role=access.role,
-        department=membership.department,
-        language=membership.language,
-        active=membership.status == MembershipStatus.ACTIVE,
-    )
+    user = db.get(UserIdentity, access.user_id)
+    assert user is not None  # likewise — the context was built from this user
+    return _profile_of(user, membership)
 
 
 class ChangeMyPasswordRequest(BaseModel):

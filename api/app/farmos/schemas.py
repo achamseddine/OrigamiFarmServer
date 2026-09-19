@@ -15,11 +15,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
 class UserProfileOut(BaseModel):
     id: str
     farm_id: str
@@ -30,6 +25,21 @@ class UserProfileOut(BaseModel):
     department: str | None
     language: str
     active: bool
+
+
+# Declared after UserProfileOut because it carries one: the tablet app
+# reads `user` straight out of the login response and never calls
+# /auth/me, so a login without it left the app holding a valid token and
+# no profile. Worse, the cast it does there — `json['user'] as
+# Map<String, dynamic>` — throws a Dart type error rather than an API
+# error, which its `on ApiException` handler does not catch: the sign-in
+# button appeared to do nothing at all, with a 200 in the server log.
+# Same shape as /auth/me, built from the same fields, so the two cannot
+# drift apart.
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserProfileOut
 
 
 class ModulePermissionOut(BaseModel):

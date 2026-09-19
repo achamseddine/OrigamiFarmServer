@@ -46,6 +46,56 @@ def test_login_and_restore_session_via_auth_me(client, control_db):
     assert body["active"] is True
 
 
+def test_login_returns_the_profile_the_tablet_app_reads(client, control_db):
+    """The app takes its user straight from the login response.
+
+    It does `json['user'] as Map<String, dynamic>` and never calls
+    /auth/me on a fresh sign-in, so a response without `user` threw a Dart
+    type error — which its `on ApiException` handler does not catch. The
+    visible result was a sign-in button that did nothing, with a 200 in
+    the server log, which is about the least diagnosable failure there is.
+    """
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"), display_name="Riyak Farm")
+    user, _ = add_farmos_user(
+        control_db, tenant, "profile@origami-demo.com", role="owner", display_name="Rami"
+    )
+    control_db.commit()
+
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "profile@origami-demo.com", "password": FARMOS_DEMO_PASSWORD},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["access_token"]
+    assert body["token_type"] == "bearer"
+
+    profile = body["user"]
+    assert profile["id"] == str(user.id)
+    assert profile["farm_id"] == str(tenant.id)
+    assert profile["name"] == "Rami"
+    assert profile["email"] == "profile@origami-demo.com"
+    assert profile["role"] == "owner"
+    assert profile["active"] is True
+
+
+def test_login_and_auth_me_describe_the_same_person(client, control_db):
+    """Both hand the app a profile, and it keeps whichever it got last —
+    login on a fresh sign-in, /auth/me on a relaunch. If they disagreed,
+    the same person would change name or role by reopening the app."""
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
+    add_farmos_user(control_db, tenant, "samesame@origami-demo.com", role="manager", display_name="Nour")
+    control_db.commit()
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "samesame@origami-demo.com", "password": FARMOS_DEMO_PASSWORD},
+    ).json()
+    me = client.get("/api/v1/auth/me", headers=farmos_headers(login["access_token"])).json()
+
+    assert login["user"] == me
+
+
 def test_login_rejects_wrong_password_with_a_farmer_facing_message(client, control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
     add_farmos_user(control_db, tenant, "wrongpw@origami-demo.com", role="owner")

@@ -91,6 +91,30 @@ depends on — decodes the token, loads the membership, checks tenant/membership
 
 `AccessContext.tenant_id` is serialized on the wire as `farm_id` everywhere — see the next section.
 
+### The login response carries the profile
+
+`POST /auth/login` returns the signed-in person alongside the token:
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs…",
+  "token_type": "bearer",
+  "user": { "id": "…", "farm_id": "…", "name": "Rami", "email": "…",
+            "phone": null, "role": "owner", "department": null,
+            "language": "en", "active": true }
+}
+```
+
+`user` is the same shape `GET /auth/me` returns, built by the same function
+(`routes_auth.py:_profile_of`) so the two cannot drift apart.
+
+It is not optional. The tablet app reads it directly — `json['user'] as Map<String, dynamic>` —
+and does **not** call `/auth/me` on a fresh sign-in, only on a relaunch. Omitting it throws a Dart
+type error rather than an API error, which the app's `on ApiException` handler does not catch: the
+sign-in button silently does nothing while the server logs a clean `200`. That combination cost
+this project the better part of a week, so `test_login_returns_the_profile_the_tablet_app_reads`
+pins it.
+
 ## `farm_id` = `Tenant.id`
 
 The contract's `farm_id` concept is this codebase's `Tenant.id`, spelled the app's way — a
