@@ -35,8 +35,15 @@ def make_plan(db, *, monthly: int | None = None, annual: int | None = None, curr
     return plan
 
 
-def subscribe(db, tenant, plan, *, status=SubscriptionStatus.ACTIVE, cycle=BillingCycle.MONTHLY,
-              renews_in_days: int | None = None) -> Subscription:
+def subscribe(
+    db,
+    tenant,
+    plan,
+    *,
+    status=SubscriptionStatus.ACTIVE,
+    cycle=BillingCycle.MONTHLY,
+    renews_in_days: int | None = None,
+) -> Subscription:
     renews_at = (
         datetime.now(timezone.utc) + timedelta(days=renews_in_days) if renews_in_days is not None else None
     )
@@ -226,24 +233,20 @@ def test_support_admins_cannot_read_revenue(client, control_db):
 
 
 def test_plan_pricing_round_trips_through_the_api(client, control_db):
+    """The one plan is repriced in place — there is nothing to create."""
     token = admin_token(client, control_db, "rev-planapi@test.com")
+    plan = client.get("/platform/v1/plans", headers=auth_headers(token)).json()[0]
 
-    created = client.post(
-        "/platform/v1/plans",
-        json={
-            "code": unique_code("PRICED"),
-            "name": "Priced Plan",
-            "monthly_price_cents": 19_900,
-            "annual_price_cents": 199_000,
-        },
+    priced = client.patch(
+        f"/platform/v1/plans/{plan['id']}",
+        json={"monthly_price_cents": 19_900, "annual_price_cents": 199_000},
         headers=auth_headers(token),
     )
-    assert created.status_code == 201, created.text
-    assert created.json()["monthly_price_cents"] == 19_900
+    assert priced.status_code == 200, priced.text
+    assert priced.json()["monthly_price_cents"] == 19_900
 
-    plan_id = created.json()["id"]
     updated = client.patch(
-        f"/platform/v1/plans/{plan_id}",
+        f"/platform/v1/plans/{plan['id']}",
         json={"monthly_price_cents": 24_900},
         headers=auth_headers(token),
     )
@@ -253,7 +256,7 @@ def test_plan_pricing_round_trips_through_the_api(client, control_db):
 
 
 def test_the_whole_commercial_loop_works_through_the_api(client, control_db):
-    """Price a plan, sign a customer, put them on it — and see MRR move.
+    """Price the subscription, sign a customer, and see MRR move.
 
     Every other test here builds Subscription rows directly, which is how a
     real gap survived: the upsert endpoint had no status field, so a
@@ -264,11 +267,12 @@ def test_the_whole_commercial_loop_works_through_the_api(client, control_db):
     headers = auth_headers(token)
     before = revenue(client, token)["mrr_cents"]
 
-    plan = client.post(
-        "/platform/v1/plans",
-        json={"code": unique_code("LOOP"), "name": "Loop Plan", "monthly_price_cents": 30_000},
+    plan = client.get("/platform/v1/plans", headers=headers).json()[0]
+    client.patch(
+        f"/platform/v1/plans/{plan['id']}",
+        json={"monthly_price_cents": 30_000},
         headers=headers,
-    ).json()
+    )
 
     tenant = client.post(
         "/platform/v1/tenants",
@@ -285,7 +289,6 @@ def test_the_whole_commercial_loop_works_through_the_api(client, control_db):
     trial = client.patch(
         f"/platform/v1/tenants/{tenant['id']}/subscription",
         json={
-            "plan_id": plan["id"],
             "billing_cycle": "MONTHLY",
             "starts_at": datetime.now(timezone.utc).isoformat(),
         },

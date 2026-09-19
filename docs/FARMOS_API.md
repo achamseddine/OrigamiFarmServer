@@ -17,32 +17,37 @@ group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_m
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
 
 
-## Module licensing
+## Modules
 
 `GET /modules/catalog` returns every module with `license_code` and
-`licensed_active`. The rule is one line (`app/farmos/routes_employees.py`):
+`licensed_active`. The rule is one line
+(`app/farmos/routes_employees.py`):
 
 ```
-licensed_active = license_code is None or license_code in <tenant's ACTIVE/TRIAL entitlements>
+licensed_active = True
 ```
 
-Every one of the 20 modules now names a licence — see
-`app/plans/licensing_map.py`, the single source of truth. Seventeen of them
-carried no `license_code` until then, which meant they were open to every
-farm whatever it had bought, and a plan sold in the admin console changed
-nothing here.
+Always, for every customer, including one with no subscription recorded.
+Origami is sold as a single subscription covering the whole product:
+there are no tiers and no add-ons, so there is no module a farm has not
+bought. The field stays in the response because a shipped app reads it.
 
-The two paid add-ons keep lowercase licence codes, `mouneh` and
-`visits_agritourism`, because this contract addresses them by name in
+`license_code` also stays, demoted from a gate to a description: it says
+which part of the product a screen belongs to, and the console groups its
+module list by it. Every one of the 20 modules names one — see
+`app/plans/licensing_map.py`, the single source of truth. The two former
+paid add-ons keep lowercase codes, `mouneh` and `visits_agritourism`,
+because this contract addresses them by name in
 `POST /modules/{module_code}/activate`; the rest use the platform's own
-codes (`ANIMALS`, `MILK`, `SALES`, …). One licence can open several
-modules: `SALES` opens sales, expenses and finance.
+codes (`ANIMALS`, `MILK`, `SALES`, …). One code can cover several
+modules: `SALES` covers sales, expenses and finance.
 
-**Scope of the gate.** `licensed_active` tells the app which screens to
-show. Per-request authorization is unchanged — it is the tenant's own
-permission grid via `require_permission(module, action)`, which does not
-consult entitlements. A client that ignores the catalog can still reach a
-module's routes if the signed-in user's permission grid allows it.
+**What does still gate a request.** Two things, neither of them the
+catalog: a suspended or terminated tenant is refused outright, and what
+one person may do comes from their own membership's permission grid via
+`require_permission(module, action)`. A client that ignores the catalog
+can still reach a module's routes if the signed-in user's grid allows
+it — that was true before this change and is unchanged by it.
 
 ## Four things worth knowing before touching this code
 
@@ -114,6 +119,35 @@ type error rather than an API error, which the app's `on ApiException` handler d
 sign-in button silently does nothing while the server logs a clean `200`. That combination cost
 this project the better part of a week, so `test_login_returns_the_profile_the_tablet_app_reads`
 pins it.
+
+### The login request registers the tablet
+
+`POST /auth/login` accepts three optional fields beside the credentials:
+
+```json
+{
+  "email": "…", "password": "…",
+  "installation_id": "a-stable-id-for-this-install",
+  "device_name": "Zahle tablet",
+  "app_version": "1.4.0"
+}
+```
+
+Sending `installation_id` puts the tablet on its customer's device list,
+or updates the row that is already there. It replaces pairing: there is no
+key to type in and nothing to generate in the console, so the list answers
+*which tablets is this customer using* rather than which ones they are
+permitted.
+
+Three rules the server keeps:
+
+- **Optional means optional.** A client that sends none of this still
+  signs in. A device list is worth having; it is not worth blocking a farm
+  worker's morning over.
+- **A revoked device stays revoked.** Signing in on it updates
+  `last_seen_at` and nothing else.
+- **Recording never fails the sign-in.** The write is rolled back on any
+  database error and the login proceeds.
 
 ## `farm_id` = `Tenant.id`
 

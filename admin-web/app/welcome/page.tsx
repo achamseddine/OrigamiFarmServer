@@ -63,8 +63,9 @@ function WelcomeForm() {
   const token = params.get("token") ?? "";
 
   const [check, setCheck] = useState<CheckResult | null>(null);
-  // The mistake this page is most likely to be shown: somebody pasting the
-  // tablet pairing key into this URL. Naming it beats "invalid link".
+  // Pairing keys are gone with device licences, but ones handed out before
+  // that are still on scraps of paper, and pasting one here is the mistake
+  // this page is most likely to be shown. Naming it beats "invalid link".
   const looksLikePairingKey = /^ORG[-A-Z0-9]*$/i.test(token.trim());
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -151,19 +152,14 @@ function WelcomeForm() {
         {looksLikePairingKey ? (
           <>
             <p className="page-subtitle">
-              That looks like a <strong>tablet pairing key</strong>, not a sign-in link. Those are
-              two different things:
+              That looks like an old <strong>tablet pairing key</strong>, not a sign-in link.
+              Tablets are no longer paired — you just sign in on them — so a key like that does
+              nothing now.
             </p>
-            <ul className="page-subtitle" style={{ paddingLeft: 18, fontSize: "0.88rem" }}>
-              <li>
-                A pairing key (<code>ORG-…</code>) is typed into the Origami app on a tablet. It is
-                not a web address.
-              </li>
-              <li>
-                A sign-in link is a full web address ending in <code>?token=…</code> and is the one
-                that sets your password.
-              </li>
-            </ul>
+            <p className="page-subtitle" style={{ fontSize: "0.88rem" }}>
+              A sign-in link is a full web address ending in <code>?token=…</code>, and it is the
+              one that sets your password.
+            </p>
             <p className="page-subtitle" style={{ fontSize: "0.85rem" }}>
               Ask whoever set up your account for the sign-in link.
             </p>

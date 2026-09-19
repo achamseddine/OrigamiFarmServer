@@ -6,14 +6,16 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
 from app.auth.models import UserIdentity
 from app.auth.passwords import hash_password, verify_password
 from app.common.db import get_control_db
-from app.common.enums import ActorType, MembershipStatus
+from app.common.enums import ActorType, DeviceStatus, MembershipStatus
 from app.config import get_settings
+from app.devices.models import Device
 from app.farmos.deps import AccessContext, get_access_context
 from app.farmos.schemas import LoginRequest, LoginResponse, UserProfileOut
 from app.farmos.security import issue_access_token
@@ -87,9 +89,67 @@ def login(payload: LoginRequest, db: Session = Depends(get_control_db)) -> Login
     if membership is None:
         raise generic_error
 
+    _record_device(db, payload, membership)
+
     settings = get_settings()
     token = issue_access_token(settings, user_id=user.id, tenant_id=membership.tenant_id, email=user.email)
     return LoginResponse(access_token=token, user=_profile_of(user, membership))
+
+
+def _record_device(db: Session, payload: LoginRequest, membership: TenantMembership) -> None:
+    """Note the tablet somebody just signed in on.
+
+    Devices used to arrive by being paired: an admin generated a key, the
+    customer typed it in, and the device existed because it had been
+    permitted. Nothing is permitted now, so a device only exists if it
+    says so — which is exactly the honest version of the same list. It
+    answers "which tablets is this customer using", not "which tablets may
+    they use", and that first question is the one anybody actually asked.
+
+    Failures here are swallowed deliberately. A worker standing in a field
+    at six in the morning must not be locked out because bookkeeping about
+    their hardware went wrong.
+    """
+    if not payload.installation_id:
+        return
+
+    now = datetime.now(timezone.utc)
+    try:
+        device = db.execute(
+            select(Device).where(Device.installation_id == payload.installation_id)
+        ).scalar_one_or_none()
+
+        if device is None:
+            db.add(
+                Device(
+                    tenant_id=membership.tenant_id,
+                    farm_id=membership.default_farm_id,
+                    installation_id=payload.installation_id,
+                    display_name=payload.device_name or "Tablet",
+                    app_version=payload.app_version or "0.0.0",
+                    status=DeviceStatus.ACTIVE,
+                    activated_at=now,
+                    last_seen_at=now,
+                )
+            )
+        else:
+            # A revoked device stays revoked: revoking is how an operator
+            # says a tablet has been lost, and a sign-in on it is the
+            # least convincing possible argument for undoing that.
+            if device.status != DeviceStatus.REVOKED:
+                device.status = DeviceStatus.ACTIVE
+                device.tenant_id = membership.tenant_id
+            device.last_seen_at = now
+            if payload.device_name:
+                device.display_name = payload.device_name
+            if payload.app_version:
+                device.app_version = payload.app_version
+        db.flush()
+    except SQLAlchemyError:
+        # Two tablets racing on a first sign-in, or any other write
+        # problem. The session is poisoned, so roll the failed statement
+        # back and carry on issuing the token.
+        db.rollback()
 
 
 @router.get("/auth/me", response_model=UserProfileOut)

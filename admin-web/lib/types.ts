@@ -35,14 +35,6 @@ export interface ModuleCatalogItem {
   active: boolean;
 }
 
-export interface Entitlement {
-  module_code: string;
-  status: string;
-  effective_from: string;
-  effective_until: string | null;
-  reason: string | null;
-}
-
 export interface DeviceItem {
   id: string;
   tenant_id: string;
@@ -81,37 +73,11 @@ export interface MetricsOverview {
   tenants_total: number;
   devices_by_status: Record<string, number>;
   devices_total: number;
-  leases_active: number;
-  leases_expiring_7d: number;
   staff_count: number;
   user_count: number;
   renewals_due_30d: number;
   audit_events_per_day: { day: string; events: number }[];
   tenants_created_per_month: { month: string; tenants: number }[];
-}
-
-export interface LicensingModule {
-  module_code: string;
-  name: string;
-  license_code: string | null;
-  is_permission_module: boolean;
-  active: number;
-  trial: number;
-  other: number;
-}
-
-export interface MetricsLicensing {
-  generated_at: string;
-  tenants_total: number;
-  modules: LicensingModule[];
-  leases_expiring_soon: {
-    lease_id: string;
-    tenant_id: string;
-    tenant_name: string;
-    device_name: string | null;
-    expires_at: string;
-    modules: string[];
-  }[];
 }
 
 export interface TenantUsage {
@@ -122,7 +88,6 @@ export interface TenantUsage {
   total_records: number;
   records_by_module: Record<string, number>;
   modules_with_data: string[];
-  modules_entitled: string[];
   last_activity_at: string | null;
   active_devices: number;
   active_users: number;
@@ -156,18 +121,8 @@ export interface Membership {
   has_password: boolean;
 }
 
-export interface LicenseLease {
-  id: string;
-  tenant_id: string;
-  device_id: string;
-  device_name: string | null;
-  issued_at: string;
-  expires_at: string;
-  policy_version: number;
-  modules: string[];
-  revoked_at: string | null;
-}
-
+/** The one subscription. There is no second plan to choose between: the
+ *  list endpoint returns exactly this, and the console edits its price. */
 export interface Plan {
   id: string;
   code: string;
@@ -177,9 +132,6 @@ export interface Plan {
   currency: string;
   monthly_price_cents: number | null;
   annual_price_cents: number | null;
-  /** The modules this plan sells. Always sent with the plan: a price
-   *  without its contents cannot be read as an offer. */
-  module_codes: string[];
 }
 
 export interface PlanRevenue {
@@ -240,7 +192,7 @@ export interface Subscription {
  * would be a compile error rather than a box with nowhere to go.
  */
 export interface SetupStep {
-  key: "password" | "staff" | "plans" | "pricing" | "tenant" | "subscription" | "device";
+  key: "password" | "staff" | "pricing" | "tenant" | "subscription" | "device";
   done: boolean;
   detail: string;
 }
@@ -253,8 +205,11 @@ export interface SetupState {
   complete: boolean;
 }
 
-/** What PATCH /tenants/{id}/subscription did — the commercial record plus
- *  the modules putting them on that plan switched on. */
+/** What PATCH /tenants/{id}/subscription did.
+ *
+ *  The module lists are always empty and kept only so an older console
+ *  build reading them does not break: subscribing records what a customer
+ *  pays and grants nothing, because they already had everything. */
 export interface SubscriptionSaveResult {
   subscription: Subscription;
   plan_code: string;
@@ -285,25 +240,25 @@ export interface IssuedInvitation {
   delivery_detail: string;
 }
 
-/** A licence code and what holding it opens in the tablet app.
+/** One area of the product, and the screens that belong to it.
  *
- * The plan picker is built from these rather than from the module list:
- * only a code some module's license_code points at gates anything, and
- * offering the rest is how a plan ends up selling nothing.
+ * These used to be things a customer could buy separately, and the plan
+ * picker was built from them. Nothing is bought separately now, so this
+ * only groups the module list into readable sections.
  */
 export interface Licence {
   license_code: string;
   name: string;
   unlocks: string[];
   unlocks_labels: string[];
-  is_addon: boolean;
-  tenants_licensed: number;
 }
 
-/** The whole customer handover, returned exactly once.
+/** The customer handover, returned exactly once.
  *
- * Both the key and the URL are credentials the API cannot read back, so
- * this is shown and copied now or reissued later — never looked up.
+ * One credential, not two: the tablet pairing key is gone with device
+ * licences, so this is only how the owner first signs in. Whatever it
+ * carries the API cannot read back, so it is copied now or reissued
+ * later — never looked up.
  */
 export interface LicencePack {
   tenant_id: string;
@@ -311,9 +266,6 @@ export interface LicencePack {
   display_name: string;
   plan_code: string | null;
   plan_name: string | null;
-  licences: string[];
-  licence_key: string;
-  licence_key_expires_at: string;
   owner_email: string;
   owner_name: string;
   /** Exactly one of these, per the credential asked for: a one-time

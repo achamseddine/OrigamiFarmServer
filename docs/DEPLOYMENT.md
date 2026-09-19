@@ -25,19 +25,16 @@ serves those files itself from `/`, so the container runs a single process with 
 and the console never needs its own hostname, CORS entry, or deployment. Anything the API doesn't
 claim (`/api/v1/**`, `/platform/v1/**`, `/health`, `/docs`) falls through to the console.
 
-`api/docker-entrypoint.sh` runs both migration chains, creates the license-lease keypair if it is
-missing, then execs the image's command. Both steps can be turned off per-instance with
-`RUN_MIGRATIONS=false` / `GENERATE_LICENSE_KEYS_IF_MISSING=false`, which is what the `workers`
-service does so only one container races to migrate.
+`api/docker-entrypoint.sh` runs both migration chains, then execs the image's command. It can be
+turned off per-instance with `RUN_MIGRATIONS=false`, which is what the `workers` service does so
+only one container races to migrate. (It used to also generate a signing keypair for offline
+licence leases, which had to survive every deploy. Device licences are gone, so that is one fewer
+thing a deployment can lose.)
 
 On a single-container host (Azure Web App for Containers, Cloud Run, Fly, a plain Docker host)
-that is the whole deployment — see [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md). Two settings
-deserve attention there:
+that is the whole deployment — see [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md). One setting
+deserves attention there:
 
-- **`LICENSE_LEASE_PRIVATE_KEY_PATH` / `LICENSE_LEASE_PUBLIC_KEY_PATH`** must point at persistent
-  storage. The container filesystem is replaced on every deploy, and a regenerated keypair
-  invalidates every offline lease already signed with the old one. Both must name a *file*, not
-  the directory holding it.
 - **`AUTH_DEV_MODE`** stays `false`. The console's sign-in calls `/api/v1/auth/dev-login`, which
   is disabled unless that flag is on, so a production console needs a real OIDC provider wired up
   (see `app/auth/providers.py`) rather than the dev path.
@@ -45,10 +42,8 @@ deserve attention there:
 ## Environments
 
 Four environments are assumed, per the technical spec: local, development, staging, production.
-Each needs its own `CONTROL_DATABASE_URL` / `TENANT_DATABASE_URL`, its own
-`infrastructure/keys/license_lease_*.pem` keypair (never shared across environments — a lease
-signed in staging must not verify in production), its own `APP_SECRET_KEY`, and its own OIDC
-realm/client. `AUTH_DEV_MODE` must be `false` (the default) everywhere except local/CI —
+Each needs its own `CONTROL_DATABASE_URL` / `TENANT_DATABASE_URL`, its own `APP_SECRET_KEY`, and
+its own OIDC realm/client. `AUTH_DEV_MODE` must be `false` (the default) everywhere except local/CI —
 `app/main.py` refuses to boot with it `true` when `ENVIRONMENT=production`.
 
 ## Migrations
@@ -98,7 +93,7 @@ docstring and ARCHITECTURE.md). Before any commercial commitment on RPO/RTO:
 `.github/workflows/ci.yml` runs, on every push/PR: Python dependency install, `ruff` lint, `mypy`
 (both blocking — the codebase is clean under both as of this commit), Alembic upgrade-head against
 fresh Postgres services (control + tenant), the pytest suite (including the mandatory isolation/
-entitlement/device/sync tests) against those same databases, and the admin-web `tsc --noEmit` +
+device/sync tests) against those same databases, and the admin-web `tsc --noEmit` +
 `next build`. A target hosting environment now exists (Azure Web App for Containers) — see
 [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for the manual `az` CLI deploy steps, and
 `.github/workflows/deploy-azure.yml` (manual `workflow_dispatch` only, not yet wired to run

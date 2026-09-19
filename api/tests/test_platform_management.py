@@ -217,13 +217,3 @@ def test_membership_status_rejects_a_membership_from_another_tenant(client, cont
 
 
 # --- license leases ------------------------------------------------------
-
-
-def test_leases_list_is_empty_for_a_tenant_with_no_devices(client, control_db):
-    token = super_admin_token(client, control_db, "super-lease@test.com")
-    tenant = create_tenant(control_db, company_code=unique_code("FARM-LEASE"))
-    control_db.commit()
-
-    resp = client.get(f"/platform/v1/tenants/{tenant.id}/leases", headers=auth_headers(token))
-    assert resp.status_code == 200
-    assert resp.json() == []

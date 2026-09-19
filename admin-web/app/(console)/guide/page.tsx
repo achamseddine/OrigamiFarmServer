@@ -48,10 +48,10 @@ const PHASE_ONE: Node[] = [
     href: "/staff",
   },
   {
-    keys: ["plans", "pricing"],
-    title: "Build your price list",
+    keys: ["pricing"],
+    title: "Set what Origami costs",
     detail:
-      "The packages you sell, each with a price. Type normal money: 249 means 249, not cents. Nothing can report revenue until you do.",
+      "One subscription, one price, every module included. Type normal money: 249 means 249, not cents. Nothing can report revenue until you do.",
     href: "/catalog",
   },
 ];
@@ -61,21 +61,21 @@ const PHASE_TWO: Node[] = [
     keys: ["tenant"],
     title: "Create the customer",
     detail:
-      "Five steps: their business, their first site, the features they bought, who their boss is, confirm.",
+      "Five steps: their business, their first site, what they pay, who their boss is, confirm.",
     href: "/tenants/new",
   },
   {
     keys: ["subscription"],
     title: "Record what they pay",
     detail:
-      "Their plan, monthly or yearly, and the status — trial while they evaluate, active once they pay. The step people forget.",
+      "Monthly or yearly, and the status — trial while they evaluate, active once they pay. The step people forget.",
     href: "/tenants",
   },
   {
     keys: ["device"],
-    title: "Issue their licence",
+    title: "Hand over their sign-in",
     detail:
-      "On their Licensing tab. One action gives you a password for the owner and a pairing key for the tablet — read both down the phone. No email needed.",
+      "On their Handover tab. One action gives you an email and password for the owner — read them down the phone. No email server needed, and nothing to type into the tablet.",
     href: "/tenants",
   },
   {
@@ -262,13 +262,13 @@ export default function GuidePage() {
           How the pieces fit
         </div>
         <div className="chart-note">
-          Who holds what. You never work inside a customer&rsquo;s farm data from here — you decide
-          what they may use, and their own people record the work.
+          Who holds what. You never work inside a customer&rsquo;s farm data from here — you sign
+          them up, and their own people record the work.
         </div>
         <div className="pieces">
           <div className="piece you">
             <div className="w">You — Origami staff</div>
-            <p>This console. Customers, plans, prices, access, licences, dashboards.</p>
+            <p>This console. Customers, the price, access, dashboards.</p>
           </div>
           <span className="flow-arrow" aria-hidden="true">
             →
@@ -296,8 +296,8 @@ export default function GuidePage() {
           <div className="piece">
             <div className="w">Tablets in the field</div>
             <p>
-              Paired with a one-time code, then they work offline and sync. What they may open is
-              the licence you granted.
+              Somebody signs in, and the tablet works offline and syncs from then on. It opens every
+              module; what each person may do is decided by their own boss.
             </p>
           </div>
         </div>
@@ -314,24 +314,23 @@ export default function GuidePage() {
           </div>
           <div>
             <div className="w">Module</div>
-            <p>A feature area: animals, milk, crops, sales. What a customer buys.</p>
-          </div>
-          <div>
-            <div className="w">Entitlement</div>
-            <p>The record that a customer is allowed to use a module. Granted and withdrawn here.</p>
-          </div>
-          <div>
-            <div className="w">Plan &amp; subscription</div>
             <p>
-              The plan is what you sell; the subscription is one customer on it, with a price and a
-              renewal date.
+              A feature area: animals, milk, crops, sales. Every customer has all of them — they are
+              how the app is divided up, not a list of things to buy.
             </p>
           </div>
           <div>
-            <div className="w">Licence lease</div>
+            <div className="w">Subscription</div>
             <p>
-              A signed permission slip a tablet carries so it keeps working with no signal. It
-              expires, so a withdrawn module cannot be used indefinitely.
+              One customer paying for Origami, with a price, a cycle and a renewal date. There is
+              one plan and everybody is on it.
+            </p>
+          </div>
+          <div>
+            <div className="w">Device</div>
+            <p>
+              A tablet somebody has signed in on. It appears by itself; revoke one that is lost, and
+              it stays revoked.
             </p>
           </div>
           <div>

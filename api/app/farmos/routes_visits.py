@@ -16,7 +16,6 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.db import get_control_db
 from app.farmos.deps import (
     AccessContext,
     get_access_context,
@@ -45,7 +44,6 @@ from app.farmos.visits_models import (
     VisitPackage,
     VisitSession,
 )
-from app.plans.models import TenantEntitlement
 
 router = APIRouter()
 
@@ -55,21 +53,20 @@ router = APIRouter()
 
 @router.get("/modules/visits/status", response_model=VisitModuleStatusOut)
 def visits_module_status(
-    access: AccessContext = Depends(get_access_context),
-    db: Session = Depends(get_control_db),
+    _access: AccessContext = Depends(get_access_context),
 ) -> VisitModuleStatusOut:
-    entitlement = db.execute(
-        select(TenantEntitlement).where(
-            TenantEntitlement.tenant_id == access.tenant_id,
-            TenantEntitlement.module_code == "visits_agritourism",
-        )
-    ).scalar_one_or_none()
-    active = entitlement is not None and entitlement.status.value in ("ACTIVE", "TRIAL")
+    """Active, for everyone.
+
+    Farm Visits was a paid add-on and this read the entitlement row that
+    said so. It is part of the one subscription now, and the app locks the
+    whole module on a falsy `active` — so a customer with no entitlement
+    row (which is every customer created since) would have found the
+    screen shut against a product they had paid for."""
     return VisitModuleStatusOut(
         module_code="visits_agritourism",
-        status=entitlement.status.value.lower() if entitlement else "inactive",
-        active=active,
-        features={"analytics": active, "pos_integration": active, "staff_costing": active},
+        status="active",
+        active=True,
+        features={"analytics": True, "pos_integration": True, "staff_costing": True},
     )
 
 

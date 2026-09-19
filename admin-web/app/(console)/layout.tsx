@@ -19,14 +19,13 @@ const NAV: { section: string; items: { href: string; label: string }[] }[] = [
       { href: "/dashboard", label: "Overview" },
       { href: "/business", label: "Business" },
       { href: "/usage", label: "Usage" },
-      { href: "/licensing", label: "Licensing" },
     ],
   },
   {
     section: "Manage",
     items: [
       { href: "/tenants", label: "Tenants" },
-      { href: "/catalog", label: "Plans & modules" },
+      { href: "/catalog", label: "Subscription" },
       { href: "/staff", label: "Staff & access" },
     ],
   },

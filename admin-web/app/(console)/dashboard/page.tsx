@@ -47,7 +47,6 @@ export default function DashboardPage() {
           <div className="card-grid">
             <StatTile value={data.tenants_total} label="Tenants" href="/tenants" />
             <StatTile value={data.devices_total} label="Registered devices" />
-            <StatTile value={data.leases_active} label="Active license leases" href="/licensing" />
             <StatTile value={data.user_count} label="User accounts" />
             <StatTile value={data.staff_count} label="Platform staff" href="/staff" />
             <StatTile value={data.renewals_due_30d} label="Renewals due (30d)" />

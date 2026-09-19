@@ -51,7 +51,6 @@ export default function UsagePage() {
                     <th>Status</th>
                     <th className="num">Records</th>
                     <th className="num">Modules with data</th>
-                    <th className="num">Entitlements</th>
                     <th className="num">Users</th>
                     <th className="num">Devices</th>
                     <th>Last activity</th>
@@ -75,7 +74,6 @@ export default function UsagePage() {
                       </td>
                       <td className="num">{tenant.total_records}</td>
                       <td className="num">{tenant.modules_with_data.length}</td>
-                      <td className="num">{tenant.modules_entitled.length}</td>
                       <td className="num">{tenant.active_users}</td>
                       <td className="num">{tenant.active_devices}</td>
                       <td>{formatDateTime(tenant.last_activity_at)}</td>
@@ -86,10 +84,10 @@ export default function UsagePage() {
             </div>
             <p className="chart-note" style={{ marginTop: 12, marginBottom: 0 }}>
               &ldquo;Modules with data&rdquo; counts farm-data modules holding at least one live
-              record. &ldquo;Entitlements&rdquo; counts what the tenant is licensed for. The two are
-              recorded in different vocabularies — the platform&apos;s module codes and the FarmOS
-              tablet contract&apos;s permission modules — so read them as two separate facts, not as
-              a ratio.
+              record. It used to sit beside a count of what the tenant was licensed for; every
+              customer now has every module, so that column compared a list with itself. A low
+              number here means a farm is using a small part of what it pays for — which is worth
+              a phone call, not a billing change.
             </p>
           </div>
         </>

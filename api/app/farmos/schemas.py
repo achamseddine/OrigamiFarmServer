@@ -7,12 +7,23 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+    # How a tablet comes to be on the Devices tab now that nothing pairs
+    # it. The app generates this once, on first launch, and sends it every
+    # time; the server records or refreshes a Device row so an operator
+    # can still see which tablets a customer is using and revoke one that
+    # walks off. Optional: a tablet that does not send it simply does not
+    # appear, rather than being unable to sign in — a device list is worth
+    # having, not worth blocking a farm worker's morning over.
+    installation_id: str | None = Field(default=None, max_length=128)
+    device_name: str | None = Field(default=None, max_length=120)
+    app_version: str | None = Field(default=None, max_length=40)
 
 
 class UserProfileOut(BaseModel):

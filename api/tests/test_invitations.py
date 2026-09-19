@@ -67,10 +67,7 @@ def test_an_invited_owner_can_set_a_password_and_sign_in(client, control_db):
 
     # Before the invitation there is no way in at all.
     assert membership["has_password"] is False
-    assert (
-        client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD}).status_code
-        == 401
-    )
+    assert client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD}).status_code == 401
 
     invitation = issue(client, headers, str(tenant.id), membership["id"])
     token = token_from(invitation)
@@ -80,18 +77,13 @@ def test_an_invited_owner_can_set_a_password_and_sign_in(client, control_db):
     assert check.json()["valid"] is True
     assert check.json()["email"] == email
 
-    accepted = client.post(
-        "/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD}
-    )
+    accepted = client.post("/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD})
     assert accepted.status_code == 200, accepted.text
     # Signed in immediately rather than bounced to a login screen.
     assert accepted.json()["access_token"]
 
     # And the password works from then on.
-    assert (
-        client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD}).status_code
-        == 200
-    )
+    assert client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD}).status_code == 200
 
 
 def test_the_link_only_works_once(client, control_db):
@@ -102,9 +94,7 @@ def test_the_link_only_works_once(client, control_db):
     token = token_from(issue(client, headers, str(tenant.id), membership["id"]))
 
     assert (
-        client.post(
-            "/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD}
-        ).status_code
+        client.post("/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD}).status_code
         == 200
     )
     second = client.post(
@@ -126,15 +116,13 @@ def test_checking_a_link_does_not_consume_it(client, control_db):
         assert client.post("/api/v1/auth/invitation/check", json={"token": token}).json()["valid"]
 
     assert (
-        client.post(
-            "/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD}
-        ).status_code
+        client.post("/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD}).status_code
         == 200
     )
 
 
 def test_reissuing_supersedes_the_previous_link(client, control_db):
-    """"Resend" must leave one working link, not a growing pile of them."""
+    """ "Resend" must leave one working link, not a growing pile of them."""
     headers = admin_headers(client, control_db, "inv-resend@test.com")
     tenant = create_tenant(control_db, company_code=unique_code("FARM-RES"))
     control_db.commit()
@@ -157,9 +145,7 @@ def test_an_expired_link_says_so(client, control_db):
     token = token_from(issue(client, headers, str(tenant.id), membership["id"]))
 
     row = control_db.execute(
-        select(MembershipInvitation).where(
-            MembershipInvitation.membership_id == membership["id"]
-        )
+        select(MembershipInvitation).where(MembershipInvitation.membership_id == membership["id"])
     ).scalar_one()
     row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     control_db.commit()
@@ -205,9 +191,7 @@ def test_the_token_is_never_stored_in_the_clear(client, control_db):
     token = token_from(issue(client, headers, str(tenant.id), membership["id"]))
 
     row = control_db.execute(
-        select(MembershipInvitation).where(
-            MembershipInvitation.membership_id == membership["id"]
-        )
+        select(MembershipInvitation).where(MembershipInvitation.membership_id == membership["id"])
     ).scalar_one()
     assert token not in row.token_hash
     assert len(row.token_hash) == 64  # sha256 hex
@@ -259,9 +243,7 @@ def test_an_invitation_cannot_be_issued_through_another_tenants_id(client, contr
     tenant_a = create_tenant(control_db, company_code=unique_code("FARM-A1"))
     tenant_b = create_tenant(control_db, company_code=unique_code("FARM-B1"))
     control_db.commit()
-    membership = invite_owner(
-        client, headers, str(tenant_a.id), f"x-{unique_code('x')}@farm-invite.com"
-    )
+    membership = invite_owner(client, headers, str(tenant_a.id), f"x-{unique_code('x')}@farm-invite.com")
 
     resp = client.post(
         f"/platform/v1/tenants/{tenant_b.id}/memberships/{membership['id']}/invitation",
@@ -290,20 +272,14 @@ def test_the_membership_is_active_so_the_owner_lands_in_their_own_tenant(client,
     membership = invite_owner(client, headers, str(tenant.id), email)
     token = token_from(issue(client, headers, str(tenant.id), membership["id"]))
 
-    accepted = client.post(
-        "/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD}
-    )
+    accepted = client.post("/api/v1/auth/invitation/accept", json={"token": token, "password": PASSWORD})
     assert accepted.json()["tenant_name"] == tenant.display_name
 
-    me = client.get(
-        "/api/v1/auth/me", headers=auth_headers(accepted.json()["access_token"])
-    )
+    me = client.get("/api/v1/auth/me", headers=auth_headers(accepted.json()["access_token"]))
     assert me.status_code == 200, me.text
     assert me.json()["email"] == email
 
-    memberships = client.get(
-        f"/platform/v1/tenants/{tenant.id}/memberships", headers=headers
-    ).json()
+    memberships = client.get(f"/platform/v1/tenants/{tenant.id}/memberships", headers=headers).json()
     mine = next(item for item in memberships if item["email"] == email)
     assert mine["status"] == MembershipStatus.ACTIVE.value
     assert mine["has_password"] is True
@@ -321,31 +297,8 @@ def test_the_sign_in_link_is_not_called_activation(client, control_db):
     headers = admin_headers(client, control_db, "inv-name@test.com")
     tenant = create_tenant(control_db, company_code=unique_code("FARM-NAME"))
     control_db.commit()
-    membership = invite_owner(
-        client, headers, str(tenant.id), f"name-{unique_code('x')}@farm-invite.com"
-    )
+    membership = invite_owner(client, headers, str(tenant.id), f"name-{unique_code('x')}@farm-invite.com")
 
     url = issue(client, headers, str(tenant.id), membership["id"])["url"]
     assert "/welcome/?token=" in url
     assert "/activate/" not in url
-
-
-def test_a_pairing_key_is_not_accepted_as_a_sign_in_token(client, control_db):
-    """The two credentials must never be interchangeable, however similar
-    the words around them once were.
-    """
-    headers = admin_headers(client, control_db, "inv-notkey@test.com")
-    tenant = create_tenant(control_db, company_code=unique_code("FARM-NOTKEY"))
-    control_db.commit()
-
-    key = client.post(
-        f"/platform/v1/tenants/{tenant.id}/device-activations",
-        json={"ttl_hours": 24},
-        headers=headers,
-    )
-    assert key.status_code == 201, key.text
-
-    check = client.post(
-        "/api/v1/auth/invitation/check", json={"token": key.json()["activation_code"]}
-    )
-    assert check.json()["valid"] is False

@@ -79,11 +79,6 @@ services:
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://minio:9000
       OIDC_ISSUER: http://keycloak:8080/realms/origami
-      # Absolute + bind-mounted so the entrypoint's key generation lands in
-      # the same place bare-metal dev's `python ../scripts/generate_license_keys.py`
-      # does (see docker-entrypoint.sh), not somewhere only this container can see.
-      LICENSE_LEASE_PRIVATE_KEY_PATH: /app/keys/license_lease_private.pem
-      LICENSE_LEASE_PUBLIC_KEY_PATH: /app/keys/license_lease_public.pem
     ports:
       - "8000:8000"
     depends_on:
@@ -103,7 +98,6 @@ services:
     volumes:
       - ./api/app:/app/app
       - ./api/migrations:/app/migrations
-      - ./infrastructure/keys:/app/keys
 
   workers:
     build:
@@ -118,7 +112,6 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       # Only the api service should race to apply migrations on startup.
       RUN_MIGRATIONS: "false"
-      GENERATE_LICENSE_KEYS_IF_MISSING: "false"
     depends_on:
       control-db:
         condition: service_healthy

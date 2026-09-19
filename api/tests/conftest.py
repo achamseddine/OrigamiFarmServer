@@ -32,14 +32,6 @@ os.environ.setdefault(
 )
 os.environ.setdefault("AUTH_DEV_MODE", "true")
 os.environ.setdefault("APP_SECRET_KEY", "test-only-secret-key")
-os.environ.setdefault(
-    "LICENSE_LEASE_PRIVATE_KEY_PATH",
-    str(_REPO_ROOT / "infrastructure" / "keys" / "license_lease_private.pem"),
-)
-os.environ.setdefault(
-    "LICENSE_LEASE_PUBLIC_KEY_PATH",
-    str(_REPO_ROOT / "infrastructure" / "keys" / "license_lease_public.pem"),
-)
 
 import pytest
 from alembic import command

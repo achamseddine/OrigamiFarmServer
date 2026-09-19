@@ -10,15 +10,16 @@ import { formatPrice } from "@/lib/ui";
  *
  * This used to stop halfway: it created the tenant, ticked some modules,
  * made an owner account, and left the admin to work out that the customer
- * still had no subscription, no way to sign in and no paired tablet. Each
- * of those lived on a different tab, so the obvious mistake was to believe
- * the wizard had finished the job.
+ * still had no subscription and no way to sign in. Each of those lived on
+ * a different tab, so the obvious mistake was to believe the wizard had
+ * finished the job.
  *
- * It finishes it now. The last step hands over the three things a customer
- * needs — their email, a password, and a pairing key — so nothing has to
- * be sent and nowhere else has to be visited.
+ * It finishes it now, and there is less of it to finish: with one
+ * subscription covering the whole product, the plan step records what the
+ * customer pays rather than deciding what they may open, and the last step
+ * hands over one credential instead of a credential and a pairing key.
  */
-const STEPS = ["Company", "First farm", "Plan", "Owner", "Ready"];
+const STEPS = ["Company", "First farm", "Subscription", "Owner", "Ready"];
 
 export default function CreateTenantWizard() {
   const router = useRouter();
@@ -39,7 +40,6 @@ export default function CreateTenantWizard() {
   const [farmCreated, setFarmCreated] = useState(false);
 
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [planId, setPlanId] = useState("");
   const [billingCycle, setBillingCycle] = useState("MONTHLY");
   const [subStatus, setSubStatus] = useState("ACTIVE");
   const [planRecorded, setPlanRecorded] = useState(false);
@@ -60,7 +60,9 @@ export default function CreateTenantWizard() {
     }
   }, [step, plans.length]);
 
-  const selectedPlan = plans.find((plan) => plan.id === planId);
+  // One subscription, so there is nothing to pick — this is only shown, to
+  // say what the customer is about to be charged.
+  const plan = plans[0];
 
   async function run(action: () => Promise<void>, failure: string) {
     setBusy(true);
@@ -90,14 +92,12 @@ export default function CreateTenantWizard() {
 
   const recordPlan = () =>
     run(async () => {
-      if (!tenant || !planId) return;
-      // One call does both jobs: records what they pay and grants the
-      // licences the plan includes, which is what makes the screens
-      // appear on their tablets.
+      if (!tenant) return;
+      // Records what they pay. It grants nothing: the tablet app opens
+      // every module for every customer from their first sign-in.
       await apiFetch(`/platform/v1/tenants/${tenant.id}/subscription`, {
         method: "PATCH",
         body: {
-          plan_id: planId,
           billing_cycle: billingCycle,
           status: subStatus,
           starts_at: new Date().toISOString(),
@@ -214,39 +214,28 @@ export default function CreateTenantWizard() {
         {step === 2 && tenant && (
           <>
             <p className="chart-note" style={{ marginTop: 0 }}>
-              Choosing a plan does two things at once: it records what this customer pays, and it
-              opens the screens the plan includes on their tablets.
+              Records what this customer pays. It does not decide what they may open — every
+              customer has every module.
             </p>
-            {plans.length === 0 && <p className="empty-note">Loading plans…</p>}
+            {plans.length === 0 && <p className="empty-note">Loading the subscription…</p>}
 
-            <div className="field-row">
-              <label htmlFor="wiz-plan">Plan</label>
-              <select id="wiz-plan" value={planId} onChange={(e) => setPlanId(e.target.value)}>
-                <option value="">Choose a plan…</option>
-                {plans.map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.name} ({plan.code})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {selectedPlan && (
+            {plan && (
               <div className="notice-banner" style={{ marginBottom: 16 }}>
-                {selectedPlan.module_codes.length === 0 ? (
+                {(billingCycle === "ANNUAL" ? plan.annual_price_cents : plan.monthly_price_cents) ===
+                null ? (
                   <>
-                    <strong>{selectedPlan.name} includes no licences yet.</strong> This customer
-                    would be recorded as paying but open nothing. Add licences to the plan under
-                    Plans &amp; modules first.
+                    <strong>
+                      Origami has no {billingCycle.toLowerCase()} price set.
+                    </strong>{" "}
+                    This customer would be recorded as paying an unknown amount and reported as
+                    unpriced rather than counted in revenue. Set it under Subscription first.
                   </>
                 ) : (
                   <>
-                    Opens {selectedPlan.module_codes.join(", ")}. Charged at{" "}
+                    {plan.name} — the whole product. Charged at{" "}
                     {formatPrice(
-                      billingCycle === "ANNUAL"
-                        ? selectedPlan.annual_price_cents
-                        : selectedPlan.monthly_price_cents,
-                      selectedPlan.currency
+                      billingCycle === "ANNUAL" ? plan.annual_price_cents : plan.monthly_price_cents,
+                      plan.currency
                     )}{" "}
                     per {billingCycle === "ANNUAL" ? "year" : "month"}.
                   </>
@@ -275,8 +264,8 @@ export default function CreateTenantWizard() {
             </div>
 
             <div className="inline-actions">
-              <button className="btn btn-primary" disabled={busy || !planId} onClick={recordPlan}>
-                {busy ? "Saving…" : "Record plan & continue"}
+              <button className="btn btn-primary" disabled={busy} onClick={recordPlan}>
+                {busy ? "Saving…" : "Record subscription & continue"}
               </button>
               <button className="btn btn-secondary" onClick={() => setStep(3)}>
                 Skip for now
@@ -319,7 +308,7 @@ export default function CreateTenantWizard() {
             </div>
             <p className="chart-note" style={{ marginTop: -8, marginBottom: 16 }}>
               {credential === "password"
-                ? "Nothing needs to be delivered: the next screen shows their email, password and pairing key to read down the phone."
+                ? "Nothing needs to be delivered: the next screen shows their email and password to read down the phone."
                 : "The link is emailed when a mail server is configured, and shown on the next screen either way."}
             </p>
 
@@ -328,7 +317,7 @@ export default function CreateTenantWizard() {
               disabled={busy || !owner.email || !owner.display_name}
               onClick={finish}
             >
-              {busy ? "Finishing…" : "Create owner & issue licence"}
+              {busy ? "Finishing…" : "Create owner & hand over their sign-in"}
             </button>
           </>
         )}
@@ -341,10 +330,10 @@ export default function CreateTenantWizard() {
             <ul style={{ color: "var(--farmos-muted)", fontSize: "0.88rem", marginTop: 4 }}>
               <li>Farm: {farmCreated ? "created" : "skipped"}</li>
               <li>
-                Plan:{" "}
+                Subscription:{" "}
                 {planRecorded
-                  ? `${selectedPlan?.name ?? "recorded"} — ${subStatus === "ACTIVE" ? "paying" : "trial"}`
-                  : "not recorded — they open nothing and earn nothing until it is"}
+                  ? `${plan?.name ?? "recorded"} — ${subStatus === "ACTIVE" ? "paying" : "trial"}`
+                  : "not recorded — they can work, but earn nothing until it is"}
               </li>
               <li>Owner: {pack ? pack.owner_email : owner.email}</li>
             </ul>
@@ -353,7 +342,7 @@ export default function CreateTenantWizard() {
               <div className="licence-pack" style={{ marginTop: 18 }}>
                 <div className="pack-head">
                   <div>
-                    <div className="k">Give the customer these</div>
+                    <div className="k">Give the customer this</div>
                     <h3>{pack.display_name}</h3>
                   </div>
                   <span className="chip chip-active">
@@ -361,8 +350,8 @@ export default function CreateTenantWizard() {
                   </span>
                 </div>
                 <p className="chart-note" style={{ marginTop: 0 }}>
-                  {pack.delivery_detail} Nothing here can be shown again — issue a new licence from
-                  the customer&rsquo;s Licensing tab if it is lost.
+                  {pack.delivery_detail} Nothing here can be shown again — issue another from the
+                  customer&rsquo;s Handover tab if it is lost.
                 </p>
 
                 <div className="pack-row">
@@ -410,30 +399,20 @@ export default function CreateTenantWizard() {
                 <div className="pack-row">
                   <div className="n">2</div>
                   <div>
-                    <div className="t">Pair a tablet — licence key</div>
+                    <div className="t">Open the app on their tablet</div>
                     <div className="d">
-                      Typed into the Origami app, not opened in a browser. Case and dashes do not
-                      matter.
-                    </div>
-                    <div className="copyline">
-                      <code className="licence-key">{pack.licence_key}</code>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => copy("key", pack.licence_key)}
-                      >
-                        {copied === "key" ? "Copied" : "Copy"}
-                      </button>
+                      Nothing else to type in. The tablet adds itself to this customer&rsquo;s
+                      Devices tab the first time somebody signs in on it.
                     </div>
                   </div>
                 </div>
 
                 <div className="pack-foot">
                   <span>
-                    <strong>Plan:</strong> {pack.plan_name ?? "not recorded"}
+                    <strong>Subscription:</strong> {pack.plan_name ?? "not recorded"}
                   </span>
                   <span>
-                    <strong>Opens:</strong>{" "}
-                    {pack.licences.length > 0 ? pack.licences.join(", ") : "nothing yet"}
+                    <strong>Opens:</strong> every module
                   </span>
                 </div>
               </div>

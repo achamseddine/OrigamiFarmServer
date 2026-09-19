@@ -17,10 +17,7 @@ from app.backups.models import BackupJob
 from app.common.db import get_control_db
 from app.common.enums import (
     ActorType,
-    DeviceActivationStatus,
     DeviceStatus,
-    EntitlementSource,
-    EntitlementStatus,
     JobStatus,
     MembershipStatus,
     PlatformRole,
@@ -28,21 +25,11 @@ from app.common.enums import (
 )
 from app.common.errors import AppError, ErrorCode
 from app.config.settings import get_settings
-from app.devices.models import Device, DeviceActivation, LicenseLease
-from app.devices.service import (
-    generate_licence_key,
-    hash_activation_code,
-    normalise_licence_key,
-)
-from app.entitlements.state_machine import transition_entitlement, transition_tenant_status
+from app.devices.models import Device
+from app.entitlements.state_machine import transition_tenant_status
 from app.notifications.email import EmailResult, invitation_email, send_email
-from app.plans.contents import (
-    PlanApplication,
-    apply_plan_to_tenant,
-    plan_module_codes,
-    set_plan_modules,
-)
-from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement
+from app.plans.models import ModuleCatalog, Plan, Subscription
+from app.plans.subscription_plan import get_or_create_plan
 from app.platform.licence_pack import (
     LicencePackError,
     find_tenant_owner,
@@ -52,13 +39,8 @@ from app.platform.licence_pack import (
 )
 from app.platform.schemas import (
     AuditEventOut,
-    DeviceActivationCreateRequest,
-    DeviceActivationCreateResponse,
     DeviceOut,
     DeviceRevokeRequest,
-    EntitlementActivateRequest,
-    EntitlementDeactivateRequest,
-    EntitlementOut,
     FarmCreateRequest,
     FarmOut,
     InvitationCreateRequest,
@@ -67,7 +49,6 @@ from app.platform.schemas import (
     LicenceIssueOut,
     LicenceIssueRequest,
     LicenceOut,
-    LicenseLeaseOut,
     MemberPasswordOut,
     MemberPasswordRequest,
     MembershipInviteRequest,
@@ -75,8 +56,6 @@ from app.platform.schemas import (
     MembershipStatusChangeRequest,
     ModuleCreateRequest,
     ModuleOut,
-    PlanCreateRequest,
-    PlanModulesRequest,
     PlanOut,
     PlanUpdateRequest,
     PlatformMeOut,
@@ -366,10 +345,14 @@ def list_farms(
 # --- Plans & Modules -------------------------------------------------------
 
 
-def _plan_out(db: Session, plan: Plan) -> PlanOut:
-    """A plan is only meaningful alongside what it contains, so the two
-    always travel together — a caller that sees a price but not the
-    modules behind it cannot tell what it is selling.
+def _plan_out(plan: Plan) -> PlanOut:
+    """The subscription as the console reads it: a name and a price.
+
+    What it contains used to travel with it, because a plan sold a subset
+    of the product and a price without its contents could not be read as
+    an offer. There is no subset any more — the plan is the whole product
+    — so the contents would be the same list on every screen that showed
+    it, which is a thing to state once in prose rather than send as data.
     """
     return PlanOut(
         id=plan.id,
@@ -380,27 +363,13 @@ def _plan_out(db: Session, plan: Plan) -> PlanOut:
         currency=plan.currency,
         monthly_price_cents=plan.monthly_price_cents,
         annual_price_cents=plan.annual_price_cents,
-        module_codes=plan_module_codes(db, plan.id),
     )
 
 
-@router.post("/plans", response_model=PlanOut, status_code=201)
-def create_plan(
-    payload: PlanCreateRequest,
-    db: Session = Depends(get_control_db),
-    _identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> PlanOut:
-    fields = payload.model_dump()
-    module_codes = fields.pop("module_codes")
-    plan = Plan(**fields)
-    db.add(plan)
-    db.flush()
-    if module_codes:
-        try:
-            set_plan_modules(db, plan, module_codes)
-        except ValueError as exc:
-            raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
-    return _plan_out(db, plan)
+# POST /plans and PUT /plans/{id}/modules are deliberately gone. Origami
+# is one subscription covering the whole product: there is no second plan
+# to create, and no subset of modules to put in one. What remains is the
+# price, which PATCH below still edits.
 
 
 @router.patch("/plans/{plan_id}", response_model=PlanOut)
@@ -434,7 +403,7 @@ def update_plan(
             after=changes,
             summary=f"Updated plan {plan.code}",
         )
-    return _plan_out(db, plan)
+    return _plan_out(plan)
 
 
 @router.get("/plans", response_model=list[PlanOut])
@@ -442,8 +411,20 @@ def list_plans(
     db: Session = Depends(get_control_db),
     _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
 ) -> list[PlanOut]:
-    plans = db.execute(select(Plan).order_by(Plan.code)).scalars().all()
-    return [_plan_out(db, plan) for plan in plans]
+    """The subscription, as a list of one.
+
+    Origami is sold as a single plan covering the whole product, so there
+    is nothing to choose between. Still a list, because the console and
+    the revenue report already read it as one and a shape change would
+    buy nothing.
+
+    Retired tier rows (Starter, Growth, …) are not returned: migration
+    f9a3c17e64b2 archives them, and an archived plan is history, not an
+    offer. Subscriptions that pointed at one were moved across, so no
+    customer is left pointing at something this never returns.
+    """
+    plan = get_or_create_plan(db)
+    return [_plan_out(plan)]
 
 
 def _get_plan_or_404(db: Session, plan_id: uuid.UUID) -> Plan:
@@ -451,44 +432,6 @@ def _get_plan_or_404(db: Session, plan_id: uuid.UUID) -> Plan:
     if plan is None:
         raise AppError(ErrorCode.NOT_FOUND, "No such plan")
     return plan
-
-
-@router.put("/plans/{plan_id}/modules", response_model=PlanOut)
-def set_modules_on_plan(
-    plan_id: uuid.UUID,
-    payload: PlanModulesRequest,
-    db: Session = Depends(get_control_db),
-    identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> PlanOut:
-    """Defines what this plan sells.
-
-    Audited, and worth auditing: this is the list every future subscriber
-    is granted, so changing it changes what the product means, not just a
-    row. It does not reach back into tenants already on the plan — their
-    entitlements were granted at the point they subscribed, and quietly
-    withdrawing a module from a working farm is not something a price-list
-    edit should be able to do (see app/plans/contents.py).
-    """
-    plan = _get_plan_or_404(db, plan_id)
-    before = plan_module_codes(db, plan.id)
-    try:
-        after = set_plan_modules(db, plan, payload.module_codes)
-    except ValueError as exc:
-        raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
-
-    if before != after:
-        record_audit_event(
-            db,
-            actor_id=identity.user_id,
-            actor_type=ActorType.PLATFORM_USER,
-            action="plan.modules_changed",
-            entity_type="plan",
-            entity_id=str(plan.id),
-            before={"module_codes": before},
-            after={"module_codes": after},
-            summary=f"Set the modules included in plan {plan.code}",
-        )
-    return _plan_out(db, plan)
 
 
 @router.post("/modules", response_model=ModuleOut, status_code=201)
@@ -519,14 +462,16 @@ def list_licences(
     db: Session = Depends(get_control_db),
     _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
 ) -> list[LicenceOut]:
-    """What can actually be sold, and what each one opens in the app.
+    """The areas the product is divided into, and the screens in each.
 
-    Read from the catalog's own license_code column rather than from a
-    list kept by hand, so this can only ever name codes that really gate
-    something. That is the fix for the defect this replaced: the console
-    offered every module code for sale, including seventeen that no module
-    pointed at, and a plan built from those switched on nothing in the
-    tablet app while reporting success.
+    Grouped from the catalog's own license_code column rather than from a
+    list kept by hand, so it can only ever describe modules that exist.
+
+    This used to answer "what can be sold separately" and be counted:
+    every entry carried how many tenants held it, and the console built a
+    plan picker from them. Nothing is held or sold separately now — every
+    customer has all of it — so what is left is the grouping itself,
+    which is still worth showing.
     """
     catalog = db.execute(select(ModuleCatalog)).scalars().all()
     labels = {module.module_code: module.name_en for module in catalog}
@@ -536,24 +481,12 @@ def list_licences(
         if module.license_code:
             unlocks.setdefault(module.license_code, []).append(module.module_code)
 
-    held = dict(
-        db.execute(
-            select(TenantEntitlement.module_code, func.count(func.distinct(TenantEntitlement.tenant_id)))
-            .where(TenantEntitlement.status.in_([EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]))
-            .group_by(TenantEntitlement.module_code)
-        ).all()
-    )
-
     return [
         LicenceOut(
             license_code=code,
             name=labels.get(code, code),
             unlocks=sorted(modules),
             unlocks_labels=[labels.get(module, module) for module in sorted(modules)],
-            # The two the tablet contract names by lowercase path are the
-            # paid add-ons; everything else is part of an ordinary plan.
-            is_addon=code != code.upper(),
-            tenants_licensed=held.get(code, 0),
         )
         for code, modules in sorted(unlocks.items())
     ]
@@ -578,19 +511,24 @@ def upsert_subscription(
     db: Session = Depends(get_control_db),
     identity: Identity = Depends(require_platform_role(*_STAFF)),
 ) -> SubscriptionSaveResponse:
-    """Puts a tenant on a plan — and gives them what the plan contains.
+    """Records what a customer pays.
 
-    Recording the commercial fact and granting the modules used to be two
-    unrelated jobs, which meant a customer could be subscribed to a plan
-    and still able to open nothing. They are one job here, and the
-    response says exactly which modules that turned on so the console can
-    show it rather than leave the operator guessing.
+    There is one plan and it covers the whole product, so this no longer
+    chooses anything — it sets the status and the dates, and points the
+    subscription at the only plan there is. `plan_id` is accepted and
+    ignored so an older console keeps working through a deploy.
+
+    It no longer grants modules either: every customer has every module
+    (app/farmos/routes_employees.py), so there is nothing left for
+    subscribing to switch on.
     """
     _get_tenant_or_404(db, tenant_id)
     fields = payload.model_dump()
-    apply_modules = fields.pop("apply_plan_modules")
+    fields.pop("apply_plan_modules", None)
+    fields.pop("plan_id", None)
 
-    plan = _get_plan_or_404(db, payload.plan_id)
+    plan = get_or_create_plan(db)
+    fields["plan_id"] = plan.id
     subscription = db.execute(
         select(Subscription).where(Subscription.tenant_id == tenant_id)
     ).scalar_one_or_none()
@@ -613,111 +551,32 @@ def upsert_subscription(
         after={"plan_id": str(subscription.plan_id), "status": subscription.status.value},
     )
 
-    applied = (
-        apply_plan_to_tenant(
-            db,
-            tenant_id=tenant_id,
-            plan=plan,
-            actor_id=identity.user_id,
-            reason=f"Included in plan {plan.code}",
-        )
-        if apply_modules
-        else PlanApplication()
-    )
-
+    # The module lists stay in the response, always empty, because the
+    # console reads them and an older build deployed against a newer
+    # server should see "nothing changed" rather than a missing field.
+    # Nothing is granted here any more: every customer already has every
+    # module.
     return SubscriptionSaveResponse(
         subscription=SubscriptionOut.model_validate(subscription),
         plan_code=plan.code,
-        modules_granted=applied.granted,
-        modules_already_active=applied.already_active,
-        modules_not_in_plan=applied.not_in_plan,
+        modules_granted=[],
+        modules_already_active=[],
+        modules_not_in_plan=[],
     )
 
 
 # --- Entitlements -----------------------------------------------------------
 
 
-@router.get("/tenants/{tenant_id}/entitlements", response_model=list[EntitlementOut])
-def list_entitlements(
-    tenant_id: uuid.UUID,
-    db: Session = Depends(get_control_db),
-    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
-) -> list[TenantEntitlement]:
-    return list(
-        db.execute(select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id)).scalars().all()
-    )
-
-
-def _get_or_create_entitlement(db: Session, tenant_id: uuid.UUID, module_code: str) -> TenantEntitlement:
-    module = db.get(ModuleCatalog, module_code)
-    if module is None:
-        raise AppError(ErrorCode.NOT_FOUND, f"Unknown module {module_code}")
-    entitlement = db.execute(
-        select(TenantEntitlement).where(
-            TenantEntitlement.tenant_id == tenant_id, TenantEntitlement.module_code == module_code
-        )
-    ).scalar_one_or_none()
-    if entitlement is None:
-        entitlement = TenantEntitlement(
-            tenant_id=tenant_id,
-            module_code=module_code,
-            status=EntitlementStatus.INACTIVE,
-            source=EntitlementSource.OVERRIDE,
-            effective_from=datetime.now(timezone.utc),
-        )
-        db.add(entitlement)
-        db.flush()
-    return entitlement
-
-
-@router.post("/tenants/{tenant_id}/entitlements/{module_code}/activate", response_model=EntitlementOut)
-def activate_module(
-    tenant_id: uuid.UUID,
-    module_code: str,
-    payload: EntitlementActivateRequest,
-    db: Session = Depends(get_control_db),
-    identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> TenantEntitlement:
-    _get_tenant_or_404(db, tenant_id)
-    entitlement = _get_or_create_entitlement(db, tenant_id, module_code)
-    new_status = EntitlementStatus.TRIAL if payload.trial else EntitlementStatus.ACTIVE
-    transition_entitlement(
-        db,
-        entitlement,
-        new_status,
-        actor_id=identity.user_id,
-        actor_type=ActorType.PLATFORM_USER,
-        reason=payload.reason,
-        effective_from=payload.effective_from or datetime.now(timezone.utc),
-        effective_until=payload.effective_until,
-    )
-    if payload.configuration:
-        entitlement.configuration = payload.configuration
-        db.flush()
-    return entitlement
-
-
-@router.post("/tenants/{tenant_id}/entitlements/{module_code}/deactivate", response_model=EntitlementOut)
-def deactivate_module(
-    tenant_id: uuid.UUID,
-    module_code: str,
-    payload: EntitlementDeactivateRequest,
-    db: Session = Depends(get_control_db),
-    identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> TenantEntitlement:
-    entitlement = _get_or_create_entitlement(db, tenant_id, module_code)
-    # Deactivation never deletes farm-data-plane rows — see TENANCY.md. It
-    # only stops the module being served as entitled from this point on.
-    transition_entitlement(
-        db,
-        entitlement,
-        EntitlementStatus.INACTIVE,
-        actor_id=identity.user_id,
-        actor_type=ActorType.PLATFORM_USER,
-        reason=payload.reason,
-        effective_until=payload.effective_until or datetime.now(timezone.utc),
-    )
-    return entitlement
+# The per-tenant entitlement endpoints are gone — list, activate and
+# deactivate alike. They existed to answer "which modules has this
+# customer bought", and the subscription now answers it the same way for
+# everyone: all of them. Leaving the switches in place would have meant a
+# console offering an admin a toggle that changes nothing, which is the
+# exact failure this codebase keeps having to dig out of.
+#
+# TenantEntitlement rows are not deleted. They are what the tiers used to
+# mean, and history is worth more than a tidy table.
 
 
 # --- Devices ----------------------------------------------------------------
@@ -732,44 +591,10 @@ def list_devices(
     return list(db.execute(select(Device).where(Device.tenant_id == tenant_id)).scalars().all())
 
 
-@router.post(
-    "/tenants/{tenant_id}/device-activations",
-    response_model=DeviceActivationCreateResponse,
-    status_code=201,
-)
-def create_device_activation(
-    tenant_id: uuid.UUID,
-    payload: DeviceActivationCreateRequest,
-    db: Session = Depends(get_control_db),
-    identity: Identity = Depends(require_platform_role(*_STAFF_AND_SUPPORT)),
-) -> DeviceActivationCreateResponse:
-    _get_tenant_or_404(db, tenant_id)
-    # The same readable format the licence pack issues, so a customer is
-    # never handed two different-looking things that do the same job.
-    code = generate_licence_key()
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=payload.ttl_hours)
-    activation = DeviceActivation(
-        tenant_id=tenant_id,
-        farm_id=payload.farm_id,
-        code_hash=hash_activation_code(normalise_licence_key(code)),
-        status=DeviceActivationStatus.PENDING,
-        expires_at=expires_at,
-        created_by=identity.user_id,
-    )
-    db.add(activation)
-    db.flush()
-    record_audit_event(
-        db,
-        actor_id=identity.user_id,
-        actor_type=ActorType.PLATFORM_USER,
-        tenant_id=tenant_id,
-        action="device_activation.created",
-        entity_type="device_activation",
-        entity_id=str(activation.id),
-    )
-    return DeviceActivationCreateResponse(
-        activation_id=activation.id, activation_code=code, expires_at=expires_at
-    )
+# POST /tenants/{id}/device-activations is gone. Tablets are no longer
+# paired with a key: a device records itself the first time somebody
+# signs in on it (app/farmos/routes_auth.py), and the Devices tab is a
+# list of what is out there rather than a list of what is permitted.
 
 
 @router.post("/tenants/{tenant_id}/licence", response_model=LicenceIssueOut, status_code=201)
@@ -779,39 +604,22 @@ def issue_licence(
     db: Session = Depends(get_control_db),
     identity: Identity = Depends(require_platform_role(*_STAFF_AND_SUPPORT)),
 ) -> LicenceIssueOut:
-    """Everything a new customer needs, in one action.
+    """The owner's way into their new account.
 
-    The licence key their tablet pairs with and the link their owner opens
-    to set a password are generated together, returned together, and sent
-    as one email — because issuing one without the other leaves a customer
-    with a tablet they cannot use or an account they cannot reach, and
-    nothing on any screen said which half was missing.
+    One credential now, not two: there is no pairing key, because a
+    tablet carries no licence — it is simply the device somebody signed
+    in on. And there is nothing to choose about what they get, because
+    the subscription covers the whole product.
 
-    Both are shown once. Neither is stored in a readable form, so a lost
-    pack is reissued rather than recovered, and reissuing supersedes what
-    was outstanding.
+    Shown once. Not stored in a readable form, so a lost handover is
+    reissued rather than recovered, and reissuing supersedes whatever was
+    outstanding.
     """
     tenant = _get_tenant_or_404(db, tenant_id)
     try:
         membership, owner = find_tenant_owner(db, tenant_id)
     except LicencePackError as exc:
         raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
-
-    if payload.farm_id is not None:
-        farm = db.get(Farm, payload.farm_id)
-        if farm is None or farm.tenant_id != tenant_id:
-            raise AppError(ErrorCode.NOT_FOUND, "No such farm for this customer")
-
-    licences = list(
-        db.execute(
-            select(TenantEntitlement.module_code)
-            .where(
-                TenantEntitlement.tenant_id == tenant_id,
-                TenantEntitlement.status.in_([EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]),
-            )
-            .order_by(TenantEntitlement.module_code)
-        ).scalars()
-    )
 
     settings = get_settings()
     pack = issue_licence_pack(
@@ -820,10 +628,7 @@ def issue_licence(
         membership=membership,
         base_url=settings.public_base_url,
         issued_by=identity.user_id,
-        licences=licences,
-        key_ttl_hours=payload.key_ttl_hours,
         invitation_ttl_hours=payload.invitation_ttl_hours,
-        farm_id=payload.farm_id,
         credential=payload.credential,
     )
 
@@ -860,10 +665,10 @@ def issue_licence(
         entity_id=str(tenant_id),
         after={
             "owner": owner.email,
-            "licences": pack.licences,
+            "credential": "password" if pack.owner_password else "link",
             "delivery": result.delivery,
         },
-        summary=f"Issued a licence pack for {tenant.display_name} to {owner.email}",
+        summary=f"Issued sign-in credentials for {tenant.display_name} to {owner.email}",
     )
 
     return LicenceIssueOut(
@@ -872,9 +677,6 @@ def issue_licence(
         display_name=tenant.display_name,
         plan_code=pack.plan.code if pack.plan else None,
         plan_name=pack.plan.name if pack.plan else None,
-        licences=pack.licences,
-        licence_key=pack.licence_key,
-        licence_key_expires_at=pack.licence_key_expires_at,
         owner_email=owner.email,
         owner_name=owner.display_name,
         activation_url=pack.invitation.url if pack.invitation else None,
@@ -1229,42 +1031,11 @@ def set_membership_status(
     return _membership_out(user, membership)
 
 
-@router.get("/tenants/{tenant_id}/leases", response_model=list[LicenseLeaseOut])
-def list_license_leases(
-    tenant_id: uuid.UUID,
-    limit: int = Query(default=50, le=200),
-    db: Session = Depends(get_control_db),
-    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
-) -> list[LicenseLeaseOut]:
-    """Offline license leases issued to this tenant's devices.
-
-    What a device can still do without a network, and until when — the
-    lease is verified on the device against the public key, so a lease
-    already issued keeps working until its own expires_at (there is no
-    revocation for one already handed out; see LICENSE_ENTITLEMENTS.md).
-    """
-    _get_tenant_or_404(db, tenant_id)
-    rows = db.execute(
-        select(LicenseLease, Device.display_name)
-        .outerjoin(Device, Device.id == LicenseLease.device_id)
-        .where(LicenseLease.tenant_id == tenant_id)
-        .order_by(LicenseLease.issued_at.desc())
-        .limit(limit)
-    ).all()
-    return [
-        LicenseLeaseOut(
-            id=lease.id,
-            tenant_id=lease.tenant_id,
-            device_id=lease.device_id,
-            device_name=device_name,
-            issued_at=lease.issued_at,
-            expires_at=lease.expires_at,
-            policy_version=lease.policy_version,
-            modules=list(lease.modules or []),
-            revoked_at=lease.revoked_at,
-        )
-        for lease, device_name in rows
-    ]
+# GET /tenants/{id}/leases is gone with the licences it described. A
+# lease was a signed permission slip a tablet carried so it could keep
+# working offline until the slip expired. Nothing expires now — the app
+# works offline because it caches, not because it was granted permission
+# to — so there is nothing to list.
 
 
 # --- Audit -------------------------------------------------------------

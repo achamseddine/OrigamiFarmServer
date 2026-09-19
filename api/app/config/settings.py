@@ -36,11 +36,6 @@ class Settings(BaseSettings):
     # Must never be true outside local/test environments.
     auth_dev_mode: bool = False
 
-    license_lease_private_key_path: str = "./infrastructure/keys/license_lease_private.pem"
-    license_lease_public_key_path: str = "./infrastructure/keys/license_lease_public.pem"
-    license_lease_policy_version: int = 1
-    license_lease_default_ttl_hours: int = 72
-
     # How long a console sign-in lasts before it has to be repeated. Short
     # by comparison with farmos_token_ttl_days below on purpose: this one
     # carries platform-wide authority, the tablet's carries one farm's.

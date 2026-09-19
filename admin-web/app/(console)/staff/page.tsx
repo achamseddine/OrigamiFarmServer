@@ -15,7 +15,7 @@ const ROLES = [
 
 const ROLE_MEANING: Record<string, string> = {
   PLATFORM_SUPER_ADMIN: "Everything, including managing staff",
-  PLATFORM_COMMERCIAL_ADMIN: "Tenants, plans and entitlements; cannot terminate or manage staff",
+  PLATFORM_COMMERCIAL_ADMIN: "Customers, subscriptions and the price; cannot terminate or manage staff",
   PLATFORM_SUPPORT_ADMIN: "Support sessions and read access for troubleshooting",
   PLATFORM_AUDITOR: "Read-only across the platform",
 };

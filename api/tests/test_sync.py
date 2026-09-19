@@ -4,12 +4,11 @@ import uuid
 
 from app.common.enums import TenantRole
 from tests.conftest import auth_headers, dev_login, unique_code
-from tests.helpers import add_membership, create_tenant, grant_module
+from tests.helpers import add_membership, create_tenant
 
 
 def _bootstrap(control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-SYNC"))
-    grant_module(control_db, tenant, "ANIMALS")
     add_membership(
         control_db,
         tenant,

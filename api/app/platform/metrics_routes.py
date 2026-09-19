@@ -1,9 +1,14 @@
 """Dashboard endpoints.
 
 Split by cost, because the difference matters to whoever calls them:
-/overview and /licensing are control-plane aggregates and cheap, while
+/overview and /revenue are control-plane aggregates and cheap, while
 /usage opens one RLS-scoped session per tenant and is capped for that
 reason.
+
+/metrics/licensing is gone. It answered "which customers have bought
+which modules, and which tablets can still work offline" — both questions
+the product stopped having when it became one subscription covering
+everything, sold to tablets that simply sign in.
 """
 
 from __future__ import annotations
@@ -22,16 +27,14 @@ from app.auth.schemas import Identity
 from app.common.db import get_control_db
 from app.common.enums import (
     DeviceStatus,
-    EntitlementStatus,
     MembershipStatus,
     PlatformRole,
     TenantStatus,
 )
 from app.common.errors import AppError, ErrorCode
-from app.devices.models import Device, LicenseLease
-from app.plans.models import ModuleCatalog, Subscription, TenantEntitlement
+from app.devices.models import Device
+from app.plans.models import Subscription
 from app.platform.metrics import (
-    MODULE_TABLES,
     audit_events_per_day,
     tenant_farm_data_usage,
     tenants_created_per_month,
@@ -62,7 +65,6 @@ class TenantUsageOut(BaseModel):
     total_records: int
     records_by_module: dict[str, int]
     modules_with_data: list[str]
-    modules_entitled: list[str]
     last_activity_at: datetime | None
     active_devices: int
     active_users: int
@@ -74,19 +76,10 @@ class UsageListOut(BaseModel):
     tenants_measured: int
 
 
-def _entitled_modules(db: Session, tenant_id: uuid.UUID) -> list[str]:
-    return list(
-        db.execute(
-            select(TenantEntitlement.module_code)
-            .where(
-                TenantEntitlement.tenant_id == tenant_id,
-                TenantEntitlement.status.in_(
-                    [EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]
-                ),
-            )
-            .order_by(TenantEntitlement.module_code)
-        ).scalars()
-    )
+# What a tenant was entitled to used to be reported here, beside what they
+# had actually recorded, so an operator could see a farm paying for a module
+# it never opened. Every farm now has every module, so the comparison is
+# between a list and itself.
 
 
 def _tenant_usage(db: Session, tenant: Tenant) -> TenantUsageOut:
@@ -110,7 +103,6 @@ def _tenant_usage(db: Session, tenant: Tenant) -> TenantUsageOut:
         company_code=tenant.company_code,
         display_name=tenant.display_name,
         status=tenant.status,
-        modules_entitled=_entitled_modules(db, tenant.id),
         active_devices=active_devices,
         active_users=active_users,
         **usage,
@@ -123,7 +115,7 @@ def metrics_overview(
     db: Session = Depends(get_control_db),
     _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
 ) -> dict:
-    """Platform-wide state: who exists, what is licensed, what is running."""
+    """Platform-wide state: who exists, and what is running."""
     now = datetime.now(timezone.utc)
 
     tenants_by_status = {
@@ -138,21 +130,6 @@ def metrics_overview(
         ).scalar_one()
         for status in DeviceStatus
     }
-
-    leases_active = db.execute(
-        select(func.count())
-        .select_from(LicenseLease)
-        .where(LicenseLease.revoked_at.is_(None), LicenseLease.expires_at > now)
-    ).scalar_one()
-    leases_expiring = db.execute(
-        select(func.count())
-        .select_from(LicenseLease)
-        .where(
-            LicenseLease.revoked_at.is_(None),
-            LicenseLease.expires_at > now,
-            LicenseLease.expires_at <= now + timedelta(days=7),
-        )
-    ).scalar_one()
 
     staff_count = db.execute(
         select(func.count(func.distinct(PlatformRoleAssignment.user_id)))
@@ -171,8 +148,6 @@ def metrics_overview(
         "tenants_total": sum(tenants_by_status.values()),
         "devices_by_status": devices_by_status,
         "devices_total": sum(devices_by_status.values()),
-        "leases_active": leases_active,
-        "leases_expiring_7d": leases_expiring,
         "staff_count": staff_count,
         "user_count": user_count,
         "renewals_due_30d": renewals_due,
@@ -237,80 +212,6 @@ def metrics_revenue(
         ],
         "tenants_created_per_month": tenants_by_month,
         "invoicing": invoice_totals(db),
-    }
-
-
-@router.get("/metrics/licensing")
-def metrics_licensing(
-    db: Session = Depends(get_control_db),
-    _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
-) -> dict:
-    """Which modules are licensed to whom, and the state of issued leases."""
-    now = datetime.now(timezone.utc)
-    tenants_total = db.execute(select(func.count()).select_from(Tenant)).scalar_one()
-
-    catalog = db.execute(select(ModuleCatalog).order_by(ModuleCatalog.module_code)).scalars().all()
-    names = {module.module_code: module.name_en for module in catalog}
-    license_codes = {module.module_code: module.license_code for module in catalog}
-
-    counts = db.execute(
-        select(TenantEntitlement.module_code, TenantEntitlement.status, func.count())
-        .group_by(TenantEntitlement.module_code, TenantEntitlement.status)
-    ).all()
-
-    by_module: dict[str, dict] = {}
-    for module_code, status, count in counts:
-        entry = by_module.setdefault(
-            module_code,
-            {
-                "module_code": module_code,
-                "name": names.get(module_code, module_code),
-                "license_code": license_codes.get(module_code),
-                "is_permission_module": module_code in MODULE_TABLES,
-                "active": 0,
-                "trial": 0,
-                "other": 0,
-            },
-        )
-        if status == EntitlementStatus.ACTIVE:
-            entry["active"] += count
-        elif status == EntitlementStatus.TRIAL:
-            entry["trial"] += count
-        else:
-            entry["other"] += count
-
-    modules = sorted(
-        by_module.values(), key=lambda entry: (-(entry["active"] + entry["trial"]), entry["module_code"])
-    )
-
-    expiring = db.execute(
-        select(LicenseLease, Tenant.display_name, Device.display_name)
-        .join(Tenant, Tenant.id == LicenseLease.tenant_id)
-        .outerjoin(Device, Device.id == LicenseLease.device_id)
-        .where(
-            LicenseLease.revoked_at.is_(None),
-            LicenseLease.expires_at > now,
-            LicenseLease.expires_at <= now + timedelta(days=7),
-        )
-        .order_by(LicenseLease.expires_at)
-        .limit(25)
-    ).all()
-
-    return {
-        "generated_at": now.isoformat(),
-        "tenants_total": tenants_total,
-        "modules": modules,
-        "leases_expiring_soon": [
-            {
-                "lease_id": str(lease.id),
-                "tenant_id": str(lease.tenant_id),
-                "tenant_name": tenant_name,
-                "device_name": device_name,
-                "expires_at": lease.expires_at.isoformat(),
-                "modules": list(lease.modules or []),
-            }
-            for lease, tenant_name, device_name in expiring
-        ],
     }
 
 

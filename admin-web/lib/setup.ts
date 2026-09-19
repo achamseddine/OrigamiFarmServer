@@ -15,8 +15,11 @@ export const SETUP_STEPS: Record<SetupStep["key"], { title: string; action: stri
       href: "/account",
     },
     staff: { title: "Add your team", action: "Add a colleague", href: "/staff" },
-    plans: { title: "Create your plans", action: "Create a plan", href: "/catalog" },
-    pricing: { title: "Put a price on your plans", action: "Set your prices", href: "/catalog" },
+    pricing: {
+      title: "Set what Origami costs",
+      action: "Set the price",
+      href: "/catalog",
+    },
     tenant: {
       title: "Create your first customer",
       action: "Create your first customer",
@@ -27,5 +30,7 @@ export const SETUP_STEPS: Record<SetupStep["key"], { title: string; action: stri
       action: "Open Tenants",
       href: "/tenants",
     },
-    device: { title: "Pair a tablet", action: "Open Tenants", href: "/tenants" },
+    // Done by a farmer rather than by an admin: a tablet appears the first
+    // time somebody signs in on it. Tenants is still where you look.
+    device: { title: "See a tablet sign in", action: "Open Tenants", href: "/tenants" },
   };

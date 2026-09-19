@@ -195,7 +195,7 @@ az acr build --registry "$ACR_NAME" --image origami-api:latest --file api/Docker
 ## 2. Two PostgreSQL databases
 
 The app is architected around two logically separate databases — control plane (tenants,
-entitlements, devices, audit) and tenant/farm data (see `ARCHITECTURE.md`, `TENANCY.md`). For a
+subscriptions, devices, audit) and tenant/farm data (see `ARCHITECTURE.md`, `TENANCY.md`). For a
 test deployment, one Flexible Server hosting both databases is enough; split them onto separate
 servers later if you need to test that isolation specifically.
 
@@ -325,26 +325,15 @@ Notes on specific settings:
   handler, not at startup, so leaving them at their harmless defaults doesn't block anything else
   from working. Add real ones when file upload or a background worker actually need to run.
 
-## 5. License lease keys (device activation / offline license testing only)
+## 5. (Removed — license lease keys)
 
-`app/devices/lease.py` reads `LICENSE_LEASE_PRIVATE_KEY_PATH`/`..._PUBLIC_KEY_PATH` — by default
-`./infrastructure/keys/license_lease_*.pem`, resolved inside the container at `/app/infrastructure/
-keys/`. `api/docker-entrypoint.sh` generates a keypair there automatically on first boot if none
-exists (verified: ran this exact generation code locally and it produces a valid keypair with the
-private key at `0600`). Nothing else in the app touches this path at startup, so this never blocks
-the API from serving traffic either way.
+This step used to explain where to persist the RS256 keypair that signed
+offline licence leases. Device licences are gone: Origami is one
+subscription covering the whole product, tablets register themselves by
+signing in, and nothing signs a lease. There is no keypair to persist, no
+`LICENSE_LEASE_*` app setting to configure, and no path mapping to create.
 
-**For this test deployment, that's deliberately left as container-local, ephemeral storage** — a
-restart or redeploy generates a fresh keypair, which invalidates any device leases issued against
-the old one. That's fine as long as you're not yet testing device activation/offline licensing
-specifically. When you are, mount real persistent storage (Azure Files, via the Web App's **Path
-mappings** configuration) at a path outside `/app`, point `LICENSE_LEASE_PRIVATE_KEY_PATH` /
-`..._PUBLIC_KEY_PATH` at it as app settings, and the same auto-generate-if-missing entrypoint logic
-keeps working — it'll just generate the keypair once and it'll actually survive restarts.
-
-(Don't use Azure's own `/home` auto-persistence trick for this: `api/Dockerfile` deliberately keeps
-everything the app needs at `/opt` and `/app`, not under `/home`, specifically because that
-persistent mount can shadow whatever was baked into the image there.)
+The step number is kept so the ones below keep their numbers.
 
 ## 6. Restart, migrate, seed, smoke-test
 

@@ -4,10 +4,7 @@ that make the app render at all. See docs/FARMOS_API.md.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-from app.common.enums import EntitlementSource, EntitlementStatus, MembershipStatus, TenantStatus
-from app.plans.models import TenantEntitlement
+from app.common.enums import MembershipStatus, TenantStatus
 from tests.conftest import farmos_headers, farmos_login, unique_code
 from tests.helpers import (
     FARMOS_DEMO_PASSWORD,
@@ -181,23 +178,19 @@ def test_worker_sees_only_their_own_granted_modules(client, control_db):
     assert body["modules"]["animals"]["edit"] is False
 
 
-def test_modules_catalog_reflects_this_farms_own_licence(client, control_db):
+def test_the_modules_catalog_includes_the_whole_product(client, control_db):
+    """Twenty modules, all of them open, for every customer.
+
+    This test used to prove the opposite: that a farm which had bought
+    only the Mouneh add-on saw Mouneh and nothing else. Origami is now one
+    subscription covering everything, so the per-module gate is gone and
+    the only thing left to pin is that nothing is dark. license_code
+    survives as a description of which part of the product a screen
+    belongs to — the app still reads it.
+    """
     tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
     add_farmos_user(control_db, tenant, "catalog@origami-demo.com", role="owner")
-    # The catalog with each module's real licence, as scripts/seed.py
-    # builds it — without this the rows carry no licence and every module
-    # reads as free, which is the state this test exists to disprove.
     ensure_farmos_catalog(control_db)
-    control_db.add(
-        TenantEntitlement(
-            tenant_id=tenant.id,
-            module_code="mouneh",
-            status=EntitlementStatus.ACTIVE,
-            source=EntitlementSource.OVERRIDE,
-            effective_from=datetime.now(timezone.utc),
-            plan="mouneh_addon",
-        )
-    )
     control_db.commit()
     token = farmos_login(client, "catalog@origami-demo.com", FARMOS_DEMO_PASSWORD)
 
@@ -205,33 +198,12 @@ def test_modules_catalog_reflects_this_farms_own_licence(client, control_db):
     assert resp.status_code == 200
     by_code = {entry["code"]: entry for entry in resp.json()}
     assert len(by_code) == 20
+    assert all(entry["licensed_active"] for entry in by_code.values())
 
-    # Mouneh production/inventory both key off the "mouneh" licence, which
-    # this farm has — active.
-    assert by_code["mouneh_production"]["licensed_active"] is True
+    # Including the two that used to be sold separately.
     assert by_code["mouneh_production"]["license_code"] == "mouneh"
-    # Farm Visits keys off "visits_agritourism", which this farm never
-    # purchased — inactive, and the app hides the module entirely.
-    assert by_code["farm_visits"]["licensed_active"] is False
-    # Every other module names a licence too, which it did not used to:
-    # seventeen of them carried none and were therefore free for every
-    # farm forever, so a plan could not control them. This farm bought
-    # only the Mouneh add-on, so the ordinary screens stay shut.
+    assert by_code["farm_visits"]["license_code"] == "visits_agritourism"
     assert by_code["animals"]["license_code"] == "ANIMALS"
-    assert by_code["animals"]["licensed_active"] is False
-
-    control_db.add(
-        TenantEntitlement(
-            tenant_id=tenant.id,
-            module_code="ANIMALS",
-            status=EntitlementStatus.ACTIVE,
-            source=EntitlementSource.PLAN,
-            effective_from=datetime.now(timezone.utc),
-        )
-    )
-    control_db.commit()
-    reread = client.get("/api/v1/modules/catalog", headers=farmos_headers(token)).json()
-    assert {entry["code"]: entry for entry in reread}["animals"]["licensed_active"] is True
 
 
 def test_farms_me_returns_this_users_own_farm(client, control_db):

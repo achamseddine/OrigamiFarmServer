@@ -95,27 +95,6 @@ class FarmOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class PlanCreateRequest(BaseModel):
-    code: str
-    name: str
-    limits: dict = {}
-    currency: str = "USD"
-    # Optional, and left unset rather than zeroed when unknown: an unpriced
-    # plan is excluded from revenue rather than counted as free.
-    monthly_price_cents: int | None = Field(default=None, ge=0)
-    annual_price_cents: int | None = Field(default=None, ge=0)
-    # What the plan sells. A plan with none is a price with no contents —
-    # legal, since the modules can be chosen afterwards, but it grants a
-    # subscriber nothing until they are.
-    module_codes: list[str] = []
-
-
-class PlanModulesRequest(BaseModel):
-    """The complete set of modules a plan includes — not an addition to it."""
-
-    module_codes: list[str]
-
-
 class PlanUpdateRequest(BaseModel):
     name: str | None = None
     status: str | None = None
@@ -134,30 +113,25 @@ class PlanOut(BaseModel):
     currency: str
     monthly_price_cents: int | None
     annual_price_cents: int | None
-    # Always sent with the plan: a price without its contents cannot be
-    # read as an offer.
-    module_codes: list[str] = []
 
     model_config = {"from_attributes": True}
 
 
 class LicenceOut(BaseModel):
-    """A licence code and what holding it opens in the tablet app.
+    """One area of the product, and the screens that belong to it.
 
-    The console builds its plan picker from these rather than from the
-    module list, because only a code some module actually points at gates
-    anything — offering the rest is how a plan ends up selling nothing.
+    This used to be a list of things that could be bought separately, and
+    the console built a plan picker from it. Nothing is bought separately
+    any more, so it describes rather than gates: it is how "Milk
+    Production" is known to belong with MILK, which is what both the
+    console's module table and the tablet's catalog show.
     """
 
     license_code: str
     name: str
-    # Tablet module codes this licence unlocks, with their display names.
+    # Tablet module codes in this area, with their display names.
     unlocks: list[str]
     unlocks_labels: list[str]
-    # True for the paid add-ons; the rest are ordinary parts of a plan.
-    is_addon: bool
-    # How many tenants hold it today.
-    tenants_licensed: int
 
 
 class MemberPasswordRequest(BaseModel):
@@ -183,29 +157,31 @@ class MemberPasswordOut(BaseModel):
 
 
 class LicenceIssueRequest(BaseModel):
-    """How long each half of the pack stays good for."""
+    """How the owner is given their way in."""
 
-    # How the owner gets in. "link" emails or shows a one-time sign-in
-    # link; "password" sets one directly and shows it, which is what a
-    # deployment with no mail server actually needs.
+    # "link" emails or shows a one-time sign-in link; "password" sets one
+    # directly and shows it, which is what a deployment with no mail
+    # server actually needs.
     credential: Literal["link", "password"] = "link"
 
     # A week by default: a customer who gets the email on Friday should
     # still be able to act on it when they are next at the farm office.
-    key_ttl_hours: int = Field(default=168, ge=1, le=8760)
     invitation_ttl_hours: int = Field(default=168, ge=1, le=720)
-    # Pin the key to one site. Left unset it works for any of the
-    # customer's farms, which is what a single-site customer wants.
-    farm_id: uuid.UUID | None = None
     send_email: bool = True
+
+    # Accepted and ignored, so a console built before device licences
+    # were removed keeps working through a deploy rather than failing
+    # validation on fields the server stopped wanting.
+    key_ttl_hours: int | None = None
+    farm_id: uuid.UUID | None = None
 
 
 class LicenceIssueOut(BaseModel):
-    """The whole handover, returned exactly once.
+    """The handover, returned exactly once.
 
-    Both the key and the URL are credentials: neither is stored in a form
-    that can be read back, so a pack that is lost is reissued rather than
-    looked up.
+    One credential, not two: there is no pairing key, because a tablet
+    carries no licence. It is not stored in a form that can be read back,
+    so a handover that is lost is reissued rather than looked up.
     """
 
     tenant_id: uuid.UUID
@@ -213,11 +189,6 @@ class LicenceIssueOut(BaseModel):
     display_name: str
     plan_code: str | None
     plan_name: str | None
-    # The licences this customer holds — what the key will actually open.
-    licences: list[str]
-
-    licence_key: str
-    licence_key_expires_at: datetime
 
     owner_email: str
     owner_name: str
@@ -252,7 +223,6 @@ class ModuleOut(BaseModel):
 
 
 class SubscriptionUpsertRequest(BaseModel):
-    plan_id: uuid.UUID
     billing_cycle: str = "MONTHLY"
     starts_at: datetime
     renews_at: datetime | None = None
@@ -261,9 +231,13 @@ class SubscriptionUpsertRequest(BaseModel):
     # nothing in the codebase assigned it, so every customer stayed an
     # onboarding trial and MRR could never be anything but zero.
     status: SubscriptionStatus = SubscriptionStatus.ONBOARDING_TRIAL
-    # On by default because the opposite default is the bug this fixes: a
-    # customer recorded as subscribed who can open nothing. Turn it off to
-    # record a commercial fact without touching what they may use.
+
+    # Both accepted and both ignored. There is one plan and it covers the
+    # whole product, so there is nothing to choose and nothing for
+    # subscribing to switch on. They stay in the schema, optional, so a
+    # console built before this change keeps working through a deploy
+    # instead of failing validation on a field the server stopped wanting.
+    plan_id: uuid.UUID | None = None
     apply_plan_modules: bool = True
 
 

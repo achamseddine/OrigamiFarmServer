@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Seeds local/dev data: a platform admin, and two tenants whose module
-entitlements differ (Tenant A / dairy, Tenant B / mixed) so isolation and
-entitlement enforcement can be exercised immediately after `docker-compose
-up`. Safe to re-run — every lookup is by natural key before creating.
+"""Seeds local/dev data: a platform admin and two tenants (Tenant A /
+dairy, Tenant B / mixed), each with the same identical-looking animal so
+isolation can be exercised immediately after `docker-compose up`. Safe to
+re-run — every lookup is by natural key before creating.
+
+The two tenants used to differ in what they had bought, because that was
+the other thing worth exercising. Origami is one subscription covering the
+whole product now, so they differ only in their data.
 
 Run from api/ with the venv active:
     PYTHONPATH=. python ../scripts/seed.py
@@ -23,8 +27,6 @@ from app.auth.passwords import hash_password  # noqa: E402
 from app.common.db import ControlSessionLocal  # noqa: E402
 from app.common.enums import (  # noqa: E402
     BillingCycle,
-    EntitlementSource,
-    EntitlementStatus,
     MembershipStatus,
     PlatformRole,
     SubscriptionStatus,
@@ -33,7 +35,8 @@ from app.common.enums import (  # noqa: E402
 )
 from app.common.tenant_router import TenantDataRouter  # noqa: E402
 from app.plans.licensing_map import MODULE_LICENCES  # noqa: E402
-from app.plans.models import ModuleCatalog, Plan, Subscription, TenantEntitlement  # noqa: E402
+from app.plans.models import ModuleCatalog, Subscription  # noqa: E402
+from app.plans.subscription_plan import get_or_create_plan  # noqa: E402
 
 
 def _licence(module_code: str) -> str:
@@ -125,29 +128,6 @@ def get_or_create_tenant(db, *, company_code: str, display_name: str) -> Tenant:
     return tenant
 
 
-def grant_modules(db, tenant: Tenant, module_codes: list[str], actor: UserIdentity) -> None:
-    for code in module_codes:
-        existing = db.execute(
-            select(TenantEntitlement).where(
-                TenantEntitlement.tenant_id == tenant.id, TenantEntitlement.module_code == code
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            continue
-        db.add(
-            TenantEntitlement(
-                tenant_id=tenant.id,
-                module_code=code,
-                status=EntitlementStatus.ACTIVE,
-                source=EntitlementSource.PLAN,
-                effective_from=datetime.now(timezone.utc),
-                changed_by=actor.id,
-                reason="seed: initial plan entitlement",
-            )
-        )
-    db.flush()
-
-
 # Every FarmOS-tablet demo login uses this password — printed at the end
 # of the run so a manual tester doesn't have to read this file.
 DEMO_PASSWORD = "farmos-demo-2026"
@@ -189,7 +169,6 @@ def main() -> None:
 
         print("Seeding Tenant A (FARM-A, Dairy Farm)...")
         tenant_a = get_or_create_tenant(db, company_code="FARM-A", display_name="Dairy Farm")
-        grant_modules(db, tenant_a, ["CORE", "ANIMALS", "FEED", "MILK"], admin)
         farm_a = db.execute(select(Farm).where(Farm.tenant_id == tenant_a.id)).scalar_one_or_none()
         if farm_a is None:
             farm_a = Farm(tenant_id=tenant_a.id, farm_code="MAIN", name="Main Dairy Site")
@@ -219,12 +198,6 @@ def main() -> None:
 
         print("Seeding Tenant B (FARM-B, Mixed Farm)...")
         tenant_b = get_or_create_tenant(db, company_code="FARM-B", display_name="Mixed Farm")
-        grant_modules(
-            db,
-            tenant_b,
-            ["CORE", "ANIMALS", "AGRICULTURE", "PRODUCE", "MOUNEH", "SALES", "FARM_VISITS"],
-            admin,
-        )
         farm_b = db.execute(select(Farm).where(Farm.tenant_id == tenant_b.id)).scalar_one_or_none()
         if farm_b is None:
             farm_b = Farm(tenant_id=tenant_b.id, farm_code="MAIN", name="Main Mixed Site")
@@ -252,27 +225,20 @@ def main() -> None:
         else:
             membership_b.role = "owner"
 
-        print("Seeding priced plans and demo subscriptions...")
+        print("Seeding a priced subscription for each demo tenant...")
         # Demo commercial data, so the Business dashboard has something to
-        # show locally. These prices are invented for the demo — a real
-        # deployment prices its own plans in the console.
-        plans = {}
-        for code, name, monthly, annual in (
-            ("STARTER", "Starter", 9_900, 99_000),
-            ("GROWTH", "Growth", 24_900, 249_000),
-        ):
-            plan = db.execute(select(Plan).where(Plan.code == code)).scalar_one_or_none()
-            if plan is None:
-                plan = Plan(code=code, name=name, currency="USD")
-                db.add(plan)
-            plan.monthly_price_cents = monthly
-            plan.annual_price_cents = annual
-            db.flush()
-            plans[code] = plan
+        # show locally. The price is invented for the demo — a real
+        # deployment sets its own in the console, and the plan ships
+        # unpriced precisely so an invented figure never reaches a real
+        # revenue report.
+        plan = get_or_create_plan(db)
+        plan.monthly_price_cents = 24_900
+        plan.annual_price_cents = 249_000
+        db.flush()
 
-        for tenant, plan_code, cycle in (
-            (tenant_a, "GROWTH", BillingCycle.MONTHLY),
-            (tenant_b, "STARTER", BillingCycle.ANNUAL),
+        for tenant, cycle in (
+            (tenant_a, BillingCycle.MONTHLY),
+            (tenant_b, BillingCycle.ANNUAL),
         ):
             existing_sub = db.execute(
                 select(Subscription).where(Subscription.tenant_id == tenant.id)
@@ -282,7 +248,7 @@ def main() -> None:
                 db.add(
                     Subscription(
                         tenant_id=tenant.id,
-                        plan_id=plans[plan_code].id,
+                        plan_id=plan.id,
                         status=SubscriptionStatus.ACTIVE,
                         billing_cycle=cycle,
                         starts_at=now - timedelta(days=60),
@@ -290,28 +256,6 @@ def main() -> None:
                     )
                 )
         db.flush()
-
-        print("Granting Tenant B its licensed add-ons (Mouneh, Farm Visits)...")
-        for license_code, plan in (("mouneh", "mouneh_addon"), ("visits_agritourism", "farmos_experience")):
-            existing_license = db.execute(
-                select(TenantEntitlement).where(
-                    TenantEntitlement.tenant_id == tenant_b.id,
-                    TenantEntitlement.module_code == license_code,
-                )
-            ).scalar_one_or_none()
-            if existing_license is None:
-                db.add(
-                    TenantEntitlement(
-                        tenant_id=tenant_b.id,
-                        module_code=license_code,
-                        status=EntitlementStatus.ACTIVE,
-                        source=EntitlementSource.PLAN,
-                        effective_from=datetime.now(timezone.utc),
-                        changed_by=admin.id,
-                        reason="seed: licensed add-on",
-                        plan=plan,
-                    )
-                )
 
         db.commit()
         tenant_a_id, tenant_b_id, farm_a_id, farm_b_id = tenant_a.id, tenant_b.id, farm_a.id, farm_b.id

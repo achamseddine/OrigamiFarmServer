@@ -1,9 +1,9 @@
 # Origami Server
 
 The secure multi-tenant SaaS control plane and API platform that powers Origami FarmOS for every
-customer farm. This is the v0.1 foundation: tenant isolation, entitlements, device licensing, a
-representative FarmOS API + sync protocol, and the platform admin console — built and tested
-against real PostgreSQL, not mocked.
+customer farm. This is the v0.1 foundation: tenant isolation, one subscription covering the whole
+product, a representative FarmOS API + sync protocol, and the platform admin console — built and
+tested against real PostgreSQL, not mocked.
 
 See also: [ARCHITECTURE.md](ARCHITECTURE.md) · [TENANCY.md](TENANCY.md) ·
 [SECURITY.md](SECURITY.md) · [SYNC_PROTOCOL.md](SYNC_PROTOCOL.md) ·
@@ -19,10 +19,10 @@ Built, tested, and running end to end:
 - PostgreSQL Row-Level Security on every farm-data-plane table, with a `TenantDataRouter`
   abstraction so a tenant can later move to a dedicated database without an API contract change.
 - Auth abstraction (OIDC/Keycloak-shaped `IdentityProvider`, plus a dev-mode provider for local
-  work) and the centralized authorization dependency chain: identity → tenant context → module
-  entitlement → permission → farm scope.
-- `EntitlementService` + tenant/subscription/module state machines, all audited.
-- Device activation (hashed, single-use, expiring codes) and signed RS256 offline license leases.
+  work) and the centralized authorization dependency chain: identity → tenant context →
+  permission → farm scope.
+- Tenant and subscription state machines, all audited.
+- A device list every tablet puts itself on by signing in, with revocation that sticks.
 - The full FarmOS tablet API contract — 92 endpoints across 19 groups (animals, tasks, animal
   health, observations, feed, production, agriculture, employees & permissions, sales/expenses,
   notifications, priorities, audit, AI recommendations, reports, module licensing, and the Mouneh
@@ -34,51 +34,46 @@ Built, tested, and running end to end:
   metadata endpoints.
 - Admin Web (Next.js), served by the API itself at `/`: password sign-in, a platform overview with
   live counts and audit-volume history, a business dashboard (MRR/ARR, pipeline, renewals, revenue
-  by plan), usage and licensing dashboards derived from real rows, a tenant list with
+  by plan), a usage dashboard derived from real rows, a tenant list with
   search/filter/pagination, a five-step create-customer wizard that finishes the job — company,
-  first farm, plan (which records the subscription and grants its licences), owner, and a final
-  screen handing over the owner's email, password and the tablet pairing key —
-  a Tenant 360 page (Overview / Usage / Subscription / Access / Farms / Modules / Devices /
-  Licensing / Audit) with working activate/deactivate/revoke actions, staff and platform-role
-  administration, the plan/module catalog with per-cycle pricing, a global audit log, and
-  self-service password change.
-- Plans mean something, all the way to the tablet: a plan is a bundle of **licences** at a price,
-  and every one of the tablet app's 20 modules names the licence that opens it
-  (`api/app/plans/licensing_map.py`). Putting a tenant on a plan records what they pay **and**
-  grants those licences, so `GET /api/v1/modules/catalog` starts reporting the screens as
-  `licensed_active` and they appear in the app. A downgrade reports what the new plan does not
-  cover rather than silently switching a working farm's module off. The console's picker is built
-  from the licences the catalog actually points at, so a plan cannot be assembled out of codes
-  that gate nothing — which is exactly how an earlier version of this shipped.
-  Note the licence gates what the app **shows**: per-request authorization is still the tenant
-  permission grid (`require_permission`), not the entitlement.
+  first farm, subscription, owner, and a final screen handing over the owner's email and password —
+  a Tenant 360 page (Overview / Usage / Subscription / Access / Handover / Farms / Devices /
+  Audit), staff and platform-role administration, the subscription's price and the module list it
+  covers, a global audit log, and self-service password change.
+- **One subscription, one price, every module.** There are no tiers and no per-module add-ons:
+  `GET /api/v1/modules/catalog` reports all 20 of the tablet app's modules as `licensed_active`
+  for every customer, including one with no subscription recorded — being unpaid is a commercial
+  state, and cutting a farm off mid-season is a decision somebody makes, not a default the
+  software applies while nobody is looking. The per-module gate is deleted rather than defaulted
+  to true, so there is no code path left that could answer "no". What one *person* may do is
+  still decided per request from their membership's permission grid (`require_permission`).
+  `license_code` survives as a description of which part of the product a screen belongs to
+  (`api/app/plans/licensing_map.py`) — the app still reads it.
 - Tenant-user invitations: inviting someone issues a hashed, single-use, expiring link they open to
   choose their own password and land straight in the tablet app (`/welcome`; the earlier
   `/activate` path still forwards there so links already sent keep working). It is emailed when
   SMTP is configured and shown to the admin to pass on when it is not — it never claims to have
   sent mail it did not send.
-- **Issue licence** hands over both halves of a customer setup in one action
-  (`POST /platform/v1/tenants/{id}/licence`): the readable licence key their tablet pairs with
-  (`ORG-XMRH-M3ND-XFR6`, an alphabet with no confusable characters, accepted in any case and with
-  or without dashes — the same format the Devices tab issues) and the sign-in link their owner
-  opens to set a password. The two are named apart on purpose: both were once called
-  "activation", and a pairing key pasted into the sign-in URL is a mistake the product invited.
-  `/welcome` now recognises a pasted `ORG-…` key and says what it actually is. Both are
-  credentials stored only as hashes, shown once, and sent as a single email when SMTP is
-  configured. Issuing again supersedes whatever was outstanding, so a customer never has two live
-  keys. **With no mail server**, `Issue with a password` sets the owner's password directly and
-  shows it instead of a link, so the whole handover fits in a phone call — and the farm user can
-  replace it themselves via `POST /api/v1/auth/change-password`, without which setting somebody's
-  password would trap them with it.
+- **Handover** gives a customer their way in, in one action
+  (`POST /platform/v1/tenants/{id}/licence`). There is one thing to pass on rather than two: the
+  tablet pairing key went with device licences, so what is left is how the owner signs in — a
+  one-time link they open to choose a password, or a password set here and read to them. Both are
+  stored only as hashes and shown once; issuing again supersedes whatever was outstanding.
+  **With no mail server**, `Hand over a password` is the workable procedure: the whole handover
+  fits in a phone call, and the farm user can replace the password themselves via
+  `POST /api/v1/auth/change-password`, without which setting somebody's password would trap them
+  with it. `/welcome` still recognises a pasted `ORG-…` key — ones handed out before this change
+  are on scraps of paper — and says that tablets are no longer paired.
 - A **Getting started** screen (`/guide`) that draws the whole operating sequence — set yourself
   up, sign a customer, settle into a rhythm — as a flow, with each box's state read from
   `GET /platform/v1/setup` rather than asserted: the platform checks its own database for a
-  self-set password, a second staff account, priced plans, a customer, a subscription per
-  customer, and a paired tablet, so the diagram says where this deployment has actually got to.
+  self-set password, a second staff account, a price on the subscription, a customer, a
+  subscription per customer, and a tablet that has signed in, so the diagram says where this
+  deployment has actually got to.
   The Overview banner names the next outstanding step.
-- 180 automated tests against a real Postgres instance, including every mandatory isolation,
-  entitlement, device, sync, support-session, audit, and platform-role scenario from the product
-  brief, plus the full FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
+- Automated tests against a real Postgres instance, including every mandatory isolation, device,
+  sync, support-session, audit, and platform-role scenario from the product brief, plus the full
+  FarmOS tablet contract's own test suite (`api/tests/test_farmos_stage*.py`).
 
 **Deliberately deferred** (see "Roadmap" in ARCHITECTURE.md): billing/payment provider integration,
 scheduled backup/export job execution (the API + data model exist; a worker doesn't yet produce
@@ -97,10 +92,10 @@ api/               FastAPI backend
   migrations/      two independent Alembic environments: control/ and tenant/
   tests/           pytest suite (runs against real Postgres)
   Dockerfile       builds the console and the API into one image (context: repo root)
-  docker-entrypoint.sh  migrations, license keys, then uvicorn
+  docker-entrypoint.sh  migrations, then uvicorn
 workers/           background worker entrypoint (scaffold; see ARCHITECTURE.md Roadmap)
-infrastructure/    Keycloak realm import, RLS notes, generated license-lease keys (gitignored)
-scripts/           seed.py, generate_license_keys.py
+infrastructure/    Keycloak realm import, RLS notes
+scripts/           seed.py, create_platform_admin.py, build-image.sh
 docker-compose.yml full local stack
 .env.example       documented environment variables
 ```
@@ -140,7 +135,6 @@ cd api
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp ../.env.example .env   # then edit CONTROL_DATABASE_URL / TENANT_DATABASE_URL / AUTH_DEV_MODE=true
-python ../scripts/generate_license_keys.py   # writes infrastructure/keys/*.pem, run once
 alembic -c alembic_control.ini upgrade head
 alembic -c alembic_tenant.ini upgrade head
 python ../scripts/seed.py
@@ -189,18 +183,20 @@ database layer. See `api/tests/` for the mandatory scenario coverage.
 
 ## Seeded demo data
 
-`scripts/seed.py` creates a platform super admin and two tenants with deliberately different
-entitlements (and a same-named, same-tag-code animal in each, so you can immediately confirm
-isolation is real):
+`scripts/seed.py` creates a platform super admin and two tenants, each holding a same-named,
+same-tag-code animal so you can immediately confirm isolation is real:
 
-| Tenant | Company ID | Modules | Owner |
-|---|---|---|---|
-| Dairy Farm | `FARM-A` | CORE, ANIMALS, FEED, MILK | `owner@farm-a-demo.com` |
-| Mixed Farm | `FARM-B` | CORE, ANIMALS, AGRICULTURE, PRODUCE, MOUNEH, SALES, FARM_VISITS | `owner@farm-b-demo.com` |
+| Tenant | Company ID | Owner |
+|---|---|---|
+| Dairy Farm | `FARM-A` | `owner@farm-a-demo.com` |
+| Mixed Farm | `FARM-B` | `owner@farm-b-demo.com` |
+
+They used to differ in what they had bought; with one subscription covering the whole product,
+both open every module and the only difference left is their data. Both get a priced subscription
+so the Business dashboard has something to show — that price is invented for the demo, which is
+why the plan itself ships unpriced.
 
 Safe to re-run; every insert is guarded by a natural-key lookup first. `scripts/seed.py` also
 password-enables both tenant owners for the FarmOS tablet contract's own login
 (`POST /api/v1/auth/login`, distinct from the platform's OIDC/dev-login) — password
-`farmos-demo-2026` for either owner email above — and grants Tenant B's licensed add-ons
-(`mouneh`, `visits_agritourism`) as active `TenantEntitlement` rows so its owner can immediately
-exercise the Mouneh and Farm Visits endpoints. See [docs/FARMOS_API.md](docs/FARMOS_API.md).
+`farmos-demo-2026` for either owner email above. See [docs/FARMOS_API.md](docs/FARMOS_API.md).

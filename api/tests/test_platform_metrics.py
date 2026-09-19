@@ -6,7 +6,7 @@ from app.common.enums import PlatformRole, TenantStatus
 from app.common.tenant_router import TenantDataRouter
 from app.tenant_api.models import Animal
 from tests.conftest import auth_headers, dev_login, unique_code
-from tests.helpers import add_farmos_user, create_tenant, grant_module, grant_platform_role
+from tests.helpers import add_farmos_user, create_tenant, grant_platform_role
 
 
 def admin_token(client, control_db, email: str) -> str:
@@ -38,16 +38,24 @@ def test_overview_audit_window_is_adjustable(client, control_db):
     assert len(resp.json()["audit_events_per_day"]) == 30
 
 
-def test_licensing_reports_entitlement_counts_per_module(client, control_db):
+def test_the_licensing_dashboard_is_gone(client, control_db):
+    """It answered "who has bought which modules" and "which tablets can
+    still work offline". Neither question survives one subscription that
+    covers everything, and an endpoint that keeps answering a retired
+    question is worse than none: the numbers look authoritative.
+    """
     token = admin_token(client, control_db, "metrics-lic@test.com")
-    tenant = create_tenant(control_db, company_code=unique_code("FARM-LIC"))
-    grant_module(control_db, tenant, "animals")
-    control_db.commit()
+    resp = client.get("/platform/v1/metrics/licensing", headers=auth_headers(token))
+    assert resp.status_code == 404, resp.text
 
-    body = client.get("/platform/v1/metrics/licensing", headers=auth_headers(token)).json()
-    animals = next(m for m in body["modules"] if m["module_code"] == "animals")
-    assert animals["active"] >= 1
-    assert animals["is_permission_module"] is True
+
+def test_the_overview_no_longer_counts_offline_leases(client, control_db):
+    token = admin_token(client, control_db, "metrics-noleases@test.com")
+    body = client.get("/platform/v1/metrics/overview", headers=auth_headers(token)).json()
+    assert "leases_active" not in body
+    assert "leases_expiring_7d" not in body
+    # Tablets themselves are still counted — they register by signing in.
+    assert "devices_by_status" in body
 
 
 def test_usage_counts_only_the_tenants_own_rows(client, control_db):
@@ -101,7 +109,6 @@ def test_metrics_require_a_platform_role(client, control_db):
     token = dev_login(client, "outsider-metrics@test.com")
     for path in (
         "/platform/v1/metrics/overview",
-        "/platform/v1/metrics/licensing",
         "/platform/v1/metrics/usage",
     ):
         assert client.get(path, headers=auth_headers(token)).status_code == 403

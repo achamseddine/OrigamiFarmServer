@@ -20,7 +20,7 @@ SETUP = "/platform/v1/setup"
 
 # The console renders these in order and links each one to a screen, so the
 # set and its order are part of the contract, not an implementation detail.
-EXPECTED_KEYS = ["password", "staff", "plans", "pricing", "tenant", "subscription", "device"]
+EXPECTED_KEYS = ["password", "staff", "pricing", "tenant", "subscription", "device"]
 
 
 def setup_state(client, token) -> dict:
@@ -34,7 +34,7 @@ def step(body: dict, key: str) -> dict:
 
 
 def unsubscribed_count(detail: str) -> int:
-    """The leading number of "N of M customers with no plan recorded"."""
+    """The leading number of "N of M customers with no subscription recorded"."""
     return 0 if not detail[0].isdigit() else int(detail.split(" ", 1)[0])
 
 
@@ -136,7 +136,7 @@ def test_me_reports_the_same_password_state_to_the_console(client, control_db):
     assert me.json()["password_set_by_someone_else"] is False
 
 
-def test_a_customer_with_no_plan_recorded_reopens_the_subscription_step(client, control_db):
+def test_a_customer_with_no_subscription_reopens_the_subscription_step(client, control_db):
     """The step this whole screen exists for. It is not "one subscription
     exists" — every customer needs one, so a new tenant puts it back.
     """
@@ -149,7 +149,7 @@ def test_a_customer_with_no_plan_recorded_reopens_the_subscription_step(client, 
 
     unpaid = step(setup_state(client, token), "subscription")
     assert unpaid["done"] is False
-    assert "no plan recorded" in unpaid["detail"]
+    assert "no subscription recorded" in unpaid["detail"]
     before = unsubscribed_count(unpaid["detail"])
 
     # And the tenant step it depends on is satisfied by that same tenant.
@@ -166,16 +166,27 @@ def test_a_customer_with_no_plan_recorded_reopens_the_subscription_step(client, 
     assert unsubscribed_count(after["detail"]) == before - 1
 
 
-def test_pricing_counts_only_plans_that_carry_a_price(client, control_db):
+def test_the_subscription_starts_unpriced_and_the_step_says_so(client, control_db):
+    """The one plan is seeded without a price on purpose, so this step is
+    the thing that tells a new operator revenue will read as zero until
+    they set one. It used to count priced plans against unpriced ones;
+    with a single plan the count is always "1 of 1" or "0 of 1", which
+    says less than the sentence does.
+    """
     token = admin_token(client, control_db, "setup-price@test.com")
 
-    control_db.add(Plan(code=unique_code("UNPRICED"), name="Unpriced Plan"))
-    control_db.commit()
-    detail = step(setup_state(client, token), "pricing")["detail"]
+    unpriced = step(setup_state(client, token), "pricing")
+    assert unpriced["done"] is False
+    assert "no price yet" in unpriced["detail"]
 
-    priced, _, rest = detail.partition(" of ")
-    total = rest.split(" ")[0]
-    assert int(priced) < int(total), f"an unpriced plan must not count as priced: {detail}"
+    plan_id = client.get("/platform/v1/plans", headers=auth_headers(token)).json()[0]["id"]
+    client.patch(
+        f"/platform/v1/plans/{plan_id}",
+        json={"monthly_price_cents": 29_900},
+        headers=auth_headers(token),
+    )
+
+    assert step(setup_state(client, token), "pricing")["done"] is True
 
 
 def test_any_platform_role_may_read_the_checklist(client, control_db):

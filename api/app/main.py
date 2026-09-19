@@ -112,7 +112,6 @@ def readyz() -> dict:
 
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.backups.routes import router as backups_router  # noqa: E402
-from app.devices.routes import router as devices_router  # noqa: E402
 from app.farmos.routes_agriculture import router as farmos_agriculture_router  # noqa: E402
 from app.farmos.routes_animals import router as farmos_animals_router  # noqa: E402
 from app.farmos.routes_audit import router as farmos_audit_router  # noqa: E402
@@ -171,7 +170,6 @@ app.include_router(farmos_visits_router, prefix="/api/v1", tags=["FarmOS: Visits
 app.include_router(farmos_visit_bookings_router, prefix="/api/v1", tags=["FarmOS: Visit Bookings"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
-app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])
 app.include_router(platform_auth_router, prefix="/platform/v1/auth", tags=["Platform Auth"])
 app.include_router(platform_router, prefix="/platform/v1", tags=["Platform"])
 app.include_router(platform_staff_router, prefix="/platform/v1", tags=["Platform Staff"])

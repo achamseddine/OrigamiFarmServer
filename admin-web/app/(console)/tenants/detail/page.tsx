@@ -6,17 +6,14 @@ import { apiFetch, ApiError } from "@/lib/api";
 import {
   AuditEventItem,
   DeviceItem,
-  Entitlement,
   Farm,
   IssuedInvitation,
   LicencePack,
-  LicenseLease,
   MemberPassword,
   Membership,
   Plan,
   Subscription,
   SubscriptionSaveResult,
-  ModuleCatalogItem,
   Tenant,
   TenantUsage,
 } from "@/lib/types";
@@ -26,7 +23,6 @@ import {
   Loading,
   RankedBars,
   StatTile,
-  daysUntil,
   describeError,
   formatDate,
   formatDateTime,
@@ -34,15 +30,22 @@ import {
   useResource,
 } from "@/lib/ui";
 
+/** "Modules" and "Licensing" are gone.
+ *
+ *  Modules switched entitlements on and off for one customer; every
+ *  customer now has all of them. Licensing listed offline leases and
+ *  issued a tablet pairing key, neither of which exists. What survived of
+ *  Licensing is the part an operator actually used — handing a new owner
+ *  their way in — so it is a tab of its own under the name of the job.
+ */
 const TABS = [
   "Overview",
   "Usage",
   "Subscription",
   "Access",
+  "Handover",
   "Farms",
-  "Modules",
   "Devices",
-  "Licensing",
   "Audit",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -147,9 +150,8 @@ function TenantDetail() {
       {tab === "Usage" && <UsageTab tenantId={tenantId} />}
       {tab === "Subscription" && <SubscriptionTab tenantId={tenantId} />}
       {tab === "Access" && <AccessTab tenantId={tenantId} />}
-      {tab === "Licensing" && <LicensingTab tenantId={tenantId} />}
+      {tab === "Handover" && <HandoverTab tenantId={tenantId} />}
       {tab === "Farms" && <FarmsTab tenantId={tenantId} />}
-      {tab === "Modules" && <ModulesTab tenantId={tenantId} onChange={() => setNotice("Entitlements updated.")} />}
       {tab === "Devices" && <DevicesTab tenantId={tenantId} />}
       {tab === "Audit" && <AuditTab tenantId={tenantId} />}
     </div>
@@ -196,99 +198,9 @@ function FarmsTab({ tenantId }: { tenantId: string }) {
   );
 }
 
-function ModulesTab({ tenantId, onChange }: { tenantId: string; onChange: () => void }) {
-  const [entitlements, setEntitlements] = useState<Entitlement[] | null>(null);
-  const [catalog, setCatalog] = useState<ModuleCatalogItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    apiFetch<Entitlement[]>(`/platform/v1/tenants/${tenantId}/entitlements`).then(setEntitlements);
-    apiFetch<ModuleCatalogItem[]>("/platform/v1/modules").then(setCatalog);
-  }, [tenantId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function activate(moduleCode: string) {
-    const reason = window.prompt(`Reason for activating ${moduleCode}:`, "Customer purchased module");
-    if (!reason) return;
-    try {
-      await apiFetch(`/platform/v1/tenants/${tenantId}/entitlements/${moduleCode}/activate`, {
-        method: "POST",
-        body: { reason },
-      });
-      load();
-      onChange();
-    } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Failed");
-    }
-  }
-
-  async function deactivate(moduleCode: string) {
-    const reason = window.prompt(`Reason for deactivating ${moduleCode}:`);
-    if (!reason) return;
-    try {
-      await apiFetch(`/platform/v1/tenants/${tenantId}/entitlements/${moduleCode}/deactivate`, {
-        method: "POST",
-        body: { reason },
-      });
-      load();
-      onChange();
-    } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Failed");
-    }
-  }
-
-  const entitledCodes = new Set(entitlements?.map((e) => e.module_code));
-
-  return (
-    <div>
-      {error && <div className="error-banner">{error}</div>}
-      <div className="panel" style={{ padding: 0 }}>
-        <table>
-          <thead><tr><th>Module</th><th>Status</th><th>Effective from</th><th>Action</th></tr></thead>
-          <tbody>
-            {entitlements?.map((e) => (
-              <tr key={e.module_code}>
-                <td>{e.module_code}</td>
-                <td><StatusChip status={e.status} /></td>
-                <td>{new Date(e.effective_from).toLocaleDateString()}</td>
-                <td>
-                  {e.status === "ACTIVE" || e.status === "TRIAL" ? (
-                    <button className="btn btn-secondary" onClick={() => deactivate(e.module_code)}>Deactivate</button>
-                  ) : (
-                    <button className="btn btn-primary" onClick={() => activate(e.module_code)}>Activate</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <h3 style={{ fontSize: "1rem", color: "var(--farmos-muted)" }}>Available modules not yet entitled</h3>
-      <div className="panel" style={{ padding: 0 }}>
-        <table>
-          <tbody>
-            {catalog.filter((m) => !entitledCodes.has(m.module_code)).map((m) => (
-              <tr key={m.module_code}>
-                <td>{m.name_en} <code style={{ fontSize: "0.75rem" }}>{m.module_code}</code></td>
-                <td style={{ textAlign: "right" }}>
-                  <button className="btn btn-primary" onClick={() => activate(m.module_code)}>Activate</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 function DevicesTab({ tenantId }: { tenantId: string }) {
   const [devices, setDevices] = useState<DeviceItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lastCode, setLastCode] = useState<string | null>(null);
-  const [copiedCode, setCopiedCode] = useState(false);
 
   const load = useCallback(() => {
     apiFetch<DeviceItem[]>(`/platform/v1/tenants/${tenantId}/devices`).then(setDevices);
@@ -296,21 +208,8 @@ function DevicesTab({ tenantId }: { tenantId: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  async function createActivation() {
-    try {
-      const result = await apiFetch<{ activation_code: string; expires_at: string }>(
-        `/platform/v1/tenants/${tenantId}/device-activations`,
-        { method: "POST", body: { ttl_hours: 24 } }
-      );
-      setLastCode(result.activation_code);
-      setCopiedCode(false);
-    } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Failed to create activation code");
-    }
-  }
-
   async function revoke(deviceId: string) {
-    const reason = window.prompt("Reason for revoking this device:");
+    const reason = window.prompt("Reason for revoking this tablet:");
     if (!reason) return;
     try {
       await apiFetch(`/platform/v1/devices/${deviceId}/revoke`, { method: "POST", body: { reason } });
@@ -326,44 +225,17 @@ function DevicesTab({ tenantId }: { tenantId: string }) {
 
       <div className="panel">
         <div className="chart-title" style={{ marginBottom: 4 }}>
-          Pair a tablet
+          Tablets this customer uses
         </div>
         <div className="chart-note">
-          A pairing key is <strong>typed into the Origami app</strong> on the tablet, on the screen
-          that asks for it. It is not a web address and it is not how somebody signs in — the
-          owner&rsquo;s sign-in link comes from{" "}
-          <strong>Licensing → Issue licence</strong> or the Access tab. One key pairs one device.
+          A tablet appears here by itself, the first time somebody signs in on it — there is no
+          pairing key to generate and nothing to type into the app. So this answers{" "}
+          <strong>which tablets is this customer using</strong>, not which ones they are permitted.
+          Revoke one that has been lost or stolen; it stops being counted and stays revoked however
+          often somebody signs in on it again.
         </div>
-        <button className="btn btn-primary" onClick={createActivation} style={{ marginTop: 12 }}>
-          {lastCode ? "Generate another pairing key" : "Generate a pairing key"}
-        </button>
       </div>
 
-      {lastCode && (
-        <div className="licence-pack">
-          <div className="pack-head">
-            <div>
-              <div className="k">Pairing key</div>
-              <h3>Type this into the app on the tablet</h3>
-            </div>
-          </div>
-          <p className="chart-note" style={{ marginTop: 0 }}>
-            Shown only now — generate another if it is lost. Case and dashes do not matter.
-          </p>
-          <div className="copyline">
-            <code className="licence-key">{lastCode}</code>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => {
-                navigator.clipboard?.writeText(lastCode);
-                setCopiedCode(true);
-              }}
-            >
-              {copiedCode ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
-      )}
       <div className="panel" style={{ padding: 0 }}>
         <table>
           <thead><tr><th>Installation ID</th><th>Name</th><th>Status</th><th>Last seen</th><th></th></tr></thead>
@@ -382,7 +254,7 @@ function DevicesTab({ tenantId }: { tenantId: string }) {
               </tr>
             ))}
             {devices && devices.length === 0 && (
-              <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: "var(--farmos-muted)" }}>No devices registered yet.</td></tr>
+              <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: "var(--farmos-muted)" }}>No tablet has signed in for this customer yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -454,19 +326,14 @@ function UsageTab({ tenantId }: { tenantId: string }) {
             <div className="v">{formatDateTime(data.last_activity_at)}</div>
           </div>
           <div>
-            <div className="k">Entitlements held</div>
-            <div className="v">{data.modules_entitled.join(", ") || "None"}</div>
-          </div>
-          <div>
             <div className="k">Farm-data modules in use</div>
             <div className="v">{data.modules_with_data.join(", ") || "None"}</div>
           </div>
         </div>
         <p className="chart-note" style={{ marginTop: 12, marginBottom: 0 }}>
-          These two lists are counted in different vocabularies and are not a like-for-like
-          comparison: entitlements are the platform&apos;s own module codes, while the modules in
-          use are the FarmOS tablet contract&apos;s permission modules. Nothing in the schema maps
-          one to the other, so the console does not guess at an adoption figure.
+          This used to sit beside a list of what the customer was entitled to. They are entitled to
+          all of it, so what is worth reading here is the gap between what they pay for and what
+          they have actually started using.
         </p>
       </div>
     </div>
@@ -694,10 +561,7 @@ function AccessTab({ tenantId }: { tenantId: string }) {
   );
 }
 
-function LicensingTab({ tenantId }: { tenantId: string }) {
-  const { data, error, loading } = useResource<LicenseLease[]>(
-    `/platform/v1/tenants/${tenantId}/leases`
-  );
+function HandoverTab({ tenantId }: { tenantId: string }) {
   // The pack is returned once and cannot be read back, so it is held here
   // until the admin has copied it or sent it on.
   const [pack, setPack] = useState<LicencePack | null>(null);
@@ -705,7 +569,7 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
   const [issueError, setIssueError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  async function issueLicence(credential: "link" | "password") {
+  async function issueHandover(credential: "link" | "password") {
     setIssuing(true);
     setIssueError(null);
     setPack(null);
@@ -729,43 +593,41 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
     setCopied(what);
   }
 
-  if (loading) return <Loading what="leases" />;
-
   return (
     <div>
-      {error && <div className="error-banner">{error}</div>}
       {issueError && <div className="error-banner">{issueError}</div>}
 
       <div className="panel">
         <div className="chart-title" style={{ marginBottom: 4 }}>
-          Issue this customer&rsquo;s licence
+          Hand this customer their way in
         </div>
         <div className="chart-note">
-          Generates everything the customer needs at once: the pairing key their tablet is typed
-          into, and a way for their owner to sign in. Emailed when a mail server is configured, and
-          shown here either way. Issuing again replaces whatever is outstanding.
+          One thing to pass on, not two: this gives the owner a way to sign in on any tablet, and
+          the app opens every module from their first sign-in. There is no pairing key any more.
+          Emailed when a mail server is configured, and shown here either way. Issuing again
+          replaces whatever is outstanding.
         </div>
         <div className="inline-actions" style={{ marginTop: 14 }}>
           <button
             className="btn btn-primary"
-            onClick={() => issueLicence("password")}
+            onClick={() => issueHandover("password")}
             disabled={issuing}
           >
-            {issuing ? "Issuing…" : "Issue with a password"}
+            {issuing ? "Issuing…" : "Hand over a password"}
           </button>
           <button
             className="btn btn-secondary"
-            onClick={() => issueLicence("link")}
+            onClick={() => issueHandover("link")}
             disabled={issuing}
           >
-            Issue with a sign-in link
+            Hand over a sign-in link
           </button>
         </div>
         <div className="chart-note" style={{ marginTop: 10, marginBottom: 0 }}>
-          <strong>With a password</strong> is the one to use when you have no mail server: you read
-          the email address and password to the customer and they are in.{" "}
-          <strong>With a link</strong> lets them choose their own password, but somebody has to
-          receive the link.
+          <strong>A password</strong> is the one to use when you have no mail server: you read the
+          email address and password to the customer and they are in.{" "}
+          <strong>A link</strong> lets them choose their own password, but somebody has to receive
+          it.
         </div>
       </div>
 
@@ -773,7 +635,7 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
         <div className="licence-pack">
           <div className="pack-head">
             <div>
-              <div className="k">Licence issued</div>
+              <div className="k">Handover issued</div>
               <h3>{pack.display_name}</h3>
             </div>
             <span className="chip chip-active">
@@ -783,9 +645,8 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
 
           <p className="chart-note" style={{ marginTop: 0 }}>
             {pack.delivery_detail}{" "}
-            {pack.delivery !== "email" &&
-              "Send both of the following to the customer yourself."}{" "}
-            Neither can be shown again — issue a new licence if they are lost.
+            {pack.delivery !== "email" && "Send the following to the customer yourself."}{" "}
+            It cannot be shown again — issue another if it is lost.
           </p>
 
           <div className="pack-row">
@@ -834,85 +695,24 @@ function LicensingTab({ tenantId }: { tenantId: string }) {
           <div className="pack-row">
             <div className="n">2</div>
             <div>
-              <div className="t">Pair a tablet — licence key</div>
+              <div className="t">Open the app on their tablet</div>
               <div className="d">
-                Typed into the Origami app to pair one device. Case and dashes do not matter.
-                Expires {formatDate(pack.licence_key_expires_at)}.
-              </div>
-              <div className="copyline">
-                <code className="licence-key">{pack.licence_key}</code>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => copy("key", pack.licence_key)}
-                >
-                  {copied === "key" ? "Copied" : "Copy"}
-                </button>
+                Nothing to type in beyond the sign-in above. The tablet puts itself on this
+                customer&rsquo;s Devices tab the first time it is used.
               </div>
             </div>
           </div>
 
           <div className="pack-foot">
             <span>
-              <strong>Plan:</strong> {pack.plan_name ?? "not recorded yet"}
+              <strong>Subscription:</strong> {pack.plan_name ?? "not recorded yet"}
             </span>
             <span>
-              <strong>Opens:</strong>{" "}
-              {pack.licences.length > 0 ? pack.licences.join(", ") : "nothing yet"}
+              <strong>Opens:</strong> every module
             </span>
           </div>
         </div>
       )}
-
-      <div className="panel">
-        <div className="chart-title" style={{ marginBottom: 4 }}>
-          Offline license leases
-        </div>
-        <div className="chart-note">
-          Each one lets a device keep working without a connection until it expires. A lease already
-          issued cannot be recalled — revoking the device stops the next one, not this one.
-        </div>
-        {data && data.length === 0 ? (
-          <div className="empty-note">No leases have been issued to this tenant.</div>
-        ) : (
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Device</th>
-                  <th>Issued</th>
-                  <th>Expires</th>
-                  <th className="num">In</th>
-                  <th>Modules</th>
-                  <th>State</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data?.map((lease) => {
-                  const remaining = daysUntil(lease.expires_at);
-                  return (
-                    <tr key={lease.id}>
-                      <td>{lease.device_name ?? "—"}</td>
-                      <td>{formatDateTime(lease.issued_at)}</td>
-                      <td>{formatDateTime(lease.expires_at)}</td>
-                      <td className="num">{remaining >= 0 ? `${remaining}d` : "—"}</td>
-                      <td style={{ fontSize: "0.78rem", color: "var(--farmos-muted)" }}>
-                        {lease.modules.join(", ") || "—"}
-                      </td>
-                      <td>
-                        <StatusChip
-                          status={
-                            lease.revoked_at ? "REVOKED" : remaining < 0 ? "TERMINATED" : "ACTIVE"
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -937,7 +737,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
   // is the answer to the question the operator is really asking.
   const [result, setResult] = useState<SubscriptionSaveResult | null>(null);
   const [form, setForm] = useState({
-    plan_id: "",
     billing_cycle: "MONTHLY",
     status: "ONBOARDING_TRIAL",
     starts_at: "",
@@ -949,7 +748,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
     const current = subscription.data;
     if (!current) return;
     setForm({
-      plan_id: current.plan_id,
       billing_cycle: current.billing_cycle,
       status: current.status,
       starts_at: current.starts_at.slice(0, 10),
@@ -967,7 +765,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         {
           method: "PATCH",
           body: {
-            plan_id: form.plan_id,
             billing_cycle: form.billing_cycle,
             status: form.status,
             starts_at: new Date(form.starts_at || Date.now()).toISOString(),
@@ -985,12 +782,11 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
 
   if (subscription.loading || plans.loading) return <Loading what="the subscription" />;
 
-  const selectedPlan = plans.data?.find((plan) => plan.id === form.plan_id);
+  // There is one subscription and the server picks it; the console shows
+  // what it costs rather than asking which one this customer is on.
+  const plan = plans.data?.[0];
   const priceForCycle =
-    selectedPlan &&
-    (form.billing_cycle === "ANNUAL"
-      ? selectedPlan.annual_price_cents
-      : selectedPlan.monthly_price_cents);
+    plan && (form.billing_cycle === "ANNUAL" ? plan.annual_price_cents : plan.monthly_price_cents);
 
   return (
     <div>
@@ -1011,28 +807,11 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
           What this customer pays
         </div>
         <div className="chart-note">
-          Choosing a plan does two things at once: it puts this customer into the revenue figures,
-          and it switches on the modules the plan includes.
+          Recording this is what puts the customer into the revenue figures. It does not decide
+          what they may open: every customer has every module from their first sign-in.
         </div>
 
         <form onSubmit={save} style={{ marginTop: 14 }}>
-          <div className="field-row">
-            <label htmlFor="sub-plan">Plan</label>
-            <select
-              id="sub-plan"
-              required
-              value={form.plan_id}
-              onChange={(e) => setForm({ ...form, plan_id: e.target.value })}
-            >
-              <option value="">Choose a plan…</option>
-              {plans.data?.map((plan) => (
-                <option key={plan.id} value={plan.id}>
-                  {plan.name} ({plan.code})
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div className="field-row">
             <label htmlFor="sub-cycle">Billing cycle</label>
             <select
@@ -1045,15 +824,21 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
             </select>
           </div>
 
-          {selectedPlan && (
+          {plan && (
             <p className="chart-note" style={{ marginTop: -6, marginBottom: 14 }}>
               {priceForCycle === null || priceForCycle === undefined ? (
-                <strong>
-                  This plan has no {form.billing_cycle.toLowerCase()} price set, so this customer
-                  will be reported as unpriced rather than counted in revenue.
-                </strong>
+                <>
+                  <strong>
+                    Origami has no {form.billing_cycle.toLowerCase()} price set, so this customer
+                    will be reported as unpriced rather than counted in revenue.
+                  </strong>{" "}
+                  <Link href="/catalog" style={{ fontWeight: 600 }}>
+                    Set it under Subscription
+                  </Link>
+                  .
+                </>
               ) : (
-                <>Charged at {formatPrice(priceForCycle, selectedPlan.currency)} per{" "}
+                <>Charged at {formatPrice(priceForCycle, plan.currency)} per{" "}
                 {form.billing_cycle === "ANNUAL" ? "year" : "month"}.</>
               )}
             </p>
@@ -1095,27 +880,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
             />
           </div>
 
-          {selectedPlan && (
-            <div className="notice-banner" style={{ marginBottom: 16 }}>
-              {selectedPlan.module_codes.length === 0 ? (
-                <>
-                  <strong>{selectedPlan.name} includes no modules yet.</strong> Saving this records
-                  what they pay but switches nothing on. Choose the plan&rsquo;s modules under{" "}
-                  <Link href="/catalog" style={{ fontWeight: 600 }}>
-                    Plans &amp; modules
-                  </Link>
-                  .
-                </>
-              ) : (
-                <>
-                  Saving turns on the {selectedPlan.module_codes.length} module
-                  {selectedPlan.module_codes.length === 1 ? "" : "s"} in {selectedPlan.name}:{" "}
-                  {selectedPlan.module_codes.join(", ")}.
-                </>
-              )}
-            </div>
-          )}
-
           <button className="btn btn-primary" type="submit">
             {subscription.data ? "Update subscription" : "Record subscription"}
           </button>
@@ -1127,23 +891,10 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
           <div className="chart-title" style={{ marginBottom: 10 }}>
             What saving that changed
           </div>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.88rem", lineHeight: 1.7 }}>
-            <li>
-              {result.modules_granted.length > 0
-                ? `Turned on: ${result.modules_granted.join(", ")}.`
-                : "No new modules needed turning on."}
-            </li>
-            {result.modules_already_active.length > 0 && (
-              <li>Already on: {result.modules_already_active.join(", ")}.</li>
-            )}
-            {result.modules_not_in_plan.length > 0 && (
-              <li>
-                <strong>Left on, though {result.plan_code} does not include them:</strong>{" "}
-                {result.modules_not_in_plan.join(", ")}. Nothing is switched off automatically —
-                use the Modules tab if you mean to withdraw one.
-              </li>
-            )}
-          </ul>
+          <p style={{ margin: 0, fontSize: "0.88rem", lineHeight: 1.7 }}>
+            Recorded on {result.plan_code}. Nothing was switched on or off — this customer could
+            already open every module, which is what the one subscription buys.
+          </p>
         </div>
       )}
     </div>

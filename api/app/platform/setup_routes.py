@@ -1,11 +1,15 @@
 """How far this deployment has got through its own setup.
 
 A fresh Origami install is not usable until a handful of things exist:
-someone besides the bootstrap admin, a plan with a price on it, a customer,
-a subscription recording what that customer pays, and a paired tablet. Each
-of those is already visible somewhere in the console, but only to a reader
-who knows where to look and what the absence of a row means — which is
-exactly what a first-time operator does not know.
+someone besides the bootstrap admin, a price on the subscription, a
+customer, a subscription recording what that customer pays, and a tablet
+that has signed in. Each of those is already visible somewhere in the
+console, but only to a reader who knows where to look and what the absence
+of a row means — which is exactly what a first-time operator does not know.
+
+"Create a plan" used to be a step of its own. It is not one any more: the
+plan is made by the server the first time anybody asks for it, so a step
+for it would arrive permanently ticked and teach a new operator nothing.
 
 So the check is done here, against the database, rather than written down
 in a document that can quietly stop being true. Every step reports the
@@ -31,7 +35,8 @@ from app.auth.schemas import Identity
 from app.common.db import get_control_db
 from app.common.enums import PlatformRole
 from app.devices.models import Device
-from app.plans.models import Plan, Subscription
+from app.plans.models import Subscription
+from app.plans.subscription_plan import get_or_create_plan
 from app.tenants.models import PlatformRoleAssignment, Tenant
 
 router = APIRouter()
@@ -75,12 +80,11 @@ def setup_state(
     staff = db.execute(
         select(func.count(func.distinct(PlatformRoleAssignment.user_id)))
     ).scalar_one()
-    plans = db.execute(select(Plan)).scalars().all()
-    priced = [
-        plan
-        for plan in plans
-        if plan.monthly_price_cents is not None or plan.annual_price_cents is not None
-    ]
+    # get_or_create_plan rather than a query: asking what the subscription
+    # costs on a deployment where nobody has opened the Subscription screen
+    # yet should answer "not priced", not "no plans".
+    plan = get_or_create_plan(db)
+    priced = plan.monthly_price_cents is not None or plan.annual_price_cents is not None
     tenants = db.execute(select(func.count()).select_from(Tenant)).scalar_one()
     subscribed = db.execute(
         select(func.count(func.distinct(Subscription.tenant_id)))
@@ -119,16 +123,11 @@ def setup_state(
             + (" — only you" if staff == 1 else ""),
         ),
         SetupStepOut(
-            key="plans",
-            done=len(plans) >= 1,
-            detail=_plural(len(plans), "plan") + " in the catalogue",
-        ),
-        SetupStepOut(
             key="pricing",
-            done=len(priced) >= 1,
-            detail=f"{len(priced)} of {_plural(len(plans), 'plan')} priced"
-            if plans
-            else "No plans to price yet",
+            done=priced,
+            detail=f"{plan.name} is priced"
+            if priced
+            else f"{plan.name} has no price yet — revenue reads as zero until it does",
         ),
         SetupStepOut(
             key="tenant",
@@ -145,16 +144,19 @@ def setup_state(
             detail="No customers yet"
             if tenants == 0
             else (
-                "Every customer is on a plan"
+                "Every customer is subscribed"
                 if subscribed >= tenants
                 else f"{tenants - subscribed} of {_plural(tenants, 'customer')} "
-                "with no plan recorded"
+                "with no subscription recorded"
             ),
         ),
+        # Tablets are no longer paired — one appears here the first time
+        # somebody signs in on it, so this step is done by a farmer rather
+        # than by an admin.
         SetupStepOut(
             key="device",
             done=devices >= 1,
-            detail=_plural(devices, "tablet") + " paired",
+            detail=_plural(devices, "tablet") + " signed in",
         ),
     ]
 
