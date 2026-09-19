@@ -123,11 +123,15 @@ def platform_me(
     all, and a signed-in user with no staff role needs to be told that
     rather than bounced back to the login screen in a loop.
     """
-    roles = db.execute(
-        select(PlatformRoleAssignment.platform_role).where(
-            PlatformRoleAssignment.user_id == identity.user_id
+    roles = (
+        db.execute(
+            select(PlatformRoleAssignment.platform_role).where(
+                PlatformRoleAssignment.user_id == identity.user_id
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     user = db.get(UserIdentity, identity.user_id)
     return PlatformMeOut(
         user_id=identity.user_id,
@@ -155,9 +159,9 @@ def dashboard_summary(
 
     renewal_cutoff = datetime.now(timezone.utc) + timedelta(days=30)
     renewals_due = db.execute(
-        select(func.count()).select_from(Subscription).where(
-            Subscription.renews_at.is_not(None), Subscription.renews_at <= renewal_cutoff
-        )
+        select(func.count())
+        .select_from(Subscription)
+        .where(Subscription.renews_at.is_not(None), Subscription.renews_at <= renewal_cutoff)
     ).scalar_one()
     active_devices = db.execute(
         select(func.count()).select_from(Device).where(Device.status == DeviceStatus.ACTIVE)
@@ -307,11 +311,15 @@ def change_tenant_status(
 def _require_role(db: Session, identity: Identity, role: PlatformRole) -> None:
     from app.tenants.models import PlatformRoleAssignment
 
-    held = db.execute(
-        select(PlatformRoleAssignment.platform_role).where(
-            PlatformRoleAssignment.user_id == identity.user_id
+    held = (
+        db.execute(
+            select(PlatformRoleAssignment.platform_role).where(
+                PlatformRoleAssignment.user_id == identity.user_id
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if role.value not in held:
         raise AppError(ErrorCode.PLATFORM_ROLE_REQUIRED, f"{role.value} required for this action")
 
@@ -636,9 +644,7 @@ def list_entitlements(
     _identity: Identity = Depends(require_platform_role(*_ANY_PLATFORM_ROLE)),
 ) -> list[TenantEntitlement]:
     return list(
-        db.execute(select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id))
-        .scalars()
-        .all()
+        db.execute(select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id)).scalars().all()
     )
 
 
@@ -801,9 +807,7 @@ def issue_licence(
             select(TenantEntitlement.module_code)
             .where(
                 TenantEntitlement.tenant_id == tenant_id,
-                TenantEntitlement.status.in_(
-                    [EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]
-                ),
+                TenantEntitlement.status.in_([EntitlementStatus.ACTIVE, EntitlementStatus.TRIAL]),
             )
             .order_by(TenantEntitlement.module_code)
         ).scalars()
@@ -874,9 +878,7 @@ def issue_licence(
         owner_email=owner.email,
         owner_name=owner.display_name,
         activation_url=pack.invitation.url if pack.invitation else None,
-        activation_expires_at=(
-            pack.invitation.invitation.expires_at if pack.invitation else None
-        ),
+        activation_expires_at=(pack.invitation.invitation.expires_at if pack.invitation else None),
         owner_password=pack.owner_password,
         delivery=result.delivery,
         delivery_detail=result.detail,
@@ -933,6 +935,12 @@ def invite_membership(
         user_id=user.id,
         status=MembershipStatus.ACTIVE,
         tenant_role=payload.tenant_role,
+        # Derived, not defaulted. Leaving this to the column default made
+        # every tenant owner a "worker" on the tablet: full_access is
+        # computed from `role`, so the customer who had just bought the
+        # product could open no module and add no staff, while the console
+        # showed them as tenant owner on the same row.
+        role=TenantMembership.job_role_for(payload.tenant_role),
         default_farm_id=payload.default_farm_id,
     )
     db.add(membership)
@@ -954,9 +962,7 @@ def invite_membership(
     return _membership_out(user, membership)
 
 
-def _get_membership_or_404(
-    db: Session, tenant_id: uuid.UUID, membership_id: uuid.UUID
-) -> TenantMembership:
+def _get_membership_or_404(db: Session, tenant_id: uuid.UUID, membership_id: uuid.UUID) -> TenantMembership:
     """Both ids are checked together on purpose: a membership id alone
     would let one tenant's id address another tenant's row.
     """
@@ -979,9 +985,7 @@ def _latest_invitation(db: Session, membership_id: uuid.UUID) -> MembershipInvit
     ).scalar_one_or_none()
 
 
-def _invitation_status(
-    db: Session, user: UserIdentity, membership: TenantMembership
-) -> InvitationStatusOut:
+def _invitation_status(db: Session, user: UserIdentity, membership: TenantMembership) -> InvitationStatusOut:
     invitation = _latest_invitation(db, membership.id)
     if invitation is None:
         state = "no_invitation"
