@@ -1,0 +1,118 @@
+# Runs the ALREADY-BUILT production image locally, exactly as it will run
+# on Azure Web App for Containers.
+#
+# This is deliberately not docker-compose.yml. That file is the
+# development loop: it builds from source, bind-mounts ./api over /app,
+# and replaces the command with `uvicorn --reload`, so the container it
+# runs is not the container you ship. This file builds nothing, mounts no
+# source, and overrides no command — the image's own ENTRYPOINT
+# (api/docker-entrypoint.sh) runs both Alembic upgrades and generates the
+# license keypair, just like it will in Azure. If it works here it will
+# work there, modulo the database being managed rather than a sidecar.
+#
+#   docker compose -f docker-compose.local.yml up -d
+#   docker compose -f docker-compose.local.yml --profile seed run --rm seed
+#   curl localhost:8000/health
+#
+# Set ORIGAMI_IMAGE if your tag differs from the default below.
+
+services:
+  control-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: origami
+      POSTGRES_PASSWORD: origami_dev_password
+      POSTGRES_DB: origami_control
+    ports:
+      - "5433:5432"
+    volumes:
+      - local_control_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U origami -d origami_control"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tenant-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: origami
+      POSTGRES_PASSWORD: origami_dev_password
+      POSTGRES_DB: origami_tenant_shared
+    ports:
+      - "5434:5432"
+    volumes:
+      - local_tenant_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U origami -d origami_tenant_shared"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ${ORIGAMI_IMAGE:-unileb.azurecr.io/compiler:origami}
+    # Never reach out to the registry: the point is to test the image you
+    # just built locally, and a pull would either fail on auth or silently
+    # test somebody else's older tag.
+    pull_policy: never
+    environment:
+      # staging, NOT production: app/main.py refuses to boot when
+      # ENVIRONMENT=production is combined with AUTH_DEV_MODE=true, which
+      # is exactly the combination you want for a local smoke test.
+      ENVIRONMENT: staging
+      AUTH_DEV_MODE: "true"
+      APP_SECRET_KEY: local-smoke-test-only-not-a-real-secret
+      CONTROL_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@control-db:5432/origami_control
+      TENANT_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@tenant-db:5432/origami_tenant_shared
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      # One worker: uvicorn's multi-worker mode forks a process per
+      # worker, and a resource-starved Docker VM (the one that couldn't
+      # start a thread during the build) will fail that fork at runtime
+      # too. Raise it once the container is confirmed healthy.
+      UVICORN_WORKERS: "1"
+      # Left at the image defaults: no volume for the license keypair, so
+      # the entrypoint writes a throwaway one to /app/infrastructure/keys
+      # inside the container on each recreate. Fine locally — only device
+      # activation reads it. On Azure it MUST persist, see
+      # docs/AZURE_DEPLOYMENT.md.
+    ports:
+      - "8000:8000"
+    depends_on:
+      control-db:
+        condition: service_healthy
+      tenant-db:
+        condition: service_healthy
+
+  # One-shot demo data. Not part of `up` — run it explicitly:
+  #   docker compose -f docker-compose.local.yml --profile seed run --rm seed
+  #
+  # scripts/ lives outside the image's build context (./api), so it is
+  # bind-mounted rather than baked in. Overriding `entrypoint` skips
+  # docker-entrypoint.sh, so this does not re-run the migrations the api
+  # service has already applied. PYTHONPATH=/app is what lets a script
+  # outside /app import the `app` package — same as the
+  # `PYTHONPATH=. python ../scripts/seed.py` in the script's own docstring.
+  seed:
+    image: ${ORIGAMI_IMAGE:-unileb.azurecr.io/compiler:origami}
+    pull_policy: never
+    profiles: ["seed"]
+    environment:
+      ENVIRONMENT: staging
+      AUTH_DEV_MODE: "true"
+      APP_SECRET_KEY: local-smoke-test-only-not-a-real-secret
+      CONTROL_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@control-db:5432/origami_control
+      TENANT_DATABASE_URL: postgresql+psycopg://origami:origami_dev_password@tenant-db:5432/origami_tenant_shared
+      PYTHONPATH: /app
+    volumes:
+      - ./scripts:/seed:ro
+    working_dir: /app
+    entrypoint: ["python", "/seed/seed.py"]
+    depends_on:
+      control-db:
+        condition: service_healthy
+      tenant-db:
+        condition: service_healthy
+
+volumes:
+  local_control_db:
+  local_tenant_db:
