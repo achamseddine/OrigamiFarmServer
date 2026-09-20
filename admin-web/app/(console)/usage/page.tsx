@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { StatusChip } from "@/components/StatusChip";
-import { ErrorBanner, Loading, PageHeader, RankedBars, formatDateTime, useResource } from "@/lib/ui";
+import { Icon } from "@/components/Icon";
+import { ErrorBanner, Loading, PageHeader, PanelHead, RankedBars, formatDateTime, useResource } from "@/lib/ui";
 import { UsageList } from "@/lib/types";
 
 export default function UsagePage() {
@@ -12,6 +13,8 @@ export default function UsagePage() {
   return (
     <div>
       <PageHeader
+        icon="package"
+        tone="purple"
         title="Usage"
         subtitle="What each farm actually holds — counted from their own records, not estimated."
       />
@@ -22,8 +25,12 @@ export default function UsagePage() {
         <>
           {data.tenants_measured < data.tenants_total && (
             <div className="notice-banner">
-              Showing the {data.tenants_measured} most recent tenants of {data.tenants_total}. Each
-              one is counted in its own isolated session, so this view is capped rather than slow.
+              <Icon name="eye" size={18} />
+              <div>
+                Showing the {data.tenants_measured} most recent tenants of {data.tenants_total}.
+                Each one is counted in its own isolated session, so this view is capped rather
+                than slow.
+              </div>
             </div>
           )}
 
@@ -40,9 +47,11 @@ export default function UsagePage() {
           </div>
 
           <div className="panel">
-            <div className="chart-title" style={{ marginBottom: 12 }}>
-              Per-tenant detail
-            </div>
+            <PanelHead
+              icon="barn"
+              title="Per-tenant detail"
+              note="Select a row to open that tenant."
+            />
             <div className="table-scroll">
               <table className="data-table">
                 <thead>

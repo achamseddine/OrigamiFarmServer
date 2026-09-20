@@ -1,4 +1,5 @@
 "use client";
+import { Icon } from "@/components/Icon";
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
@@ -6,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { TenantListResponse } from "@/lib/types";
 import { StatusChip } from "@/components/StatusChip";
+import { PageHeader } from "@/lib/ui";
 
 const PAGE_SIZE = 20;
 
@@ -53,15 +55,17 @@ function TenantsList() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <h1 className="page-title">Tenants</h1>
-          <p className="page-subtitle">Every customer company, searchable and filterable.</p>
-        </div>
-        <Link href="/tenants/new" className="btn btn-primary">
-          + Create Tenant
-        </Link>
-      </div>
+      <PageHeader
+        icon="barn"
+        title="Tenants"
+        subtitle="Every customer company, searchable and filterable."
+        actions={
+          <Link href="/tenants/new" className="btn btn-primary btn-fold">
+            <Icon name="plus" size={20} />
+            Create tenant
+          </Link>
+        }
+      />
 
       {error && <div className="error-banner">{error}</div>}
 
@@ -75,7 +79,11 @@ function TenantsList() {
           }}
           style={{ width: 280 }}
         />
-        <button className="btn btn-secondary" onClick={() => updateParams({ q: searchInput, offset: "0" })}>
+        <button
+          className="btn btn-secondary"
+          onClick={() => updateParams({ q: searchInput, offset: "0" })}
+        >
+          <Icon name="search" size={18} />
           Search
         </button>
         <select value={status} onChange={(e) => updateParams({ status: e.target.value, offset: "0" })}>

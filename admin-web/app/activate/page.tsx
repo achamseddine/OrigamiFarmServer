@@ -28,16 +28,7 @@ function Forward() {
 
 export default function ActivateRedirectPage() {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "var(--farmos-stone)",
-        color: "var(--farmos-muted)",
-        fontSize: "0.9rem",
-      }}
-    >
+    <div className="entry-solo" style={{ color: "var(--farmos-muted)", fontSize: "0.9rem" }}>
       {/* useSearchParams needs a Suspense boundary or the static export
           fails to prerender this route. */}
       <Suspense fallback={<span>Loading…</span>}>

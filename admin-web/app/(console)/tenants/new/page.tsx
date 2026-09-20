@@ -1,10 +1,11 @@
 "use client";
+import { Icon } from "@/components/Icon";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
 import { LicencePack, Plan, Tenant } from "@/lib/types";
-import { formatPrice } from "@/lib/ui";
+import { PageHeader, formatPrice } from "@/lib/ui";
 
 /** Create a customer, end to end.
  *
@@ -134,16 +135,20 @@ export default function CreateTenantWizard() {
 
   return (
     <div>
-      <h1 className="page-title">Create a customer</h1>
-      <p className="page-subtitle">
-        Every step here does something real. By the last one you will have what the customer needs
-        to start working.
-      </p>
+      <PageHeader
+        icon="plus"
+        title="Create a customer"
+        subtitle="Every step here does something real. By the last one you will have what the customer needs to start working."
+      />
 
       <div className="wizard-steps">
         {STEPS.map((label, i) => (
-          <span key={label} className={`wizard-step ${i === step ? "active" : i < step ? "done" : ""}`}>
-            {i + 1}. {label}
+          <span
+            key={label}
+            className={`wizard-step ${i === step ? "active" : i < step ? "done" : ""}`}
+          >
+            {i < step ? <Icon name="check" size={16} /> : <span>{i + 1}.</span>}
+            {label}
           </span>
         ))}
       </div>

@@ -1,4 +1,5 @@
 "use client";
+import { Icon } from "@/components/Icon";
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
@@ -63,6 +64,8 @@ export default function StaffPage() {
   return (
     <div>
       <PageHeader
+        icon="people"
+        tone="purple"
         title="Staff & access"
         subtitle="Who can reach this console, and what each of them is allowed to do."
       />
@@ -73,7 +76,8 @@ export default function StaffPage() {
       {isSuperAdmin && (
         <div className="panel">
           {!creating ? (
-            <button className="btn btn-primary" onClick={() => setCreating(true)}>
+            <button className="btn btn-primary btn-fold" onClick={() => setCreating(true)}>
+              <Icon name="plus" size={20} />
               Add a staff account
             </button>
           ) : (

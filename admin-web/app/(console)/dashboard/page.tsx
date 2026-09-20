@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { StatusChip } from "@/components/StatusChip";
+import { Icon } from "@/components/Icon";
 import {
   ErrorBanner,
   Loading,
   PageHeader,
+  PanelHead,
   StatTile,
   TimeBars,
   formatDate,
@@ -25,18 +27,34 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader
+        icon="chart-line"
         title="Platform Overview"
         subtitle="Live state of the control plane — every figure is counted from the database at load."
+        actions={
+          <>
+            <Link href="/tenants/new" className="btn btn-primary btn-fold">
+              <Icon name="plus" size={20} />
+              Create tenant
+            </Link>
+            <Link href="/audit" className="btn btn-secondary">
+              <Icon name="report" size={20} />
+              Audit log
+            </Link>
+          </>
+        }
       />
       <ErrorBanner message={error} />
 
       {outstanding.length > 0 && (
         <div className="notice-banner">
-          {outstanding.length} setup {outstanding.length === 1 ? "step is" : "steps are"} still
-          outstanding — next up, {SETUP_STEPS[outstanding[0].key].title.toLowerCase()}.{" "}
-          <Link href="/guide" style={{ fontWeight: 600 }}>
-            Open Getting started
-          </Link>
+          <Icon name="warning" size={18} />
+          <div>
+            {outstanding.length} setup {outstanding.length === 1 ? "step is" : "steps are"} still
+            outstanding — next up, {SETUP_STEPS[outstanding[0].key].title.toLowerCase()}.{" "}
+            <Link href="/guide" style={{ fontWeight: 600 }}>
+              Open Getting started
+            </Link>
+          </div>
         </div>
       )}
 
@@ -45,11 +63,41 @@ export default function DashboardPage() {
       {data && (
         <>
           <div className="card-grid">
-            <StatTile value={data.tenants_total} label="Tenants" href="/tenants" />
-            <StatTile value={data.devices_total} label="Registered devices" />
-            <StatTile value={data.user_count} label="User accounts" />
-            <StatTile value={data.staff_count} label="Platform staff" href="/staff" />
-            <StatTile value={data.renewals_due_30d} label="Renewals due (30d)" />
+            <StatTile
+              value={data.tenants_total}
+              label="Tenants"
+              icon="barn"
+              href="/tenants"
+              foot="Customer companies"
+            />
+            <StatTile
+              value={data.devices_total}
+              label="Registered devices"
+              icon="qr"
+              tone="sky"
+              foot="Tablets signed in"
+            />
+            <StatTile
+              value={data.user_count}
+              label="User accounts"
+              icon="people"
+              tone="purple"
+              foot="Across every farm"
+            />
+            <StatTile
+              value={data.staff_count}
+              label="Platform staff"
+              icon="shield"
+              href="/staff"
+              foot="Can reach this console"
+            />
+            <StatTile
+              value={data.renewals_due_30d}
+              label="Renewals due (30d)"
+              icon="calendar"
+              tone={data.renewals_due_30d > 0 ? "gold" : "neutral"}
+              foot="Next thirty days"
+            />
           </div>
 
           <div className="panel">
@@ -66,9 +114,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="panel">
-            <div className="chart-title" style={{ marginBottom: 12 }}>
-              Tenants by status
-            </div>
+            <PanelHead
+              icon="barn"
+              title="Tenants by status"
+              note="Where every customer company stands today."
+            />
             <div className="table-scroll">
               <table className="data-table">
                 <thead>
@@ -96,9 +146,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="panel">
-            <div className="chart-title" style={{ marginBottom: 12 }}>
-              Devices by status
-            </div>
+            <PanelHead icon="qr" tone="sky" title="Devices by status" />
             <div className="table-scroll">
               <table className="data-table">
                 <thead>

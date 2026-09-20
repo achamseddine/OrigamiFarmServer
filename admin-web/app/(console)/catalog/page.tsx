@@ -82,6 +82,7 @@ export default function CatalogPage() {
   return (
     <div>
       <PageHeader
+        icon="cart"
         title="Subscription &amp; modules"
         subtitle="One price for the whole product. This is what Origami costs — nothing here is about one particular customer."
       />
