@@ -72,7 +72,7 @@ export default function LoginPage() {
 
       <section className="entry-panel">
         <form onSubmit={handleSubmit} className="entry-card">
-          <BrandLogo height={46} className="brand" />
+          <BrandLogo size={46} className="brand" />
 
           <h1>
             <Icon name="sun" size={26} />

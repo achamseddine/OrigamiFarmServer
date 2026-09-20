@@ -35,7 +35,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="entry-solo">
       <div className="panel">
-        <BrandLogo height={42} />
+        <BrandLogo size={42} />
         <div style={{ marginTop: 22 }}>{children}</div>
       </div>
     </div>

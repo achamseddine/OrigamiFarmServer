@@ -47,7 +47,7 @@
   --shadow-lift: 0 4px 10px rgba(13, 23, 19, 0.07), 0 16px 36px rgba(13, 23, 19, 0.1);
   --shadow-sheet: 0 24px 60px rgba(13, 23, 19, 0.24);
   --sidebar-width: 248px;
-  --appbar-height: 78px;
+  --appbar-height: 72px;
 
   /* Kept as aliases so any inline style written against the old names
      still lands inside the new palette rather than off it. */
@@ -127,17 +127,16 @@ button {
 
 .sidebar-brand {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   padding: 0 6px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   text-decoration: none;
 }
 
-.sidebar-brand .mark {
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
+.sidebar-brand .brand-lockup .words {
+  color: var(--farmos-white);
 }
 
 .sidebar-brand .s {
@@ -231,10 +230,27 @@ button {
   gap: 10px;
 }
 
-.appbar-logo {
-  height: 46px;
-  width: auto;
+/* Mark plus name. The name is UI type, not artwork: the logo itself is
+   the pinwheel and carries no wordmark. */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   flex-shrink: 0;
+  text-decoration: none;
+}
+
+.brand-lockup .words {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--farmos-cedar-dark);
+  white-space: nowrap;
+}
+
+.brand-lockup .words .alt {
+  color: var(--farmos-gold);
+  margin-inline-start: 0.3em;
 }
 
 /* The sync pill: platform state, said in words and repeated in colour —
@@ -1695,8 +1711,6 @@ a.flow-node:hover {
 }
 
 .entry-card .brand {
-  height: 46px;
-  width: auto;
   margin-bottom: 28px;
 }
 

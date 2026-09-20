@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { ServerPill, VersionStamp } from "@/lib/version";
-import { BrandLogo, BrandMark } from "@/components/Brand";
+import { BrandLogo } from "@/components/Brand";
 import { Icon, IconName } from "@/components/Icon";
 import { ProfileSheet } from "@/components/ProfileSheet";
 
@@ -73,7 +73,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     return (
       <div className="entry-solo">
         <div className="panel" style={{ textAlign: "center" }}>
-          <BrandLogo height={40} />
+          <BrandLogo size={44} />
           <p className="page-subtitle" style={{ marginTop: 12 }}>
             Loading the console…
           </p>
@@ -88,7 +88,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     return (
       <div className="entry-solo">
         <div className="panel">
-          <BrandLogo height={40} />
+          <BrandLogo size={44} />
           <h1 className="page-title" style={{ marginTop: 12 }}>
             No platform access
           </h1>
@@ -119,10 +119,8 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        {/* The mark alone here: the wordmark belongs on the paper of the
-            top bar, not in dark-green ink on a dark-green rail. */}
         <Link href="/dashboard" className="sidebar-brand" aria-label="Origami FarmOS — console">
-          <BrandMark size={36} className="mark" />
+          <BrandLogo size={34} />
           <span className="s">Server console</span>
         </Link>
 
@@ -155,9 +153,10 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
 
       <div style={{ minWidth: 0 }}>
         <header className="appbar">
-          <BrandLogo height={46} className="appbar-logo" />
           <div className="appbar-cluster">
             <ServerPill />
+          </div>
+          <div className="appbar-cluster">
             <Link href="/audit" className="icon-btn" aria-label="Audit log">
               <Icon name="bell" size={22} />
             </Link>

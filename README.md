@@ -175,11 +175,16 @@ palette, the 18px card radius, the 48px minimum touch target — are copied verb
 `:root` block of `admin-web/app/globals.css`, so a token change starts there and nowhere else.
 
 ```
-admin-web/public/brand/        logo and folded mark (SVG + PNG)
+admin-web/public/brand/        the folded pinwheel logo, at 1x and 2x
 admin-web/public/backgrounds/  reusable Bekaa Valley vectors, text-free
-admin-web/public/icons/        app icons for the favicon and web manifest
+admin-web/public/icons/        the same artwork as favicon and web-manifest icons
 admin-web/components/Icon.tsx  the line-icon set, inlined so icons take currentColor
 ```
+
+The logo is the pinwheel, and it carries no wordmark of its own; `components/Brand.tsx` sets the
+name beside it in the UI face rather than shipping a second piece of artwork. It is one image at
+every size, so the console looks like the product in a browser tab and on a home screen as well
+as in its own chrome.
 
 Two rules from the package's component spec are load-bearing and easy to undo by accident: a
 status tint belongs on a pale roundel or chip and never washed across a whole card, and status
