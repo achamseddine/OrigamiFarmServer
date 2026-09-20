@@ -14,7 +14,7 @@ from app.common.db import get_control_db
 from app.farmos.deps import AccessContext, get_access_context
 from app.farmos.permissions import MODULE_CODES, full_access_grid
 from app.farmos.schemas import ModuleCatalogEntry, MyAccessOut
-from app.plans.models import ModuleCatalog, TenantEntitlement
+from app.plans.models import ModuleCatalog
 
 router = APIRouter()
 
@@ -40,19 +40,9 @@ def module_catalog(
     for it is active. Any signed-in user may read it — it describes the
     product, not this farm's data.
     """
-    rows = db.execute(
-        select(ModuleCatalog).where(ModuleCatalog.module_code.in_(MODULE_CODES))
-    ).scalars().all()
-
-    licensed_codes = {
-        row.module_code
-        for row in db.execute(
-            select(TenantEntitlement).where(
-                TenantEntitlement.tenant_id == _access.tenant_id,
-                TenantEntitlement.status.in_(["ACTIVE", "TRIAL"]),
-            )
-        ).scalars()
-    }
+    rows = (
+        db.execute(select(ModuleCatalog).where(ModuleCatalog.module_code.in_(MODULE_CODES))).scalars().all()
+    )
 
     return [
         ModuleCatalogEntry(
@@ -61,7 +51,16 @@ def module_catalog(
             label_ar=row.name_ar,
             group=row.group,
             license_code=row.license_code,
-            licensed_active=(row.license_code is None) or (row.license_code in licensed_codes),
+            # Always. Origami is sold as one subscription covering the
+            # whole product, so there is no such thing as a customer who
+            # has paid and is missing a module — and a per-module check
+            # here could only ever produce a farm that cannot reach
+            # something it is entitled to.
+            #
+            # license_code is still reported: the app shows it, and it
+            # stays meaningful as a description of which part of the
+            # product a screen belongs to.
+            licensed_active=True,
         )
         for row in rows
     ]

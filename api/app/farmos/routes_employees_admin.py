@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
 from app.auth.models import UserIdentity
+from app.auth.passwords import hash_password
 from app.common.db import get_control_db
 from app.common.enums import ActorType, MembershipStatus, TenantRole
 from app.farmos.deps import AccessContext, is_full_access_role, require_permission
@@ -27,7 +28,6 @@ from app.farmos.schemas import (
     ModulePermissionOut,
     PermissionSet,
 )
-from app.farmos.security import hash_password
 from app.tenants.models import MembershipModulePermission, TenantMembership
 
 router = APIRouter()

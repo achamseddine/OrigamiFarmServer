@@ -38,24 +38,81 @@ ACR_NAME=origamiacr$RANDOM   # must be globally unique; note whatever this print
 az acr create --resource-group "$RG" --name "$ACR_NAME" --sku Basic
 ```
 
-Build and push with Docker Desktop. **The build context is `./api`, not `.`** — `api/Dockerfile`'s
-`COPY requirements.txt .` expects `requirements.txt` at the context root, and that file lives at
-`api/requirements.txt`, not the repo root:
+Build and push with Docker Desktop. **The build context is the repository root**, even though the
+Dockerfile lives in `api/` — the image contains the admin console as well as the API, so the build
+needs `admin-web/` and `scripts/` alongside `api/`:
 
 ```bash
 az acr login --name "$ACR_NAME"
 
-docker build -f ./api/Dockerfile -t "$ACR_NAME.azurecr.io/origami-api:latest" ./api
+./scripts/build-image.sh "$ACR_NAME.azurecr.io/origami-api:latest"
 docker push "$ACR_NAME.azurecr.io/origami-api:latest"
 ```
 
-If Docker Desktop is on Apple Silicon (M-series Mac), it builds `arm64` by default — Azure App
-Service Linux containers run on `amd64`, and a plain `arm64` push there fails at container start
-(exec-format error), not at build/push time, so it's a confusing one to hit blind. Add
-`--platform linux/amd64` to the `docker build` above if that's your machine.
+Use the script rather than `docker build` directly. It fills in the version stamp from the commit
+you are on and forces `--platform linux/amd64`, and both matter:
+
+- **Without the stamp**, `/health` reports `version: "unknown"` and you are back to not knowing
+  whether a deployment landed — the thing the stamp exists to tell you.
+- **Without the platform flag on Apple Silicon (M-series Mac)**, Docker builds `arm64`, and Azure
+  App Service Linux containers run `amd64`. That mismatch fails at *container start* with an
+  exec-format error, not at build or push, so it is a confusing one to hit blind.
+
+The equivalent by hand, if you would rather not use the script:
+
+```bash
+docker build --platform linux/amd64 -f api/Dockerfile \
+  --build-arg APP_VERSION="$(git rev-parse --short HEAD)" \
+  --build-arg APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t "$ACR_NAME.azurecr.io/origami-api:latest" .
+```
 
 (Cloud-build alternative, no local Docker needed: `az acr build --registry "$ACR_NAME" --image
-origami-api:latest ./api` — uploads `./api` and builds it server-side.)
+origami-api:latest --file api/Dockerfile .` — uploads the repository and builds it server-side.)
+
+### Or: take the image GitHub already built
+
+You don't have to build it at all. `.github/workflows/publish-image.yml` builds this same
+Dockerfile on every push to `main` or a `claude/**` branch, smoke-tests that the image starts and
+answers `/health`, and publishes it two ways. It needs no secrets — the token GitHub issues to the
+run is enough to push to that repository's own container registry.
+
+Images land at `ghcr.io/achamseddine/origamifarmserver/origami-api`, tagged three ways:
+`sha-<commit>` (names exactly one build — **deploy with this one**), the branch name, and `latest`.
+
+**Route A — registry to registry, nothing downloaded.** Azure pulls it straight across:
+
+```bash
+# A GitHub personal access token with the read:packages scope.
+# Skip --username/--password entirely if you have made the package public.
+az acr import \
+  --name "$ACR_NAME" \
+  --source ghcr.io/achamseddine/origamifarmserver/origami-api:latest \
+  --image origami-api:latest \
+  --username <your-github-username> \
+  --password <github-pat-with-read:packages>
+```
+
+**Route B — download the file, push it yourself.** Every run also uploads the image as a gzipped
+tarball, so you can take it from the browser without logging in to any registry. Open the run under
+the repository's **Actions** tab, download the `origami-api-image-sha-<commit>` artifact, then:
+
+```bash
+unzip origami-api-image-sha-*.zip        # GitHub wraps every artifact in a zip
+docker load  -i origami-api-sha-*.tar.gz
+docker tag   ghcr.io/achamseddine/origamifarmserver/origami-api:sha-<commit> \
+             "$ACR_NAME.azurecr.io/origami-api:latest"
+az acr login --name "$ACR_NAME"
+docker push  "$ACR_NAME.azurecr.io/origami-api:latest"
+```
+
+The runner is `amd64`, so neither route can hit the Apple Silicon architecture trap above.
+
+A newly published GHCR package is **private**, and it is a separate permission from the repository
+itself — someone with repository access still cannot pull it until either the package is made
+public (its page → Package settings → Change visibility) or they hold a token with `read:packages`.
+Route B sidesteps that question entirely: the artifact is downloadable by anyone who can open the
+Actions run.
 
 ### If the build fails
 
@@ -86,13 +143,34 @@ container databases live — it can wipe another project's local Postgres
 data. Or raise the ceiling instead of clearing it: Docker Desktop →
 Settings → Resources → Virtual disk limit.
 
-**`RuntimeError: can't start new thread`**, or a step failing because a
-subprocess/shell couldn't start (e.g. `E: Sub-process returned an error
-code` from a hook that ends in `|| true`, which can't fail any other way).
-These mean the Docker VM can't create threads or processes — resource
-starvation, not a bug in the step that reported it. The Dockerfile avoids
-the known trigger (`pip --progress-bar off`), but the VM still needs fixing
-or it will resurface at runtime, where uvicorn forks its workers:
+**`RuntimeError: can't start new thread`**, or
+**`Assertion failed: (0) == (uv_thread_create(...))`** with `npm ci` exiting
+134, or a step failing because a subprocess/shell couldn't start (e.g. `E:
+Sub-process returned an error code` from a hook that ends in `|| true`,
+which can't fail any other way). These all mean the same thing: the Docker
+VM can't create threads or processes — resource starvation, not a bug in
+the step that reported it. The Node variant is the loudest because Node
+builds a V8 worker pool before running any code at all. The Dockerfile
+avoids both known triggers (`pip --progress-bar off`, and
+`NODE_OPTIONS=--v8-pool-size=0` in the console stage), but the VM still
+needs fixing or it will resurface at runtime, where uvicorn forks its
+workers:
+
+First separate the two causes, because only one of them is yours to fix:
+
+```bash
+docker run --rm node:20-bullseye-slim node -e "console.log('ok')"
+```
+
+If that prints `ok`, the VM is merely starved — raise its resources below.
+If it aborts with the same `uv_thread_create` assertion, the daemon is
+refusing thread creation outright and no change to this repo can help:
+Docker Engine older than 20.10.10 ships a seccomp profile that rejects the
+`clone3()` syscall newer glibc uses for threads. Update Docker Desktop, or
+build in Azure with `az acr build` (below) and skip the local daemon
+entirely. `docker version --format '{{.Server.Version}}'` tells you which
+engine you are on; "Sending build context to Docker daemon" instead of
+`[+] Building` is another sign it is an old one.
 
 - Docker Desktop → Settings → Resources: raise **Memory** (4 GB+) and CPUs.
 - Restart Docker Desktop — the VM accumulates pressure over a long session.
@@ -111,7 +189,7 @@ older Dockerfile revision would fail here.
 it entirely — same image, no local daemon involved:
 
 ```bash
-az acr build --registry "$ACR_NAME" --image origami-api:latest ./api
+az acr build --registry "$ACR_NAME" --image origami-api:latest --file api/Dockerfile .
 ```
 
 ## 1b. Run the image locally first (optional, ~2 minutes)
@@ -190,7 +268,7 @@ Two intentional local-only differences from the Azure deployment:
 ## 2. Two PostgreSQL databases
 
 The app is architected around two logically separate databases — control plane (tenants,
-entitlements, devices, audit) and tenant/farm data (see `ARCHITECTURE.md`, `TENANCY.md`). For a
+subscriptions, devices, audit) and tenant/farm data (see `ARCHITECTURE.md`, `TENANCY.md`). For a
 test deployment, one Flexible Server hosting both databases is enough; split them onto separate
 servers later if you need to test that isolation specifically.
 
@@ -241,8 +319,46 @@ means nothing about registry access lives in plaintext config.
 
 ## 4. Application settings
 
+### Checking which build is live
+
+Before anything else, this answers "did my deploy actually land?" without a login:
+
+```bash
+curl https://<your-app>.azurewebsites.net/health
+# {"status":"ok","version":"sha-72ed295","built_at":"2026-09-18T07:59:41Z"}
+```
+
+`version` is the commit the image was built from — the same string as its image tag, so it
+compares directly against what you deployed. The console shows it too, on the login page and at
+the bottom of the sidebar, read live from this endpoint rather than compiled into the page, so a
+cached console cannot show you a version that isn't running. An image built outside the workflow
+reports `unknown`; a checkout reports `dev`.
+
+### Debug mode
+
+`LOG_LEVEL=DEBUG` logs every request with its method, path, status and `Origin` — and logs a
+CORS refusal by name, which is otherwise completely silent (the browser blocks the request, and
+the server records nothing):
+
+```bash
+az webapp config appsettings set -g "$RG" -n "$APP" --settings LOG_LEVEL=DEBUG
+```
+
+```json
+{"method":"OPTIONS","path":"/api/v1/auth/login","status":400,
+ "origin":"https://tablet.example","cors":"REFUSED — origin not in CORS_ALLOWED_ORIGINS",
+ "cors_allowed":["https://…azurewebsites.net","http://localhost:3000"],
+ "event":"cors_origin_refused","level":"warning"}
+```
+
+Bodies and headers are never logged, so turning this on cannot leak a password or a bearer token
+into the log stream. Set it back to `INFO` when you're done — it's noisy, one line per request.
+
+### The rest
+
 Everything the app reads is an environment variable (`app/config/settings.py`) — nothing is
-baked into the image. Generate a real secret rather than using the placeholder below:
+baked into the image except `APP_VERSION`. Generate a real secret rather than using the
+placeholder below:
 
 ```bash
 APP_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
@@ -282,26 +398,15 @@ Notes on specific settings:
   handler, not at startup, so leaving them at their harmless defaults doesn't block anything else
   from working. Add real ones when file upload or a background worker actually need to run.
 
-## 5. License lease keys (device activation / offline license testing only)
+## 5. (Removed — license lease keys)
 
-`app/devices/lease.py` reads `LICENSE_LEASE_PRIVATE_KEY_PATH`/`..._PUBLIC_KEY_PATH` — by default
-`./infrastructure/keys/license_lease_*.pem`, resolved inside the container at `/app/infrastructure/
-keys/`. `api/docker-entrypoint.sh` generates a keypair there automatically on first boot if none
-exists (verified: ran this exact generation code locally and it produces a valid keypair with the
-private key at `0600`). Nothing else in the app touches this path at startup, so this never blocks
-the API from serving traffic either way.
+This step used to explain where to persist the RS256 keypair that signed
+offline licence leases. Device licences are gone: Origami is one
+subscription covering the whole product, tablets register themselves by
+signing in, and nothing signs a lease. There is no keypair to persist, no
+`LICENSE_LEASE_*` app setting to configure, and no path mapping to create.
 
-**For this test deployment, that's deliberately left as container-local, ephemeral storage** — a
-restart or redeploy generates a fresh keypair, which invalidates any device leases issued against
-the old one. That's fine as long as you're not yet testing device activation/offline licensing
-specifically. When you are, mount real persistent storage (Azure Files, via the Web App's **Path
-mappings** configuration) at a path outside `/app`, point `LICENSE_LEASE_PRIVATE_KEY_PATH` /
-`..._PUBLIC_KEY_PATH` at it as app settings, and the same auto-generate-if-missing entrypoint logic
-keeps working — it'll just generate the keypair once and it'll actually survive restarts.
-
-(Don't use Azure's own `/home` auto-persistence trick for this: `api/Dockerfile` deliberately keeps
-everything the app needs at `/opt` and `/app`, not under `/home`, specifically because that
-persistent mount can shadow whatever was baked into the image there.)
+The step number is kept so the ones below keep their numbers.
 
 ## 6. Restart, migrate, seed, smoke-test
 

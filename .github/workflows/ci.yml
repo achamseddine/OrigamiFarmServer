@@ -50,9 +50,6 @@ jobs:
         working-directory: api
         run: pip install -r requirements-dev.txt
 
-      - name: Generate license lease keys
-        run: python scripts/generate_license_keys.py
-
       - name: Lint (ruff)
         working-directory: api
         run: ruff check .

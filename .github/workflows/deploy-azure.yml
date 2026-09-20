@@ -41,7 +41,8 @@ jobs:
           az acr build \
             --registry "${{ secrets.ACR_NAME }}" \
             --image "origami-api:${{ inputs.image_tag }}" \
-            ./api
+            --file api/Dockerfile \
+            .
 
       - name: Point the Web App at the new image
         run: |

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.common.enums import (
     EntitlementStatus,
@@ -12,6 +13,24 @@ from app.common.enums import (
     TenantRole,
     TenantStatus,
 )
+
+
+class PlatformMeOut(BaseModel):
+    """Who the console is signed in as, and what platform access they hold.
+
+    platform_roles is empty for a perfectly valid identity that simply has
+    no Origami staff role — the console shows that as "no platform access"
+    rather than letting every subsequent call fail with a bare 403.
+    """
+
+    user_id: uuid.UUID
+    email: str
+    display_name: str
+    platform_roles: list[str]
+    # True while the password in force is one somebody else typed — the
+    # admin who created the account, or one who reset it. False for an
+    # identity that signs in through OIDC and has no password at all.
+    password_set_by_someone_else: bool = False
 
 
 class TenantCreateRequest(BaseModel):
@@ -76,10 +95,13 @@ class FarmOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class PlanCreateRequest(BaseModel):
-    code: str
-    name: str
-    limits: dict = {}
+class PlanUpdateRequest(BaseModel):
+    name: str | None = None
+    status: str | None = None
+    limits: dict | None = None
+    currency: str | None = None
+    monthly_price_cents: int | None = Field(default=None, ge=0)
+    annual_price_cents: int | None = Field(default=None, ge=0)
 
 
 class PlanOut(BaseModel):
@@ -88,8 +110,96 @@ class PlanOut(BaseModel):
     name: str
     status: str
     limits: dict
+    currency: str
+    monthly_price_cents: int | None
+    annual_price_cents: int | None
 
     model_config = {"from_attributes": True}
+
+
+class LicenceOut(BaseModel):
+    """One area of the product, and the screens that belong to it.
+
+    This used to be a list of things that could be bought separately, and
+    the console built a plan picker from it. Nothing is bought separately
+    any more, so it describes rather than gates: it is how "Milk
+    Production" is known to belong with MILK, which is what both the
+    console's module table and the tablet's catalog show.
+    """
+
+    license_code: str
+    name: str
+    # Tablet module codes in this area, with their display names.
+    unlocks: list[str]
+    unlocks_labels: list[str]
+
+
+class MemberPasswordRequest(BaseModel):
+    """Set a tenant user's password directly, instead of sending a link.
+
+    The no-email answer: an admin sets it and reads it to the customer.
+    Leave new_password unset and one is generated that can be dictated
+    over the phone without spelling out ambiguous characters.
+    """
+
+    new_password: str | None = Field(default=None, min_length=8)
+
+
+class MemberPasswordOut(BaseModel):
+    email: str
+    display_name: str
+    # Returned once. Whether it was generated here or supplied, the admin
+    # needs to see what to tell the customer.
+    password: str
+    # Always true straight after this: the holder did not choose it, so the
+    # console keeps saying so until they replace it themselves.
+    must_change: bool
+
+
+class LicenceIssueRequest(BaseModel):
+    """How the owner is given their way in."""
+
+    # "link" emails or shows a one-time sign-in link; "password" sets one
+    # directly and shows it, which is what a deployment with no mail
+    # server actually needs.
+    credential: Literal["link", "password"] = "link"
+
+    # A week by default: a customer who gets the email on Friday should
+    # still be able to act on it when they are next at the farm office.
+    invitation_ttl_hours: int = Field(default=168, ge=1, le=720)
+    send_email: bool = True
+
+    # Accepted and ignored, so a console built before device licences
+    # were removed keeps working through a deploy rather than failing
+    # validation on fields the server stopped wanting.
+    key_ttl_hours: int | None = None
+    farm_id: uuid.UUID | None = None
+
+
+class LicenceIssueOut(BaseModel):
+    """The handover, returned exactly once.
+
+    One credential, not two: there is no pairing key, because a tablet
+    carries no licence. It is not stored in a form that can be read back,
+    so a handover that is lost is reissued rather than looked up.
+    """
+
+    tenant_id: uuid.UUID
+    company_code: str
+    display_name: str
+    plan_code: str | None
+    plan_name: str | None
+
+    owner_email: str
+    owner_name: str
+    # Exactly one of these is filled in, depending on `credential`. A pack
+    # carrying both would be two ways in where one was asked for.
+    activation_url: str | None = None
+    activation_expires_at: datetime | None = None
+    owner_password: str | None = None
+
+    delivery: str
+    delivery_detail: str
 
 
 class ModuleCreateRequest(BaseModel):
@@ -113,11 +223,22 @@ class ModuleOut(BaseModel):
 
 
 class SubscriptionUpsertRequest(BaseModel):
-    plan_id: uuid.UUID
     billing_cycle: str = "MONTHLY"
     starts_at: datetime
     renews_at: datetime | None = None
     grace_until: datetime | None = None
+    # Without this a subscription was stuck on the model default forever:
+    # nothing in the codebase assigned it, so every customer stayed an
+    # onboarding trial and MRR could never be anything but zero.
+    status: SubscriptionStatus = SubscriptionStatus.ONBOARDING_TRIAL
+
+    # Both accepted and both ignored. There is one plan and it covers the
+    # whole product, so there is nothing to choose and nothing for
+    # subscribing to switch on. They stay in the schema, optional, so a
+    # console built before this change keeps working through a deploy
+    # instead of failing validation on a field the server stopped wanting.
+    plan_id: uuid.UUID | None = None
+    apply_plan_modules: bool = True
 
 
 class SubscriptionOut(BaseModel):
@@ -132,6 +253,21 @@ class SubscriptionOut(BaseModel):
     grace_until: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class SubscriptionSaveResponse(BaseModel):
+    """The subscription, plus what putting the tenant on that plan changed.
+
+    modules_not_in_plan is reported, never revoked: moving a customer to a
+    smaller plan must not switch off the module a farm is recording with
+    today. The console shows the list so somebody decides.
+    """
+
+    subscription: SubscriptionOut
+    plan_code: str
+    modules_granted: list[str]
+    modules_already_active: list[str]
+    modules_not_in_plan: list[str]
 
 
 class EntitlementActivateRequest(BaseModel):
@@ -198,6 +334,72 @@ class MembershipOut(BaseModel):
     user_id: uuid.UUID
     tenant_role: TenantRole
     status: str
+    # From the joined user_identity — a list of bare UUIDs is unusable in
+    # the console, which needs to show who these people are.
+    email: str
+    display_name: str
+    # The tablet contract's own free-text job title, distinct from
+    # tenant_role above (see app/tenants/models.py).
+    role: str
+    default_farm_id: uuid.UUID | None = None
+    has_password: bool
+
+
+class InvitationCreateRequest(BaseModel):
+    ttl_hours: int = Field(default=168, ge=1, le=720)
+    # Attempted only when this deployment has a mail server; the response
+    # says which of the two actually happened rather than assuming.
+    send_email: bool = True
+
+
+class InvitationOut(BaseModel):
+    """The link, returned exactly once.
+
+    url is the plaintext token in a URL, so this response is a credential:
+    it is shown to the admin who created it and never recoverable
+    afterwards — a lost link is reissued, not looked up.
+    """
+
+    invitation_id: uuid.UUID
+    email: str
+    url: str
+    expires_at: datetime
+    # "email" when it was sent, "manual" when no mail server is configured,
+    # "failed" when one is and the send did not work. The console shows the
+    # link to copy in the latter two cases.
+    delivery: str
+    delivery_detail: str
+
+
+class InvitationStatusOut(BaseModel):
+    """Where this person is in getting started, without exposing the token."""
+
+    membership_id: uuid.UUID
+    email: str
+    display_name: str
+    has_password: bool
+    invitation_sent_at: datetime | None
+    invitation_expires_at: datetime | None
+    invitation_accepted_at: datetime | None
+    # What to show: "no_invitation", "pending", "expired", "accepted".
+    state: str
+
+
+class MembershipStatusChangeRequest(BaseModel):
+    active: bool
+    reason: str | None = None
+
+
+class LicenseLeaseOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    device_id: uuid.UUID
+    device_name: str | None
+    issued_at: datetime
+    expires_at: datetime
+    policy_version: int
+    modules: list[str]
+    revoked_at: datetime | None
 
     model_config = {"from_attributes": True}
 

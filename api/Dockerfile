@@ -1,6 +1,11 @@
-# Multi-stage build for the Origami Server API. Suitable for a
-# single-container PaaS deployment (e.g. Azure Web App for Containers) as
-# well as docker-compose — see ../docs/AZURE_DEPLOYMENT.md.
+# Multi-stage build for Origami Server — the API and the admin console in
+# one image. Suitable for a single-container PaaS deployment (e.g. Azure Web
+# App for Containers) as well as docker-compose — see
+# ../docs/AZURE_DEPLOYMENT.md.
+#
+# BUILD CONTEXT IS THE REPOSITORY ROOT, not ./api, because the image needs
+# admin-web/ and scripts/ as well:
+#   docker build -f api/Dockerfile -t origami-api .
 #
 # NO apt-get ANYWHERE IN THIS FILE, AND IT SHOULD STAY THAT WAY.
 #
@@ -27,6 +32,42 @@
 #
 # Debian release is pinned rather than floating (`python:3.12-slim` follows
 # whatever Debian is current) so the same commit builds the same way later.
+# The Node stage is pinned to the same Debian release for the same reason,
+# and needs no apt either — npm ships in the base image.
+
+# Bullseye, not bookworm, and deliberately older than the Python stages.
+# Node has to create threads before it runs a line of code, and bookworm's
+# glibc creates them with clone3(), which the default seccomp profile on
+# Docker Engine older than 20.10.10 rejects with EPERM. The result is:
+#   Assertion failed: (0) == (uv_thread_create(...))
+# killing `npm ci` with exit 134 — which reads as a broken dependency
+# install rather than a daemon that is too old for the base image. The
+# Python stages don't trip it because nothing there needs a thread.
+# Bullseye's glibc uses plain clone() and sidesteps it entirely.
+#
+# This costs nothing: the stage is thrown away after the build and only its
+# compiled static files reach the final image, so its distro never ships
+# and never ages into a runtime vulnerability.
+FROM node:20-bullseye-slim AS console
+
+# Belt and braces for the same failure on a VM that is merely starved
+# rather than seccomp-blocked: Node sizes a V8 worker pool to the CPU count
+# at startup, and pool size 0 runs that work on the main thread instead.
+# Same class of problem as pip's progress-bar thread further down, and the
+# same caveat — it survives a squeezed VM, it does not fix one. See
+# ../docs/AZURE_DEPLOYMENT.md.
+ENV NODE_OPTIONS=--v8-pool-size=0
+
+WORKDIR /build
+COPY admin-web/package.json admin-web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY admin-web/ ./
+# No NEXT_PUBLIC_API_BASE_URL on purpose: the console is served by the API
+# on the same origin here, so its API base stays empty and every request is
+# relative. Baking a hostname in would tie the image to one deployment.
+RUN npm run build
+
 
 FROM python:3.12-slim-bookworm AS builder
 
@@ -34,7 +75,7 @@ RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
-COPY requirements.txt .
+COPY api/requirements.txt .
 # --progress-bar off: pip's default progress bar (rich) starts a background
 # refresh thread, which fails with "RuntimeError: can't start new thread" on
 # a resource-starved Docker VM and takes the whole build down with it. The
@@ -56,17 +97,38 @@ RUN useradd --uid 1000 --shell /usr/sbin/nologin --no-create-home origami
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    ADMIN_WEB_DIR=/app/admin-web
 
 WORKDIR /app
-COPY --chown=origami:origami . .
+COPY --chown=origami:origami api/ .
+COPY --chown=origami:origami scripts/ ./scripts/
+
+# The compiled console. app/main.py mounts this at / after every router, so
+# the API keeps its own paths and everything else falls through to here —
+# no Node runtime in this image, and one process serving both.
+COPY --from=console --chown=origami:origami /build/out ./admin-web
 
 # Plain COPY + chmod rather than `COPY --chmod=`: the latter needs
 # BuildKit, and this has to build on the classic builder too (the tell is
 # "Sending build context to Docker daemon" rather than "[+] Building").
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY api/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
     && chown origami:origami /app
+
+# Which build this is. Passed in by .github/workflows/publish-image.yml as
+# the commit it built, and reported by /health and on every console screen,
+# so "is my change deployed?" is answered by looking rather than guessing.
+# Defaulted rather than required: a plain `docker build` still works, it
+# just produces an image that admits it does not know which one it is.
+#
+# Deliberately below every COPY and install above: these two change on
+# every single commit, and a layer that always changes has to sit at the
+# bottom or it invalidates the expensive layers cached behind it.
+ARG APP_VERSION=unknown
+ARG APP_BUILT_AT=""
+ENV APP_VERSION=$APP_VERSION \
+    APP_BUILT_AT=$APP_BUILT_AT
 
 USER origami
 

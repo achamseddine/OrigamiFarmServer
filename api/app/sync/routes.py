@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import require_module
+from app.auth.dependencies import get_tenant_context
 from app.auth.schemas import TenantContext
 from app.common.enums import SyncOperation
 from app.common.tenant_db import get_tenant_db
@@ -46,7 +46,7 @@ def _serialize_animal(animal: Animal) -> dict:
 @router.post("/push", response_model=SyncPushResponse)
 def sync_push(
     payload: SyncPushRequest,
-    tenant_context: TenantContext = Depends(require_module("ANIMALS")),
+    tenant_context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_tenant_db),
 ) -> SyncPushResponse:
     results: list[SyncChangeResult] = []
@@ -189,7 +189,7 @@ def _record_sync_event(db: Session, tenant_context: TenantContext, change, resul
 @router.get("/pull", response_model=SyncPullResponse)
 def sync_pull(
     cursor: str | None = Query(default=None),
-    tenant_context: TenantContext = Depends(require_module("ANIMALS")),
+    tenant_context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_tenant_db),
 ) -> SyncPullResponse:
     stmt = select(Animal).order_by(Animal.updated_at.asc()).limit(_MAX_PULL_BATCH)

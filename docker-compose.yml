@@ -65,9 +65,12 @@ services:
     volumes:
       - ./infrastructure/keycloak:/opt/keycloak/data/import
 
+  # Serves the API and the admin console together on :8000, exactly as the
+  # deployed image does. The entrypoint runs both migration chains first.
   api:
     build:
-      context: ./api
+      context: .
+      dockerfile: api/Dockerfile
     env_file:
       - .env
     environment:
@@ -76,11 +79,6 @@ services:
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://minio:9000
       OIDC_ISSUER: http://keycloak:8080/realms/origami
-      # Absolute + bind-mounted so the entrypoint's key generation lands in
-      # the same place bare-metal dev's `python ../scripts/generate_license_keys.py`
-      # does (see docker-entrypoint.sh), not somewhere only this container can see.
-      LICENSE_LEASE_PRIVATE_KEY_PATH: /app/keys/license_lease_private.pem
-      LICENSE_LEASE_PUBLIC_KEY_PATH: /app/keys/license_lease_public.pem
     ports:
       - "8000:8000"
     depends_on:
@@ -95,13 +93,16 @@ services:
     # "alembic upgrade head" step out of the README's docker-compose path
     # now; it's still needed for Option B (bare-metal).
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Only the Python packages are mounted for live reload — mounting all of
+    # ./api over /app would hide the console built into the image.
     volumes:
-      - ./api:/app
-      - ./infrastructure/keys:/app/keys
+      - ./api/app:/app/app
+      - ./api/migrations:/app/migrations
 
   workers:
     build:
-      context: ./api
+      context: .
+      dockerfile: api/Dockerfile
     env_file:
       - .env
     environment:
@@ -111,7 +112,6 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       # Only the api service should race to apply migrations on startup.
       RUN_MIGRATIONS: "false"
-      GENERATE_LICENSE_KEYS_IF_MISSING: "false"
     depends_on:
       control-db:
         condition: service_healthy
@@ -119,18 +119,8 @@ services:
         condition: service_started
     command: ["python", "-m", "workers.main"]
     volumes:
-      - ./api:/app
+      - ./api/app:/app/app
       - ./workers:/app/workers
-
-  admin-web:
-    build:
-      context: ./admin-web
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-    ports:
-      - "3000:3000"
-    depends_on:
-      - api
 
 volumes:
   control_db_data:
