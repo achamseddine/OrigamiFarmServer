@@ -47,7 +47,7 @@
   --shadow-lift: 0 4px 10px rgba(13, 23, 19, 0.07), 0 16px 36px rgba(13, 23, 19, 0.1);
   --shadow-sheet: 0 24px 60px rgba(13, 23, 19, 0.24);
   --sidebar-width: 248px;
-  --appbar-height: 68px;
+  --appbar-height: 78px;
 
   /* Kept as aliases so any inline style written against the old names
      still lands inside the new palette rather than off it. */
@@ -128,28 +128,16 @@ button {
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 0 6px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   text-decoration: none;
 }
 
 .sidebar-brand .mark {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
-}
-
-.sidebar-brand .words {
-  line-height: 1.15;
-}
-
-.sidebar-brand .n {
-  font-family: var(--font-display);
-  font-size: 1.02rem;
-  font-weight: 700;
-  color: var(--farmos-white);
-  display: block;
 }
 
 .sidebar-brand .s {
@@ -244,8 +232,9 @@ button {
 }
 
 .appbar-logo {
-  height: 34px;
+  height: 46px;
   width: auto;
+  flex-shrink: 0;
 }
 
 /* The sync pill: platform state, said in words and repeated in colour —

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { ServerPill, VersionStamp } from "@/lib/version";
-import { BrandMark } from "@/components/Brand";
+import { BrandLogo, BrandMark } from "@/components/Brand";
 import { Icon, IconName } from "@/components/Icon";
 import { ProfileSheet } from "@/components/ProfileSheet";
 
@@ -73,7 +73,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     return (
       <div className="entry-solo">
         <div className="panel" style={{ textAlign: "center" }}>
-          <BrandMark size={44} />
+          <BrandLogo height={40} />
           <p className="page-subtitle" style={{ marginTop: 12 }}>
             Loading the console…
           </p>
@@ -88,7 +88,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     return (
       <div className="entry-solo">
         <div className="panel">
-          <BrandMark size={44} />
+          <BrandLogo height={40} />
           <h1 className="page-title" style={{ marginTop: 12 }}>
             No platform access
           </h1>
@@ -119,12 +119,11 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <Link href="/dashboard" className="sidebar-brand">
-          <BrandMark size={34} className="mark" />
-          <span className="words">
-            <span className="n">Origami</span>
-            <span className="s">Server console</span>
-          </span>
+        {/* The mark alone here: the wordmark belongs on the paper of the
+            top bar, not in dark-green ink on a dark-green rail. */}
+        <Link href="/dashboard" className="sidebar-brand" aria-label="Origami FarmOS — console">
+          <BrandMark size={36} className="mark" />
+          <span className="s">Server console</span>
         </Link>
 
         <nav className="sidebar-nav" aria-label="Console sections">
@@ -156,10 +155,9 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
 
       <div style={{ minWidth: 0 }}>
         <header className="appbar">
+          <BrandLogo height={46} className="appbar-logo" />
           <div className="appbar-cluster">
             <ServerPill />
-          </div>
-          <div className="appbar-cluster">
             <Link href="/audit" className="icon-btn" aria-label="Audit log">
               <Icon name="bell" size={22} />
             </Link>
