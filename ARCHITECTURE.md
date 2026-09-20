@@ -78,21 +78,24 @@ level rather than column-by-column.
 A request is only permitted if every stage it depends on passes. Denials use the stable error
 codes in API_ERROR_CODES.md — never a generic 403 with no machine-readable reason.
 
-## Entitlement engine
+## One subscription
 
-`app/entitlements/service.py` (`EntitlementService`) is the single place that answers "is tenant X
-allowed to use module Y right now" — reading `tenant_entitlement` rows plus tenant status. Both
-`GET /api/v1/me/entitlements` and every `require_module()` check read through this exact class;
-there is no separate "cached client view" that could drift from server enforcement. See
-LICENSE_ENTITLEMENTS.md for the state machines.
+Origami is sold as a single subscription covering the whole product, so
+there is no entitlement engine any more: `EntitlementService` and the
+`require_module()` dependency it backed are deleted, and every module is
+open to every customer whose account is in good standing. What a *person*
+may do is still decided per request from their membership's permission
+grid (`app/farmos/deps.py:require_permission`). See
+LICENSE_ENTITLEMENTS.md.
 
 ## Sync
 
 See SYNC_PROTOCOL.md.
 
-## Devices and offline licensing
+## Devices
 
-See LICENSE_ENTITLEMENTS.md.
+Tablets register themselves by signing in; there is no pairing step and no
+offline licence lease. See LICENSE_ENTITLEMENTS.md.
 
 ## Observability
 

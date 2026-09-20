@@ -21,11 +21,31 @@ def _owner(client, control_db, prefix: str, email: str):
 # --- Module licensing ------------------------------------------------------
 
 
-def test_owner_can_activate_a_module_and_it_appears_in_catalog(client, control_db):
+def test_every_module_is_already_active_for_a_brand_new_farm(client, control_db):
+    """`before.json() == []` is what this used to assert. An empty list is
+    now the bug: the tablet reads it to decide whether to unlock Mouneh,
+    so a customer who has just been created would find the module locked
+    against a subscription that includes it.
+    """
     tenant, token = _owner(client, control_db, "FARM-MOD", "modowner@origami-demo.com")
 
-    before = client.get("/api/v1/modules", headers=farmos_headers(token))
-    assert before.json() == []
+    mine = client.get("/api/v1/modules", headers=farmos_headers(token))
+    assert mine.status_code == 200, mine.text
+    by_code = {row["module_code"]: row for row in mine.json()}
+    assert by_code, "an empty list locks every add-on in the app"
+    assert by_code["mouneh"]["status"] == "active"
+    assert by_code["mouneh"]["farm_id"] == str(tenant.id)
+    assert by_code["visits_agritourism"]["status"] == "active"
+
+    catalog = client.get("/api/v1/modules/catalog", headers=farmos_headers(token))
+    assert all(entry["licensed_active"] for entry in catalog.json())
+
+
+def test_the_activate_call_a_shipped_app_still_makes_is_answered(client, control_db):
+    """Installed tablets call this on opening Mouneh. There is nothing left
+    to activate, but 404ing them would lock the module rather than open it.
+    """
+    tenant, token = _owner(client, control_db, "FARM-MODA", "actowner@origami-demo.com")
 
     activated = client.post(
         "/api/v1/modules/mouneh/activate",
@@ -37,13 +57,6 @@ def test_owner_can_activate_a_module_and_it_appears_in_catalog(client, control_d
     assert body["farm_id"] == str(tenant.id)
     assert body["module_code"] == "mouneh"
     assert body["status"] == "active"
-
-    after = client.get("/api/v1/modules", headers=farmos_headers(token))
-    assert len(after.json()) == 1
-
-    catalog = client.get("/api/v1/modules/catalog", headers=farmos_headers(token))
-    by_code = {e["code"]: e for e in catalog.json()}
-    assert by_code["mouneh_production"]["licensed_active"] is True
 
 
 def test_worker_cannot_activate_a_module(client, control_db):

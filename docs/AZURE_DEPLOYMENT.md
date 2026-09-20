@@ -1,0 +1,489 @@
+# Deploying to Azure Web App for Containers
+
+Concrete steps for getting the `api` image running on an existing Azure Web App for Containers —
+written for `leb-container-test.azurewebsites.net`, adjust names/values for anything else. This is
+a **test deployment**: dev-mode login (`AUTH_DEV_MODE=true`), no reverse proxy to add (Azure
+already terminates HTTPS for you on `*.azurewebsites.net`), no Keycloak. See "Going beyond a test
+deployment" at the bottom for what changes before this is production-grade.
+
+`*.azurewebsites.net` is a **single-container PaaS app**, not a Docker Compose host — it runs one
+image, and Postgres/Redis/etc. need to be separate managed Azure resources, not sibling containers.
+`docker-compose.yml` at the repo root is for local development only; it isn't what gets deployed
+here.
+
+## What you need before starting
+
+- The Azure CLI (`az`), logged in: `az login`.
+- The resource group and name of the existing Web App. Find them:
+  ```bash
+  az webapp list --query "[?name=='leb-container-test'].{name:name, resourceGroup:resourceGroup, location:location}" -o table
+  ```
+  The rest of this doc uses `$RG` (resource group) and `$LOCATION` for whatever that prints —
+  export them as shell variables so the commands below can be copy-pasted:
+  ```bash
+  RG=<resourceGroup from above>
+  LOCATION=<location from above>
+  APP_NAME=leb-container-test
+  ```
+- Docker Desktop, if building locally (the commands below default to this — it's what most
+  people already have a habit for). If you'd rather not run Docker locally at all, `az acr build`
+  builds the same image inside Azure itself — see the alternative at the end of step 1.
+
+## 1. Build and push the image (Azure Container Registry)
+
+Create a registry, if you don't already have one you want to reuse for this project:
+
+```bash
+ACR_NAME=origamiacr$RANDOM   # must be globally unique; note whatever this prints
+az acr create --resource-group "$RG" --name "$ACR_NAME" --sku Basic
+```
+
+Build and push with Docker Desktop. **The build context is the repository root**, even though the
+Dockerfile lives in `api/` — the image contains the admin console as well as the API, so the build
+needs `admin-web/` and `scripts/` alongside `api/`:
+
+```bash
+az acr login --name "$ACR_NAME"
+
+./scripts/build-image.sh "$ACR_NAME.azurecr.io/origami-api:latest"
+docker push "$ACR_NAME.azurecr.io/origami-api:latest"
+```
+
+Use the script rather than `docker build` directly. It fills in the version stamp from the commit
+you are on and forces `--platform linux/amd64`, and both matter:
+
+- **Without the stamp**, `/health` reports `version: "unknown"` and you are back to not knowing
+  whether a deployment landed — the thing the stamp exists to tell you.
+- **Without the platform flag on Apple Silicon (M-series Mac)**, Docker builds `arm64`, and Azure
+  App Service Linux containers run `amd64`. That mismatch fails at *container start* with an
+  exec-format error, not at build or push, so it is a confusing one to hit blind.
+
+The equivalent by hand, if you would rather not use the script:
+
+```bash
+docker build --platform linux/amd64 -f api/Dockerfile \
+  --build-arg APP_VERSION="$(git rev-parse --short HEAD)" \
+  --build-arg APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t "$ACR_NAME.azurecr.io/origami-api:latest" .
+```
+
+(Cloud-build alternative, no local Docker needed: `az acr build --registry "$ACR_NAME" --image
+origami-api:latest --file api/Dockerfile .` — uploads the repository and builds it server-side.)
+
+### Or: take the image GitHub already built
+
+You don't have to build it at all. `.github/workflows/publish-image.yml` builds this same
+Dockerfile on every push to `main` or a `claude/**` branch, smoke-tests that the image starts and
+answers `/health`, and publishes it two ways. It needs no secrets — the token GitHub issues to the
+run is enough to push to that repository's own container registry.
+
+Images land at `ghcr.io/achamseddine/origamifarmserver/origami-api`, tagged three ways:
+`sha-<commit>` (names exactly one build — **deploy with this one**), the branch name, and `latest`.
+
+**Route A — registry to registry, nothing downloaded.** Azure pulls it straight across:
+
+```bash
+# A GitHub personal access token with the read:packages scope.
+# Skip --username/--password entirely if you have made the package public.
+az acr import \
+  --name "$ACR_NAME" \
+  --source ghcr.io/achamseddine/origamifarmserver/origami-api:latest \
+  --image origami-api:latest \
+  --username <your-github-username> \
+  --password <github-pat-with-read:packages>
+```
+
+**Route B — download the file, push it yourself.** Every run also uploads the image as a gzipped
+tarball, so you can take it from the browser without logging in to any registry. Open the run under
+the repository's **Actions** tab, download the `origami-api-image-sha-<commit>` artifact, then:
+
+```bash
+unzip origami-api-image-sha-*.zip        # GitHub wraps every artifact in a zip
+docker load  -i origami-api-sha-*.tar.gz
+docker tag   ghcr.io/achamseddine/origamifarmserver/origami-api:sha-<commit> \
+             "$ACR_NAME.azurecr.io/origami-api:latest"
+az acr login --name "$ACR_NAME"
+docker push  "$ACR_NAME.azurecr.io/origami-api:latest"
+```
+
+The runner is `amd64`, so neither route can hit the Apple Silicon architecture trap above.
+
+A newly published GHCR package is **private**, and it is a separate permission from the repository
+itself — someone with repository access still cannot pull it until either the package is made
+public (its page → Package settings → Change visibility) or they hold a token with `read:packages`.
+Route B sidesteps that question entirely: the artifact is downloadable by anyone who can open the
+Actions run.
+
+### If the build fails
+
+**Anything mentioning `apt-get`, `NO_PUBKEY`, `is not signed`, or
+`APT::Update::Post-Invoke`.** The current Dockerfile doesn't run `apt-get`
+at all, so any of these means you're building an older revision — `git
+pull` and check with `grep -c apt-get api/Dockerfile` (expect `0`) and
+`docker build` reporting more than 8 steps. Earlier revisions installed
+`gcc`/`libpq-dev`, which turned out to be unnecessary: every dependency
+ships a prebuilt wheel and `psycopg[binary]` vendors its own libpq, so the
+package manager was removed rather than kept working. That step was by far
+the most fragile part of the build — it broke three different ways on one
+machine (full Docker VM, a seccomp/base-image mismatch, then archive key
+verification) and none of them can recur now.
+
+**`No space left on device`.** Docker Desktop's VM has its own virtual disk
+that fills with old images and build cache:
+
+```bash
+docker system df            # what's actually using the space
+docker builder prune        # build cache only — safest, usually the biggest win
+docker image prune -a       # images not used by any container
+```
+
+Only reach for `docker system prune -a --volumes` if that isn't enough, and
+read it twice first: `--volumes` deletes named volumes, which is where
+container databases live — it can wipe another project's local Postgres
+data. Or raise the ceiling instead of clearing it: Docker Desktop →
+Settings → Resources → Virtual disk limit.
+
+**`RuntimeError: can't start new thread`**, or
+**`Assertion failed: (0) == (uv_thread_create(...))`** with `npm ci` exiting
+134, or a step failing because a subprocess/shell couldn't start (e.g. `E:
+Sub-process returned an error code` from a hook that ends in `|| true`,
+which can't fail any other way). These all mean the same thing: the Docker
+VM can't create threads or processes — resource starvation, not a bug in
+the step that reported it. The Node variant is the loudest because Node
+builds a V8 worker pool before running any code at all. The Dockerfile
+avoids both known triggers (`pip --progress-bar off`, and
+`NODE_OPTIONS=--v8-pool-size=0` in the console stage), but the VM still
+needs fixing or it will resurface at runtime, where uvicorn forks its
+workers:
+
+First separate the two causes, because only one of them is yours to fix:
+
+```bash
+docker run --rm node:20-bullseye-slim node -e "console.log('ok')"
+```
+
+If that prints `ok`, the VM is merely starved — raise its resources below.
+If it aborts with the same `uv_thread_create` assertion, the daemon is
+refusing thread creation outright and no change to this repo can help:
+Docker Engine older than 20.10.10 ships a seccomp profile that rejects the
+`clone3()` syscall newer glibc uses for threads. Update Docker Desktop, or
+build in Azure with `az acr build` (below) and skip the local daemon
+entirely. `docker version --format '{{.Server.Version}}'` tells you which
+engine you are on; "Sending build context to Docker daemon" instead of
+`[+] Building` is another sign it is an old one.
+
+- Docker Desktop → Settings → Resources: raise **Memory** (4 GB+) and CPUs.
+- Restart Docker Desktop — the VM accumulates pressure over a long session.
+- Confirm with `docker run --rm python:3.12-slim-bookworm python -c "import
+  threading; t=threading.Thread(target=lambda:None); t.start(); t.join();
+  print('threads OK')"`.
+
+**`the --chmod option requires BuildKit`** or other unknown-flag errors.
+The Dockerfile is written to build on the classic builder as well as
+BuildKit, so this shouldn't happen on a current checkout — but it's the
+same tell: if `docker build` prints "Sending build context to Docker
+daemon" rather than `[+] Building`, you're on the classic builder, and an
+older Dockerfile revision would fail here.
+
+**When local Docker just won't cooperate**, build in Azure instead and skip
+it entirely — same image, no local daemon involved:
+
+```bash
+az acr build --registry "$ACR_NAME" --image origami-api:latest --file api/Dockerfile .
+```
+
+## 1b. Run the image locally first (optional, ~2 minutes)
+
+Worth doing before touching Azure. Everything after this point is Azure
+configuration; if the image itself is broken you want to know now, while a
+failure costs you a `docker logs` instead of a container-start loop behind
+a PaaS you can't attach a debugger to.
+
+`docker-compose.local.yml` runs the image you just built, unmodified,
+against two throwaway Postgres containers:
+
+```bash
+# Use whatever tag you built. The compose file defaults to
+# unileb.azurecr.io/compiler:origami.
+export ORIGAMI_IMAGE="$ACR_NAME.azurecr.io/origami-api:latest"
+
+docker compose -f docker-compose.local.yml up -d
+docker compose -f docker-compose.local.yml logs -f api
+```
+
+Note this is **not** the repo's main `docker-compose.yml`. That one builds
+from source, bind-mounts `./api` over `/app`, and swaps the command for
+`uvicorn --reload` — a fine dev loop, but the container it runs isn't the
+container you ship. `docker-compose.local.yml` builds nothing, mounts no
+source, and overrides no command, so the image's own
+`api/docker-entrypoint.sh` runs the two Alembic upgrades and the license
+keypair generation exactly as it will in Azure.
+
+You're looking for these lines, in this order:
+
+```
+docker-entrypoint: running control-plane migrations...
+docker-entrypoint: running tenant-plane migrations...
+docker-entrypoint: no license lease keypair found at ... — generating one...
+docker-entrypoint: starting: sh -c uvicorn app.main:app ...
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+Then load demo data and smoke-test:
+
+```bash
+docker compose -f docker-compose.local.yml --profile seed run --rm seed
+
+curl localhost:8000/health
+# {"status":"ok"}
+
+curl -X POST localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"owner@farm-a-demo.com","password":"farmos-demo-2026"}'
+# {"access_token":"...","token_type":"bearer"}
+```
+
+A token back from that second call means the whole stack is working:
+migrations applied, the seeded user is in the control plane, and the
+tablet's own login path is live. Point the app's Settings → Server
+connection at `http://<your-machine-ip>:8000` and it will work against
+this the same way it will against Azure.
+
+`docker compose -f docker-compose.local.yml down -v` tears it down,
+databases included. That `-v` only touches this file's own two volumes
+(`local_control_db`, `local_tenant_db`) — it is not
+`docker system prune`, and it won't reach another project's data.
+
+Two intentional local-only differences from the Azure deployment:
+
+- **`UVICORN_WORKERS: "1"`.** Multi-worker uvicorn forks a process per
+  worker, and the Docker VM that couldn't start a thread during the build
+  can fail that fork at runtime too. One worker takes that variable out of
+  the smoke test. Raise it once the container is confirmed healthy.
+- **No volume for the license keypair**, so the entrypoint writes a
+  throwaway one inside the container on each recreate. Harmless locally —
+  only device activation reads it — but on Azure it must persist, see
+  section 5.
+
+## 2. Two PostgreSQL databases
+
+The app is architected around two logically separate databases — control plane (tenants,
+subscriptions, devices, audit) and tenant/farm data (see `ARCHITECTURE.md`, `TENANCY.md`). For a
+test deployment, one Flexible Server hosting both databases is enough; split them onto separate
+servers later if you need to test that isolation specifically.
+
+```bash
+PG_SERVER=origami-pg-test
+PG_ADMIN_PASSWORD='<pick a strong password>'
+
+az postgres flexible-server create \
+  --resource-group "$RG" --name "$PG_SERVER" --location "$LOCATION" \
+  --admin-user origami --admin-password "$PG_ADMIN_PASSWORD" \
+  --sku-name Standard_B1ms --tier Burstable --storage-size 32 --version 16 \
+  --public-access 0.0.0.0-255.255.255.255   # test-only: opens to all Azure IPs; see note below
+
+az postgres flexible-server db create --resource-group "$RG" --server-name "$PG_SERVER" --database-name origami_control
+az postgres flexible-server db create --resource-group "$RG" --server-name "$PG_SERVER" --database-name origami_tenant_shared
+```
+
+`--public-access 0.0.0.0-255.255.255.255` is the fastest way to get a test deployment reachable
+from an App Service instance without also setting up VNet integration, and it's genuinely wide —
+tighten it once this is more than a test (see bottom of this doc). Narrower alternative right now:
+`--public-access AzureCloud` restricts it to Azure's own IP ranges (App Service included), which is
+already meaningfully tighter than "all of the internet."
+
+Build the two connection strings (`+psycopg`, matching `app/config/settings.py`'s
+`postgresql+psycopg://` scheme — not the bare `postgresql://` the Azure CLI's own output shows):
+
+```bash
+CONTROL_DATABASE_URL="postgresql+psycopg://origami:${PG_ADMIN_PASSWORD}@${PG_SERVER}.postgres.database.azure.com:5432/origami_control?sslmode=require"
+TENANT_DATABASE_URL="postgresql+psycopg://origami:${PG_ADMIN_PASSWORD}@${PG_SERVER}.postgres.database.azure.com:5432/origami_tenant_shared?sslmode=require"
+```
+
+## 3. Point the Web App at the image
+
+```bash
+az webapp identity assign --resource-group "$RG" --name "$APP_NAME"
+PRINCIPAL_ID=$(az webapp identity show --resource-group "$RG" --name "$APP_NAME" --query principalId -o tsv)
+ACR_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv)
+az role assignment create --assignee "$PRINCIPAL_ID" --scope "$ACR_ID" --role AcrPull
+
+az webapp config container set \
+  --resource-group "$RG" --name "$APP_NAME" \
+  --container-image-name "$ACR_NAME.azurecr.io/origami-api:latest" \
+  --container-registry-url "https://$ACR_NAME.azurecr.io"
+```
+
+A managed identity + `AcrPull` role (rather than baking registry credentials into an app setting)
+means nothing about registry access lives in plaintext config.
+
+## 4. Application settings
+
+### Checking which build is live
+
+Before anything else, this answers "did my deploy actually land?" without a login:
+
+```bash
+curl https://<your-app>.azurewebsites.net/health
+# {"status":"ok","version":"sha-72ed295","built_at":"2026-09-18T07:59:41Z"}
+```
+
+`version` is the commit the image was built from — the same string as its image tag, so it
+compares directly against what you deployed. The console shows it too, on the login page and at
+the bottom of the sidebar, read live from this endpoint rather than compiled into the page, so a
+cached console cannot show you a version that isn't running. An image built outside the workflow
+reports `unknown`; a checkout reports `dev`.
+
+### Debug mode
+
+`LOG_LEVEL=DEBUG` logs every request with its method, path, status and `Origin` — and logs a
+CORS refusal by name, which is otherwise completely silent (the browser blocks the request, and
+the server records nothing):
+
+```bash
+az webapp config appsettings set -g "$RG" -n "$APP" --settings LOG_LEVEL=DEBUG
+```
+
+```json
+{"method":"OPTIONS","path":"/api/v1/auth/login","status":400,
+ "origin":"https://tablet.example","cors":"REFUSED — origin not in CORS_ALLOWED_ORIGINS",
+ "cors_allowed":["https://…azurewebsites.net","http://localhost:3000"],
+ "event":"cors_origin_refused","level":"warning"}
+```
+
+Bodies and headers are never logged, so turning this on cannot leak a password or a bearer token
+into the log stream. Set it back to `INFO` when you're done — it's noisy, one line per request.
+
+### The rest
+
+Everything the app reads is an environment variable (`app/config/settings.py`) — nothing is
+baked into the image except `APP_VERSION`. Generate a real secret rather than using the
+placeholder below:
+
+```bash
+APP_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
+
+az webapp config appsettings set --resource-group "$RG" --name "$APP_NAME" --settings \
+  WEBSITES_PORT=8000 \
+  ENVIRONMENT=staging \
+  AUTH_DEV_MODE=true \
+  APP_SECRET_KEY="$APP_SECRET_KEY" \
+  CONTROL_DATABASE_URL="$CONTROL_DATABASE_URL" \
+  TENANT_DATABASE_URL="$TENANT_DATABASE_URL" \
+  CORS_ALLOWED_ORIGINS="*" \
+  LOG_LEVEL=INFO \
+  UVICORN_WORKERS=2
+```
+
+Notes on specific settings:
+
+- **`WEBSITES_PORT=8000`** — required. Azure doesn't inject a `PORT` env var the way some other
+  platforms do; this tells its front door which port inside the container to route to. The image
+  listens on 8000 by default (`api/Dockerfile`).
+- **`ENVIRONMENT=staging`, not `production`** — `app/main.py` refuses to boot at all if
+  `ENVIRONMENT=production` and `AUTH_DEV_MODE=true` at the same time (verified: this raises
+  `RuntimeError` before the app even starts). Dev-mode login only works with a non-`production`
+  environment name.
+- **`AUTH_DEV_MODE=true`** — the FarmOS tablet contract's own `POST /auth/login` (email+password,
+  seeded by `scripts/seed.py`, see step 6) doesn't depend on this flag at all — that login is a
+  separate system from OIDC (see `docs/FARMOS_API.md` "Auth: a second, independent system"). This
+  flag only affects the platform/admin-web OIDC login path; set it `true` here so that path works
+  too without standing up Keycloak.
+- **`CORS_ALLOWED_ORIGINS="*"`** — fine for API testing (curl, Postman, the tablet app talking to
+  `https://leb-container-test.azurewebsites.net/api/v1`). Narrow it to real origins before anything
+  browser-based (admin-web) is pointed at this in a way that matters.
+- **Not set**: `REDIS_URL`, `S3_*`, `OIDC_*` — nothing in the API process reads Redis today (only
+  the also-not-deployed-here `workers` scaffold would, and it doesn't yet do real work — see
+  `ARCHITECTURE.md`), and S3 credentials are only touched inside the presigned-URL endpoint
+  handler, not at startup, so leaving them at their harmless defaults doesn't block anything else
+  from working. Add real ones when file upload or a background worker actually need to run.
+
+## 5. (Removed — license lease keys)
+
+This step used to explain where to persist the RS256 keypair that signed
+offline licence leases. Device licences are gone: Origami is one
+subscription covering the whole product, tablets register themselves by
+signing in, and nothing signs a lease. There is no keypair to persist, no
+`LICENSE_LEASE_*` app setting to configure, and no path mapping to create.
+
+The step number is kept so the ones below keep their numbers.
+
+## 6. Restart, migrate, seed, smoke-test
+
+```bash
+az webapp restart --resource-group "$RG" --name "$APP_NAME"
+```
+
+`api/docker-entrypoint.sh` runs both Alembic upgrades (`alembic -c alembic_control.ini upgrade
+head`, then `alembic -c alembic_tenant.ini upgrade head`) on every container start before the
+server begins accepting traffic — verified locally against a fresh database: it applies cleanly,
+and re-running it is a no-op. Nothing further is required for the schema to be ready.
+
+Watch it come up:
+
+```bash
+az webapp log tail --resource-group "$RG" --name "$APP_NAME"
+```
+
+Then seed demo data (a platform admin, two demo tenants, and the FarmOS tablet contract's own
+seeded users — verified locally, prints the exact credentials it creates):
+
+```bash
+az webapp ssh --resource-group "$RG" --name "$APP_NAME"
+# inside the container's shell:
+python ../scripts/seed.py
+```
+
+That prints login credentials for the FarmOS tablet contract (`POST /api/v1/auth/login`) directly —
+copy them from its output rather than assuming a fixed password; it's re-run-safe (looks up by
+natural key before creating).
+
+Smoke test from your own machine:
+
+```bash
+curl https://leb-container-test.azurewebsites.net/health
+# {"status":"ok"}
+
+curl -X POST https://leb-container-test.azurewebsites.net/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"<owner email from seed output>","password":"<password from seed output>"}'
+# {"access_token":"...","token_type":"bearer"}
+```
+
+Both of those — plus the full login → `/auth/me` round trip — are exactly what was verified
+locally against a throwaway Postgres instance while building this: same entrypoint, same
+`ENVIRONMENT=staging` + `AUTH_DEV_MODE=true` combination, same result.
+
+## 7. Point the tablet app at it
+
+In the OrigamiFarmOS app, Settings → Server connection → Server URL:
+
+```
+https://leb-container-test.azurewebsites.net/api/v1
+```
+
+(`AppConfig.defaultApiBaseUrl` in that repo defaults to an Android-emulator-local address — this
+is what the in-app Settings override, added alongside the app's own data-engine work, is for.)
+
+## Going beyond a test deployment
+
+Not done here, and worth doing before this carries anything that matters:
+
+- **Real auth.** `AUTH_DEV_MODE` must never be `true` where `ENVIRONMENT=production` — the app
+  itself refuses to boot that combination. Stand up Keycloak (or another OIDC provider) and point
+  `OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL` at it. The FarmOS tablet contract's own
+  email+password login is unaffected either way — it's the platform/admin-web OIDC path this gates.
+- **Narrow `CORS_ALLOWED_ORIGINS`** to real origins, and the Postgres `--public-access` rule to
+  what actually needs to reach it (ideally VNet integration + private access, not a public IP
+  range at all).
+- **Split control/tenant databases onto separate servers** if you want to exercise that isolation
+  boundary the way `TENANCY.md` describes it, and turn on Postgres backups/HA.
+- **Scale beyond one instance.** `RUN_MIGRATIONS=true` (the default) is safe for a single instance
+  but would race if multiple instances started concurrently and both tried to migrate. Move
+  migrations to a one-off deploy step (`az webapp ssh` + `alembic upgrade head`, or a CI job) and
+  set `RUN_MIGRATIONS=false` before scaling out.
+- **Real object storage** (`S3_*` settings) once file upload/presigned URLs (`app/files/`) need to
+  actually work — Azure Blob Storage's S3-compatible gateway, or real AWS S3.
+- **A real backup/export worker** — see `ARCHITECTURE.md` and `workers/main.py`'s own docstring;
+  the API/data model for `backup_job`/`tenant_export` exists, the job that actually produces one
+  doesn't yet, and `workers/main.py` isn't part of this single-container deployment at all.

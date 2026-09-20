@@ -73,3 +73,33 @@ def test_auditor_is_read_only(client, control_db):
     )
     assert create.status_code == 403
     assert create.json()["error"]["code"] == "PLATFORM_ROLE_REQUIRED"
+
+
+def test_me_reports_the_signed_in_identity_and_its_roles(client, control_db):
+    grant_platform_role(control_db, "console@test.com", PlatformRole.PLATFORM_SUPPORT_ADMIN)
+    control_db.commit()
+
+    token = dev_login(client, "console@test.com")
+    resp = client.get("/platform/v1/me", headers=auth_headers(token))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["email"] == "console@test.com"
+    assert body["platform_roles"] == [PlatformRole.PLATFORM_SUPPORT_ADMIN.value]
+
+
+def test_me_accepts_a_user_holding_no_platform_role(client):
+    """The console calls this before it knows whether the account is staff.
+
+    Returning 200 with an empty role list is what lets it say "no platform
+    access" instead of bouncing back to the login screen in a loop.
+    """
+    token = dev_login(client, "nobody@test.com")
+    resp = client.get("/platform/v1/me", headers=auth_headers(token))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["platform_roles"] == []
+
+
+def test_me_rejects_a_request_with_no_token(client):
+    assert client.get("/platform/v1/me").status_code == 401

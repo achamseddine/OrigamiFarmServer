@@ -4,18 +4,26 @@ that make the app render at all. See docs/FARMOS_API.md.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-from app.common.enums import EntitlementSource, EntitlementStatus, MembershipStatus, TenantStatus
-from app.plans.models import TenantEntitlement
+from app.common.enums import MembershipStatus, TenantStatus
 from tests.conftest import farmos_headers, farmos_login, unique_code
-from tests.helpers import FARMOS_DEMO_PASSWORD, add_farmos_user, create_tenant
+from tests.helpers import (
+    FARMOS_DEMO_PASSWORD,
+    add_farmos_user,
+    create_tenant,
+    ensure_farmos_catalog,
+)
 
 
 def test_root_health_is_unauthenticated_and_cheap(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    # status is the contract the tablet app reads; version and built_at
+    # were added alongside it so a deployment can be identified without
+    # signing in. Additive on purpose — a client checking only the status
+    # code, as the app does, is unaffected.
+    assert body["status"] == "ok"
+    assert set(body) == {"status", "version", "built_at"}
 
 
 def test_login_and_restore_session_via_auth_me(client, control_db):
@@ -35,6 +43,56 @@ def test_login_and_restore_session_via_auth_me(client, control_db):
     assert body["active"] is True
 
 
+def test_login_returns_the_profile_the_tablet_app_reads(client, control_db):
+    """The app takes its user straight from the login response.
+
+    It does `json['user'] as Map<String, dynamic>` and never calls
+    /auth/me on a fresh sign-in, so a response without `user` threw a Dart
+    type error — which its `on ApiException` handler does not catch. The
+    visible result was a sign-in button that did nothing, with a 200 in
+    the server log, which is about the least diagnosable failure there is.
+    """
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"), display_name="Riyak Farm")
+    user, _ = add_farmos_user(
+        control_db, tenant, "profile@origami-demo.com", role="owner", display_name="Rami"
+    )
+    control_db.commit()
+
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "profile@origami-demo.com", "password": FARMOS_DEMO_PASSWORD},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["access_token"]
+    assert body["token_type"] == "bearer"
+
+    profile = body["user"]
+    assert profile["id"] == str(user.id)
+    assert profile["farm_id"] == str(tenant.id)
+    assert profile["name"] == "Rami"
+    assert profile["email"] == "profile@origami-demo.com"
+    assert profile["role"] == "owner"
+    assert profile["active"] is True
+
+
+def test_login_and_auth_me_describe_the_same_person(client, control_db):
+    """Both hand the app a profile, and it keeps whichever it got last —
+    login on a fresh sign-in, /auth/me on a relaunch. If they disagreed,
+    the same person would change name or role by reopening the app."""
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
+    add_farmos_user(control_db, tenant, "samesame@origami-demo.com", role="manager", display_name="Nour")
+    control_db.commit()
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "samesame@origami-demo.com", "password": FARMOS_DEMO_PASSWORD},
+    ).json()
+    me = client.get("/api/v1/auth/me", headers=farmos_headers(login["access_token"])).json()
+
+    assert login["user"] == me
+
+
 def test_login_rejects_wrong_password_with_a_farmer_facing_message(client, control_db):
     tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
     add_farmos_user(control_db, tenant, "wrongpw@origami-demo.com", role="owner")
@@ -45,6 +103,31 @@ def test_login_rejects_wrong_password_with_a_farmer_facing_message(client, contr
     )
     assert resp.status_code == 401
     assert resp.json() == {"detail": "Incorrect email or password."}
+
+
+def test_login_works_when_the_same_person_owns_more_than_one_tenant(client, control_db):
+    """One email, two customers — and the newest one is where they land.
+
+    This used to raise MultipleResultsFound and reach the tablet as a 500,
+    which is indistinguishable from a wrong password to the person holding
+    it. Owning two farms under one address is ordinary (and an admin
+    re-creating a customer while testing produces it immediately), so it
+    has to sign in rather than fail.
+    """
+    older = create_tenant(control_db, company_code=unique_code("FARM-DUP"), display_name="First Farm")
+    add_farmos_user(control_db, older, "two-farms@origami-demo.com", role="owner")
+    control_db.commit()
+
+    newer = create_tenant(control_db, company_code=unique_code("FARM-DUP"), display_name="Second Farm")
+    add_farmos_user(control_db, newer, "two-farms@origami-demo.com", role="owner")
+    control_db.commit()
+
+    token = farmos_login(client, "two-farms@origami-demo.com", FARMOS_DEMO_PASSWORD)
+
+    me = client.get("/api/v1/auth/me", headers=farmos_headers(token))
+    assert me.status_code == 200, me.text
+    # farm_id carries the tenant on this contract — the most recent one.
+    assert me.json()["farm_id"] == str(newer.id)
 
 
 def test_owner_gets_full_access_grid_with_all_twenty_modules(client, control_db):
@@ -95,19 +178,19 @@ def test_worker_sees_only_their_own_granted_modules(client, control_db):
     assert body["modules"]["animals"]["edit"] is False
 
 
-def test_modules_catalog_reflects_this_farms_own_licence(client, control_db):
+def test_the_modules_catalog_includes_the_whole_product(client, control_db):
+    """Twenty modules, all of them open, for every customer.
+
+    This test used to prove the opposite: that a farm which had bought
+    only the Mouneh add-on saw Mouneh and nothing else. Origami is now one
+    subscription covering everything, so the per-module gate is gone and
+    the only thing left to pin is that nothing is dark. license_code
+    survives as a description of which part of the product a screen
+    belongs to — the app still reads it.
+    """
     tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"))
     add_farmos_user(control_db, tenant, "catalog@origami-demo.com", role="owner")
-    control_db.add(
-        TenantEntitlement(
-            tenant_id=tenant.id,
-            module_code="mouneh",
-            status=EntitlementStatus.ACTIVE,
-            source=EntitlementSource.OVERRIDE,
-            effective_from=datetime.now(timezone.utc),
-            plan="mouneh_addon",
-        )
-    )
+    ensure_farmos_catalog(control_db)
     control_db.commit()
     token = farmos_login(client, "catalog@origami-demo.com", FARMOS_DEMO_PASSWORD)
 
@@ -115,17 +198,12 @@ def test_modules_catalog_reflects_this_farms_own_licence(client, control_db):
     assert resp.status_code == 200
     by_code = {entry["code"]: entry for entry in resp.json()}
     assert len(by_code) == 20
+    assert all(entry["licensed_active"] for entry in by_code.values())
 
-    # Mouneh production/inventory both key off the "mouneh" licence, which
-    # this farm has — active.
-    assert by_code["mouneh_production"]["licensed_active"] is True
+    # Including the two that used to be sold separately.
     assert by_code["mouneh_production"]["license_code"] == "mouneh"
-    # Farm Visits keys off "visits_agritourism", which this farm never
-    # purchased — inactive, and the app hides the module entirely.
-    assert by_code["farm_visits"]["licensed_active"] is False
-    # An ordinary included module always reports active with no licence.
-    assert by_code["animals"]["license_code"] is None
-    assert by_code["animals"]["licensed_active"] is True
+    assert by_code["farm_visits"]["license_code"] == "visits_agritourism"
+    assert by_code["animals"]["license_code"] == "ANIMALS"
 
 
 def test_farms_me_returns_this_users_own_farm(client, control_db):
@@ -142,9 +220,7 @@ def test_farms_me_returns_this_users_own_farm(client, control_db):
 
 
 def test_suspended_farm_blocks_access_with_a_farmer_facing_message(client, control_db):
-    tenant = create_tenant(
-        control_db, company_code=unique_code("FARM-S1"), status=TenantStatus.SUSPENDED
-    )
+    tenant = create_tenant(control_db, company_code=unique_code("FARM-S1"), status=TenantStatus.SUSPENDED)
     add_farmos_user(control_db, tenant, "suspended@origami-demo.com", role="owner")
     control_db.commit()
     token = farmos_login(client, "suspended@origami-demo.com", FARMOS_DEMO_PASSWORD)

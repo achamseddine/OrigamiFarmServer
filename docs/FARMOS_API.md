@@ -1,11 +1,13 @@
 # FarmOS Tablet API Contract
 
-`app/farmos/` implements the exact REST API the Origami FarmOS tablet app calls — 92 endpoints
+`app/farmos/` implements the exact REST API the Origami FarmOS tablet app calls — 97 endpoints
 across 19 functional groups, reverse-engineered and verified against a real reference backend (81
-examples from a demo snapshot, 11 captured live from the running app). This is a **fixed external
-contract**, not free-form internal API design: field names, types, status codes, and response
-shapes match the app's expectations exactly, even where that diverges from this codebase's own
-conventions elsewhere (see "Deliberate divergences from the rest of this codebase" below).
+examples from a demo snapshot, 11 captured live from the running app), plus 5 endpoints added since
+to close gaps the captured examples left open (see "Known, deliberate gaps" below — each one moved
+here once built). This is a **fixed external contract**, not free-form internal API design: field
+names, types, status codes, and response shapes match the app's expectations exactly, even where
+that diverges from this codebase's own conventions elsewhere (see "Deliberate divergences from the
+rest of this codebase" below).
 
 Every route lives under `/api/v1`, mounted in `app/main.py`, one router module per functional
 group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_models.py`
@@ -13,6 +15,39 @@ group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_m
 `visits_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
 `InventoryItem`/`InventoryMovement` — extended, not replaced, since `app/sync/` already depended on
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
+
+
+## Modules
+
+`GET /modules/catalog` returns every module with `license_code` and
+`licensed_active`. The rule is one line
+(`app/farmos/routes_employees.py`):
+
+```
+licensed_active = True
+```
+
+Always, for every customer, including one with no subscription recorded.
+Origami is sold as a single subscription covering the whole product:
+there are no tiers and no add-ons, so there is no module a farm has not
+bought. The field stays in the response because a shipped app reads it.
+
+`license_code` also stays, demoted from a gate to a description: it says
+which part of the product a screen belongs to, and the console groups its
+module list by it. Every one of the 20 modules names one — see
+`app/plans/licensing_map.py`, the single source of truth. The two former
+paid add-ons keep lowercase codes, `mouneh` and `visits_agritourism`,
+because this contract addresses them by name in
+`POST /modules/{module_code}/activate`; the rest use the platform's own
+codes (`ANIMALS`, `MILK`, `SALES`, …). One code can cover several
+modules: `SALES` covers sales, expenses and finance.
+
+**What does still gate a request.** Two things, neither of them the
+catalog: a suspended or terminated tenant is refused outright, and what
+one person may do comes from their own membership's permission grid via
+`require_permission(module, action)`. A client that ignores the catalog
+can still reach a module's routes if the signed-in user's grid allows
+it — that was true before this change and is unchanged by it.
 
 ## Four things worth knowing before touching this code
 
@@ -60,6 +95,59 @@ depends on — decodes the token, loads the membership, checks tenant/membership
 `AccessContext` every handler receives).
 
 `AccessContext.tenant_id` is serialized on the wire as `farm_id` everywhere — see the next section.
+
+### The login response carries the profile
+
+`POST /auth/login` returns the signed-in person alongside the token:
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs…",
+  "token_type": "bearer",
+  "user": { "id": "…", "farm_id": "…", "name": "Rami", "email": "…",
+            "phone": null, "role": "owner", "department": null,
+            "language": "en", "active": true }
+}
+```
+
+`user` is the same shape `GET /auth/me` returns, built by the same function
+(`routes_auth.py:_profile_of`) so the two cannot drift apart.
+
+It is not optional. The tablet app reads it directly — `json['user'] as Map<String, dynamic>` —
+and does **not** call `/auth/me` on a fresh sign-in, only on a relaunch. Omitting it throws a Dart
+type error rather than an API error, which the app's `on ApiException` handler does not catch: the
+sign-in button silently does nothing while the server logs a clean `200`. That combination cost
+this project the better part of a week, so `test_login_returns_the_profile_the_tablet_app_reads`
+pins it.
+
+### The login request registers the tablet
+
+`POST /auth/login` accepts three optional fields beside the credentials:
+
+```json
+{
+  "email": "…", "password": "…",
+  "installation_id": "a-stable-id-for-this-install",
+  "device_name": "Zahle tablet",
+  "app_version": "1.4.0"
+}
+```
+
+Sending `installation_id` puts the tablet on its customer's device list,
+or updates the row that is already there. It replaces pairing: there is no
+key to type in and nothing to generate in the console, so the list answers
+*which tablets is this customer using* rather than which ones they are
+permitted.
+
+Three rules the server keeps:
+
+- **Optional means optional.** A client that sends none of this still
+  signs in. A device list is worth having; it is not worth blocking a farm
+  worker's morning over.
+- **A revoked device stays revoked.** Signing in on it updates
+  `last_seen_at` and nothing else.
+- **Recording never fails the sign-in.** The write is rolled back on any
+  database error and the login proceeds.
 
 ## `farm_id` = `Tenant.id`
 
@@ -121,11 +209,11 @@ the routing map — which router module owns which path.
 | Farm | `routes_farms.py` | `GET /farms/me` |
 | Animals | `routes_animals.py` | `GET/POST /animals`, `GET/PATCH/PUT /animals/{id}` |
 | Animal health | `routes_health.py` | `GET/POST /health/treatments` |
-| Observations | `routes_observations.py` | `POST /observations` |
-| Feed & inventory | `routes_feed.py` | `GET /feed/items`, `POST /feed/transactions` |
+| Observations | `routes_observations.py` | `GET/POST /observations` |
+| Feed & inventory | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` |
 | Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` |
 | Agriculture | `routes_agriculture.py` | `GET/POST /crop-plantings`, `GET/POST/DELETE /crops`, `POST/PATCH /fields`, `POST /harvest` |
-| Sales & finance | `routes_finance.py` | `GET /expenses`, `GET /sales` (both read-only — see below) |
+| Sales & finance | `routes_finance.py` | `GET/POST /expenses`, `GET/POST /sales` |
 | Tasks | `routes_tasks.py` | `GET/POST/PATCH/DELETE /tasks` |
 | Notifications | `routes_notifications.py` | `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all` |
 | Priorities & audit | `routes_priorities.py`, `routes_audit.py` | `GET /priorities`, `GET /audit` |
@@ -162,17 +250,25 @@ where cited, not as a generic framework:
 - **CONSTITUTION.md: never generate a recommendation without persisted evidence.**
   `GET /recommendations` (default `refresh=true`) re-evaluates real rules against this farm's real
   stored data before returning anything — `app/farmos/recommendations.py` implements
-  `RULE-FEED-COST-INSIGHT` (today's feed-expense share vs. a 35% threshold) and `RULE-HARVEST-DUE`
-  (active crop plantings due within 48h); a refresh skips re-creating a rule+entity pair that
-  already has an undecided row rather than spamming duplicates.
+  `RULE-FEED-COST-INSIGHT` (today's feed-expense share vs. a 35% threshold), `RULE-HARVEST-DUE`
+  (active crop plantings due within 48h), `RULE-LOW-FEED` (an inventory item at or below its own
+  `reorder_level`), and `RULE-EGG-DROP` (a flock's sellable-egg output down more than 20% versus
+  the preceding week); a refresh skips re-creating a rule+entity pair that already has an undecided
+  row rather than spamming duplicates. Every rule goes through the same `_add_recommendation()`
+  helper, which also raises a paired `Notification` row — the only place in this codebase a
+  `Notification` gets created, so `GET /notifications` and the notification half of `GET
+  /priorities` now reflect real, rule-evaluated farm state instead of only test-seeded rows.
 
 ## Known, deliberate gaps
 
-- **`GET /expenses` and `GET /sales` are read-only.** The captured contract has no matching POST
-  endpoint for either — `Expense` rows have no write path yet in this codebase (`app/farmos/
-  finance_models.py` documents this); `Sale` rows are written only by `POST /mouneh/sales` and
-  `POST /visit-retail-sales`, per the contract's own note that a general manual sale-entry endpoint
-  is tracked as follow-on work, not yet built.
+- **`POST /expenses` and `POST /sales` field shapes are inferred, not captured.** The 81+11
+  reference examples never captured a manual expense/sale entry, so these two endpoints (added to
+  close the "no write path" gap noted below) mirror `ExpenseOut`/`SaleOut`'s existing fields rather
+  than a verified real request. `Sale` rows also still arrive via `POST /mouneh/sales` and `POST
+  /visit-retail-sales` as before; the general manual entry point now exists alongside those.
+- **`GET /feed/items`'s new `POST` sibling, `GET /feed/transactions`, and `GET /observations` are
+  the same situation** — built to close a real store-without-display or no-write-path gap using the
+  same field names as their existing `Out` schemas, but not verified against a captured example.
 - **Audit instrumentation is representative, not exhaustive.** `app/audit/service.py`'s
   `record_audit_event` was extended with FarmOS-specific columns (`module_code`, `summary`,
   `changes_json`, `metadata_json`, `device`) and wired into employee CRUD, animal move/update, and

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.common.errors import AppError
-from app.common.logging import CorrelationIdMiddleware, SecurityHeadersMiddleware, configure_logging
+from app.common.logging import (
+    CorrelationIdMiddleware,
+    RequestTraceMiddleware,
+    SecurityHeadersMiddleware,
+    configure_logging,
+)
 from app.config import get_settings
 from app.farmos.idempotency import IdempotencyMiddleware
 
@@ -34,6 +42,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last, which in Starlette means outermost — so it still sees a
+# request that CORSMiddleware rejects. That rejection is the whole reason
+# this exists, and a middleware nested inside CORS would never run to
+# report it.
+app.add_middleware(RequestTraceMiddleware, allowed_origins=settings.cors_origins_list)
 
 
 @app.exception_handler(AppError)
@@ -44,9 +57,25 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+def _health_payload() -> dict:
+    """Liveness, plus which build is answering.
+
+    The version is here rather than behind a login because the question it
+    answers — "did my deploy actually land?" — is asked most often by
+    someone who cannot yet get in, and a deployment that silently serves
+    last week's image is the failure this exists to make impossible. It
+    reveals nothing a caller could not learn from the public image tags.
+    """
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "built_at": settings.app_built_at,
+    }
+
+
 @app.get("/healthz", tags=["Health"])
 def healthz() -> dict:
-    return {"status": "ok"}
+    return _health_payload()
 
 
 @app.get("/health", tags=["Health"])
@@ -56,8 +85,11 @@ def health() -> dict:
     module's own route group, a different thing entirely). Unauthenticated
     and as cheap as /healthz on purpose: the app calls this just to decide
     whether it's online, and anything under 500 counts as reachable.
+
+    The extra keys are additive: a client that only checks the status code,
+    as the tablet app does, is unaffected.
     """
-    return {"status": "ok"}
+    return _health_payload()
 
 
 @app.get("/readyz", tags=["Health"])
@@ -80,7 +112,6 @@ def readyz() -> dict:
 
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.backups.routes import router as backups_router  # noqa: E402
-from app.devices.routes import router as devices_router  # noqa: E402
 from app.farmos.routes_agriculture import router as farmos_agriculture_router  # noqa: E402
 from app.farmos.routes_animals import router as farmos_animals_router  # noqa: E402
 from app.farmos.routes_audit import router as farmos_audit_router  # noqa: E402
@@ -91,6 +122,7 @@ from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
 from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
+from app.farmos.routes_invitations import router as farmos_invitations_router  # noqa: E402
 from app.farmos.routes_modules import router as farmos_modules_router  # noqa: E402
 from app.farmos.routes_mouneh import router as farmos_mouneh_router  # noqa: E402
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
@@ -103,7 +135,11 @@ from app.farmos.routes_tasks import router as farmos_tasks_router  # noqa: E402
 from app.farmos.routes_visit_bookings import router as farmos_visit_bookings_router  # noqa: E402
 from app.farmos.routes_visits import router as farmos_visits_router  # noqa: E402
 from app.files.routes import router as files_router  # noqa: E402
+from app.platform.auth_routes import router as platform_auth_router  # noqa: E402
+from app.platform.metrics_routes import router as platform_metrics_router  # noqa: E402
 from app.platform.routes import router as platform_router  # noqa: E402
+from app.platform.setup_routes import router as platform_setup_router  # noqa: E402
+from app.platform.staff_routes import router as platform_staff_router  # noqa: E402
 from app.support.routes import router as support_router  # noqa: E402
 from app.sync.routes import router as sync_router  # noqa: E402
 
@@ -111,6 +147,7 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
 # The FarmOS tablet contract (docs/FARMOS_API.md) — every path relative to
 # /api/v1, matched exactly against the reference backend's OpenAPI schema.
 app.include_router(farmos_auth_router, prefix="/api/v1", tags=["FarmOS: Auth"])
+app.include_router(farmos_invitations_router, prefix="/api/v1", tags=["FarmOS: Invitations"])
 app.include_router(farmos_employees_router, prefix="/api/v1", tags=["FarmOS: Employees"])
 app.include_router(farmos_farms_router, prefix="/api/v1", tags=["FarmOS: Farm"])
 app.include_router(farmos_animals_router, prefix="/api/v1", tags=["FarmOS: Animals"])
@@ -133,7 +170,19 @@ app.include_router(farmos_visits_router, prefix="/api/v1", tags=["FarmOS: Visits
 app.include_router(farmos_visit_bookings_router, prefix="/api/v1", tags=["FarmOS: Visit Bookings"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
-app.include_router(devices_router, prefix="/api/v1", tags=["Devices"])
+app.include_router(platform_auth_router, prefix="/platform/v1/auth", tags=["Platform Auth"])
 app.include_router(platform_router, prefix="/platform/v1", tags=["Platform"])
+app.include_router(platform_staff_router, prefix="/platform/v1", tags=["Platform Staff"])
+app.include_router(platform_metrics_router, prefix="/platform/v1", tags=["Platform Metrics"])
+app.include_router(platform_setup_router, prefix="/platform/v1", tags=["Platform Setup"])
 app.include_router(support_router, prefix="/platform/v1", tags=["Platform Support"])
 app.include_router(backups_router, prefix="/platform/v1", tags=["Platform Backups"])
+
+# The admin console, mounted last so every API route above still wins the
+# match. Routes are tried in registration order, so this only ever sees
+# paths nothing else claimed. admin-web exports each page as
+# <route>/index.html, which is what html=True resolves a directory URL to;
+# it also serves 404.html for anything unknown.
+_admin_web = Path(settings.admin_web_dir)
+if _admin_web.is_dir():
+    app.mount("/", StaticFiles(directory=_admin_web, html=True), name="admin-web")

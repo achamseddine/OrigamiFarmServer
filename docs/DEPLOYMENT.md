@@ -4,13 +4,46 @@ These are engineering notes for taking this foundation toward staging/production
 runbook — no contractual SLA should be derived from anything below until it has been validated
 against real infrastructure (see ARCHITECTURE.md "What's real vs. scaffolded").
 
+## The deployable unit
+
+One image containing both halves of the product. The Dockerfile lives in `api/` but **builds from
+the repository root**, because it needs `admin-web/` and `scripts/` too:
+
+```bash
+# Stamps the image with the commit you are on, so GET /health can tell you
+# which build is running. A plain `docker build` works too, but reports
+# version "unknown".
+./scripts/build-image.sh origami-api:latest
+docker run -p 8000:8000 --env-file .env origami-api:latest
+
+curl localhost:8000/health
+# {"status":"ok","version":"6fc450c","built_at":"2026-09-19T08:43:39Z"}
+```
+
+`admin-web` compiles to static files in a Node build stage; the runtime stage is Python only and
+serves those files itself from `/`, so the container runs a single process with no Node runtime
+and the console never needs its own hostname, CORS entry, or deployment. Anything the API doesn't
+claim (`/api/v1/**`, `/platform/v1/**`, `/health`, `/docs`) falls through to the console.
+
+`api/docker-entrypoint.sh` runs both migration chains, then execs the image's command. It can be
+turned off per-instance with `RUN_MIGRATIONS=false`, which is what the `workers` service does so
+only one container races to migrate. (It used to also generate a signing keypair for offline
+licence leases, which had to survive every deploy. Device licences are gone, so that is one fewer
+thing a deployment can lose.)
+
+On a single-container host (Azure Web App for Containers, Cloud Run, Fly, a plain Docker host)
+that is the whole deployment — see [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md). One setting
+deserves attention there:
+
+- **`AUTH_DEV_MODE`** stays `false`. The console's sign-in calls `/api/v1/auth/dev-login`, which
+  is disabled unless that flag is on, so a production console needs a real OIDC provider wired up
+  (see `app/auth/providers.py`) rather than the dev path.
+
 ## Environments
 
 Four environments are assumed, per the technical spec: local, development, staging, production.
-Each needs its own `CONTROL_DATABASE_URL` / `TENANT_DATABASE_URL`, its own
-`infrastructure/keys/license_lease_*.pem` keypair (never shared across environments — a lease
-signed in staging must not verify in production), its own `APP_SECRET_KEY`, and its own OIDC
-realm/client. `AUTH_DEV_MODE` must be `false` (the default) everywhere except local/CI —
+Each needs its own `CONTROL_DATABASE_URL` / `TENANT_DATABASE_URL`, its own `APP_SECRET_KEY`, and
+its own OIDC realm/client. `AUTH_DEV_MODE` must be `false` (the default) everywhere except local/CI —
 `app/main.py` refuses to boot with it `true` when `ENVIRONMENT=production`.
 
 ## Migrations
@@ -60,12 +93,14 @@ docstring and ARCHITECTURE.md). Before any commercial commitment on RPO/RTO:
 `.github/workflows/ci.yml` runs, on every push/PR: Python dependency install, `ruff` lint, `mypy`
 (both blocking — the codebase is clean under both as of this commit), Alembic upgrade-head against
 fresh Postgres services (control + tenant), the pytest suite (including the mandatory isolation/
-entitlement/device/sync tests) against those same databases, and the admin-web `tsc --noEmit` +
-`next build`. It does not yet include a staging/production deploy step or a container registry
-push — add those once a target hosting environment is chosen.
+device/sync tests) against those same databases, and the admin-web `tsc --noEmit` +
+`next build`. A target hosting environment now exists (Azure Web App for Containers) — see
+[AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for the manual `az` CLI deploy steps, and
+`.github/workflows/deploy-azure.yml` (manual `workflow_dispatch` only, not yet wired to run
+automatically on push) for the same as a repeatable build-push-deploy workflow.
 
 ## Reverse proxy / TLS
 
-Not part of this repo. In front of `api` and `admin-web`, terminate TLS and apply rate limiting at
-Nginx/Caddy/Traefik/a managed gateway — `docker-compose.yml`'s services are meant to sit behind
-one in any non-local environment.
+Not part of this repo. Terminate TLS and apply rate limiting in front of the container at
+Nginx/Caddy/Traefik/a managed gateway — there is one origin to point it at, since the console and
+the API share it.

@@ -31,7 +31,6 @@ from app.common.enums import (
 from app.common.errors import AppError, ErrorCode
 from app.config import get_settings
 from app.devices.models import Device
-from app.entitlements.service import EntitlementService
 from app.tenants.models import (
     MembershipFarmAccess,
     MembershipModulePermission,
@@ -204,27 +203,19 @@ def require_platform_role(*allowed_roles: PlatformRole) -> Callable:
     return _dependency
 
 
-def require_module(module_code: str) -> Callable:
-    def _dependency(
-        tenant_context: TenantContext = Depends(get_tenant_context),
-        db: Session = Depends(get_control_db),
-    ) -> TenantContext:
-        if not EntitlementService(db).is_module_active(tenant_context.tenant_id, module_code):
-            raise AppError(ErrorCode.MODULE_NOT_ENTITLED, f"Module {module_code} is not entitled")
-        return tenant_context
-
-    return _dependency
-
-
-def require_permission(module_code: str, action: str) -> Callable:
-    def _dependency(
-        tenant_context: TenantContext = Depends(require_module(module_code)),
-    ) -> TenantContext:
-        if not tenant_context.has_permission(module_code, action):
-            raise AppError(ErrorCode.PERMISSION_DENIED)
-        return tenant_context
-
-    return _dependency
+# require_module() and its require_permission() wrapper are gone.
+#
+# They asked whether this tenant had bought a particular module, and
+# refused the request with MODULE_NOT_ENTITLED if not. Origami is now one
+# subscription covering the whole product: there is no module a customer
+# has not bought, so the check could only ever have one answer — and, left
+# in place, it would have answered "no" for every customer created after
+# this change, since nothing writes entitlement rows any more.
+#
+# What still gates a request is unchanged and lives elsewhere:
+# get_tenant_context above refuses a suspended or terminated tenant, and
+# app/farmos/deps.py:require_permission decides what one person may do,
+# from their own membership's permission grid.
 
 
 def require_farm_scope(farm_id: uuid.UUID, tenant_context: TenantContext) -> None:

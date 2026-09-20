@@ -13,7 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
-from app.farmos.schemas import FeedTransactionCreate, InventoryItemOut
+
+from app.farmos.schemas import (
+    FeedTransactionCreate,
+    InventoryItemCreate,
+    InventoryItemOut,
+    InventoryMovementOut,
+)
 from app.tenant_api.models import InventoryItem, InventoryMovement
 
 router = APIRouter()
@@ -45,6 +51,73 @@ def list_inventory_items(
         select(InventoryItem).where(InventoryItem.deleted_at.is_(None)).order_by(InventoryItem.name)
     ).scalars().all()
     return [_to_item_out(row, access.tenant_id) for row in rows]
+
+
+@router.post("/feed/items", response_model=InventoryItemOut, status_code=201)
+def create_inventory_item(
+    payload: InventoryItemCreate,
+    access: AccessContext = Depends(require_permission("feed_nutrition", "create")),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> InventoryItemOut:
+    """Register a new feed/inventory item — a farm's catalog has to start
+    somewhere before POST /feed/transactions (which only moves stock on an
+    item that already exists) can be used against it. An initial_qty, if
+    given, is applied as a real InventoryMovement rather than set directly,
+    matching every other stock change in this module.
+    """
+    item = InventoryItem(
+        tenant_id=access.tenant_id,
+        last_modified_by=access.membership_id,
+        name=payload.name,
+        category=payload.category,
+        unit=payload.unit,
+        current_qty=0,
+        reorder_level=payload.reorder_level,
+        supplier_label=payload.supplier_label,
+        unit_cost=payload.unit_cost,
+        last_purchase=payload.last_purchase,
+    )
+    db.add(item)
+    db.flush()
+
+    if payload.initial_qty:
+        db.add(
+            InventoryMovement(
+                tenant_id=access.tenant_id,
+                inventory_item_id=item.id,
+                quantity_delta=payload.initial_qty,
+                reason="Initial stock",
+                occurred_at=datetime.now(timezone.utc),
+                last_modified_by=access.membership_id,
+            )
+        )
+        item.current_qty = payload.initial_qty
+        item.version += 1
+        db.flush()
+
+    return _to_item_out(item, access.tenant_id)
+
+
+@router.get("/feed/transactions", response_model=list[InventoryMovementOut])
+def list_feed_transactions(
+    farm_id: str = Query(...),
+    item_id: str | None = Query(default=None),
+    days: int = Query(default=90),
+    access: AccessContext = Depends(require_permission("feed_nutrition", "view")),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[InventoryMovementOut]:
+    check_farm_id(farm_id, access)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = select(InventoryMovement).where(
+        InventoryMovement.deleted_at.is_(None), InventoryMovement.occurred_at >= since
+    )
+    if item_id:
+        try:
+            stmt = stmt.where(InventoryMovement.inventory_item_id == uuid.UUID(item_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Inventory item not found.") from exc
+    rows = db.execute(stmt.order_by(InventoryMovement.occurred_at.desc())).scalars().all()
+    return [_to_movement_out(row) for row in rows]
 
 
 @router.post("/feed/transactions", response_model=InventoryItemOut, status_code=201)

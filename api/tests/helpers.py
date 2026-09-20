@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserIdentity
+from app.auth.passwords import hash_password
 from app.common.enums import (
     EntitlementSource,
     EntitlementStatus,
@@ -23,7 +24,6 @@ from app.common.enums import (
     TenantRole,
     TenantStatus,
 )
-from app.farmos.security import hash_password
 from app.plans.models import ModuleCatalog, TenantEntitlement
 from app.tenants.models import (
     MembershipFarmAccess,
@@ -162,3 +162,21 @@ def add_farmos_user(
             )
     db.flush()
     return user, membership
+
+
+def ensure_farmos_catalog(db: Session) -> None:
+    """Creates the tablet module catalog with each module's real licence.
+
+    Tests run against an empty catalog (scripts/seed.py is not part of the
+    fixture), so without this a test would be asserting against modules
+    that carry no license_code and are therefore free for everyone — which
+    is the exact bug the licence mapping exists to fix, quietly reproduced
+    inside the test suite.
+    """
+    from app.plans.licensing_map import MODULE_LICENCES
+
+    for module_code, licence in MODULE_LICENCES.items():
+        module = ensure_module(db, module_code)
+        module.license_code = licence
+        ensure_module(db, licence)
+    db.flush()

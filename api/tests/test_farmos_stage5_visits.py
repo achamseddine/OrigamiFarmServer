@@ -54,19 +54,26 @@ def _make_package(client, token, *, base_price=15):
     return resp.json()
 
 
-def test_module_status_reflects_activation(client, control_db):
+def test_the_visits_module_is_active_without_being_activated(client, control_db):
+    """This test used to prove the opposite — inactive until somebody
+    activated the add-on. Farm Visits is part of the one subscription now,
+    and the app locks the whole module on a falsy `active`, so a brand new
+    customer would have found a paid-for screen shut against them.
+    """
     _tenant, token = _owner(client, control_db, "FARM-VIS", "visowner@origami-demo.com")
 
-    before = client.get("/api/v1/modules/visits/status", headers=farmos_headers(token))
-    assert before.json()["active"] is False
-
-    _activate_visits(client, token)
-
-    after = client.get("/api/v1/modules/visits/status", headers=farmos_headers(token))
-    body = after.json()
+    resp = client.get("/api/v1/modules/visits/status", headers=farmos_headers(token))
+    body = resp.json()
     assert body["active"] is True
+    assert body["status"] == "active"
     assert body["module_code"] == "visits_agritourism"
     assert body["features"]["staff_costing"] is True
+
+    # And the activate call a shipped app still makes is answered, not 404ed.
+    _activate_visits(client, token)
+    assert client.get(
+        "/api/v1/modules/visits/status", headers=farmos_headers(token)
+    ).json()["active"] is True
 
 
 def test_booking_creation_totals_package_and_activities(client, control_db):

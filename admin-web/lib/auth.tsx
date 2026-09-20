@@ -8,13 +8,17 @@ interface Me {
   user_id: string;
   email: string;
   display_name: string;
+  platform_roles: string[];
+  /** True while the password in force is one an admin typed for them. */
+  password_set_by_someone_else: boolean;
 }
 
 interface AuthState {
   me: Me | null;
   loading: boolean;
-  login: (email: string, displayName?: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -32,7 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const result = await apiFetch<Me>("/api/v1/me");
+      const result = await apiFetch<Me>("/platform/v1/me");
       setMe(result);
     } catch {
       clearToken();
@@ -47,10 +51,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function login(email: string, displayName?: string) {
-    const result = await apiFetch<{ access_token: string }>("/api/v1/auth/dev-login", {
+  async function login(email: string, password: string) {
+    const result = await apiFetch<{ access_token: string }>("/platform/v1/auth/login", {
       method: "POST",
-      body: { email, display_name: displayName },
+      body: { email, password },
     });
     setToken(result.access_token);
     await refresh();
@@ -63,7 +67,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push("/login");
   }
 
-  return <AuthContext.Provider value={{ me, loading, login, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ me, loading, login, logout, refresh }}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthState {

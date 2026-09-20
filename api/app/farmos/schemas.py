@@ -7,17 +7,23 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+    # How a tablet comes to be on the Devices tab now that nothing pairs
+    # it. The app generates this once, on first launch, and sends it every
+    # time; the server records or refreshes a Device row so an operator
+    # can still see which tablets a customer is using and revoke one that
+    # walks off. Optional: a tablet that does not send it simply does not
+    # appear, rather than being unable to sign in — a device list is worth
+    # having, not worth blocking a farm worker's morning over.
+    installation_id: str | None = Field(default=None, max_length=128)
+    device_name: str | None = Field(default=None, max_length=120)
+    app_version: str | None = Field(default=None, max_length=40)
 
 
 class UserProfileOut(BaseModel):
@@ -30,6 +36,21 @@ class UserProfileOut(BaseModel):
     department: str | None
     language: str
     active: bool
+
+
+# Declared after UserProfileOut because it carries one: the tablet app
+# reads `user` straight out of the login response and never calls
+# /auth/me, so a login without it left the app holding a valid token and
+# no profile. Worse, the cast it does there — `json['user'] as
+# Map<String, dynamic>` — throws a Dart type error rather than an API
+# error, which its `on ApiException` handler does not catch: the sign-in
+# button appeared to do nothing at all, with a 200 in the server log.
+# Same shape as /auth/me, built from the same fields, so the two cannot
+# drift apart.
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserProfileOut
 
 
 class ModulePermissionOut(BaseModel):
@@ -700,6 +721,17 @@ class InventoryItemOut(BaseModel):
     supplier_label: str | None
     unit_cost: float | None
     last_purchase: datetime | None
+
+
+class InventoryItemCreate(BaseModel):
+    name: str
+    unit: str
+    category: str | None = None
+    reorder_level: float = 0
+    supplier_label: str | None = None
+    unit_cost: float | None = None
+    initial_qty: float = 0
+    last_purchase: datetime | None = None
 
 
 class FeedTransactionCreate(BaseModel):
