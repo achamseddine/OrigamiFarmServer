@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiFetch } from "./api";
+import { Icon, IconName, IconRoundel, Tone } from "@/components/Icon";
 
 /** Fetches a GET endpoint and tracks its loading/error state.
  *
@@ -41,11 +42,64 @@ export function describeError(err: unknown): string {
   return err instanceof ApiError ? `${err.code}: ${err.message}` : "Something went wrong";
 }
 
-export function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+/** The page banner: title, one line of context, and the screen's own
+ *  commands.
+ *
+ *  The redesign gives every screen a header band with the Bekaa panorama
+ *  washed out behind it, and puts the page's primary actions on that same
+ *  line — the Feed screen's "Add Feed" and "Download Report" are the
+ *  pattern. Actions passed here land beside the title rather than floating
+ *  above the first panel.
+ */
+export function PageHeader({
+  title,
+  subtitle,
+  icon,
+  tone = "cedar",
+  actions,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: IconName;
+  tone?: Tone;
+  actions?: React.ReactNode;
+}) {
   return (
-    <div>
-      <h1 className="page-title">{title}</h1>
-      {subtitle && <p className="page-subtitle">{subtitle}</p>}
+    <div className="page-head">
+      <div className="page-head-main">
+        {icon && <IconRoundel name={icon} tone={tone} size={52} />}
+        <div style={{ minWidth: 0 }}>
+          <h1 className="page-title">{title}</h1>
+          {subtitle && <p className="page-subtitle">{subtitle}</p>}
+        </div>
+      </div>
+      {actions && <div className="page-actions">{actions}</div>}
+    </div>
+  );
+}
+
+/** A titled panel with an icon and optional trailing controls. */
+export function PanelHead({
+  title,
+  note,
+  icon,
+  tone = "cedar",
+  tail,
+}: {
+  title: string;
+  note?: string;
+  icon?: IconName;
+  tone?: Tone;
+  tail?: React.ReactNode;
+}) {
+  return (
+    <div className="panel-head">
+      {icon && <IconRoundel name={icon} tone={tone} size={38} />}
+      <div style={{ minWidth: 0 }}>
+        <div className="t">{title}</div>
+        {note && <div className="d">{note}</div>}
+      </div>
+      {tail && <div className="tail">{tail}</div>}
     </div>
   );
 }
@@ -56,14 +110,70 @@ export function Loading({ what }: { what: string }) {
 
 export function ErrorBanner({ message }: { message: string | null }) {
   if (!message) return null;
-  return <div className="error-banner">{message}</div>;
+  return (
+    <div className="error-banner" role="alert">
+      <Icon name="warning" size={18} />
+      <span>{message}</span>
+    </div>
+  );
 }
 
-export function StatTile({ value, label, href }: { value: number | string; label: string; href?: string }) {
+/** A notice that is not a failure — an unfinished setup, a caveat on the
+ *  numbers below. Same shape as the error banner so the two read as a pair. */
+export function NoticeBanner({
+  children,
+  icon = "warning",
+}: {
+  children: React.ReactNode;
+  icon?: IconName;
+}) {
+  return (
+    <div className="notice-banner">
+      <Icon name={icon} size={18} />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+/** A KPI card.
+ *
+ *  Large metric, concise label, pale semantic roundel — and never a status
+ *  colour washed across the whole card. Give it an `href` and the whole
+ *  card becomes the target, which is what the spec asks for when a card
+ *  drills into data.
+ */
+export function StatTile({
+  value,
+  label,
+  href,
+  icon,
+  tone = "cedar",
+  foot,
+}: {
+  value: number | string;
+  label: string;
+  href?: string;
+  icon?: IconName;
+  tone?: Tone;
+  foot?: string;
+}) {
   const body = (
     <>
+      <div className="head">
+        <div className="label">{label}</div>
+        {icon && <IconRoundel name={icon} tone={tone} size={40} />}
+      </div>
       <div className="value">{value}</div>
-      <div className="label">{label}</div>
+      {(foot || href) && (
+        <div className="foot">
+          {foot && <span>{foot}</span>}
+          {href && (
+            <span className="go" aria-hidden="true">
+              <Icon name="arrow-right" size={18} />
+            </span>
+          )}
+        </div>
+      )}
     </>
   );
   return href ? (

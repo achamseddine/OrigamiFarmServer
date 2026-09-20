@@ -1,4 +1,5 @@
 "use client";
+import { Icon } from "@/components/Icon";
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
@@ -49,12 +50,15 @@ export default function AccountPage() {
 
   return (
     <div>
-      <PageHeader title="My account" subtitle="Your identity and platform access." />
+      <PageHeader icon="user" title="My account" subtitle="Your identity and platform access." />
 
       {me?.password_set_by_someone_else && !notice && (
         <div className="notice-banner">
-          The password on this account is still the one whoever created it typed for you, so they
-          know it too. Change it below.
+          <Icon name="key" size={18} />
+          <span>
+            The password on this account is still the one whoever created it typed for you, so
+            they know it too. Change it below.
+          </span>
         </div>
       )}
 

@@ -15,6 +15,8 @@ export default function AuditPage() {
   return (
     <div>
       <PageHeader
+        icon="report"
+        tone="neutral"
         title="Audit log"
         subtitle="Every consequential action across the platform, newest first — appended, never edited."
       />

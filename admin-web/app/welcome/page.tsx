@@ -3,6 +3,8 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { BrandLogo } from "@/components/Brand";
+import { Icon } from "@/components/Icon";
 
 /** Where an invitation link lands.
  *
@@ -31,28 +33,10 @@ interface CheckResult {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--farmos-stone)",
-        padding: 16,
-      }}
-    >
-      <div className="panel" style={{ width: "100%", maxWidth: 420 }}>
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontSize: "1.5rem",
-            color: "var(--farmos-cedar)",
-            marginBottom: 20,
-          }}
-        >
-          Origami
-        </div>
-        {children}
+    <div className="entry-solo">
+      <div className="panel">
+        <BrandLogo size={42} />
+        <div style={{ marginTop: 22 }}>{children}</div>
       </div>
     </div>
   );
@@ -122,7 +106,10 @@ function WelcomeForm() {
   if (done) {
     return (
       <Shell>
-        <h1 className="page-title" style={{ fontSize: "1.3rem" }}>
+        <h1 className="page-title" style={{ fontSize: "1.3rem", display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="roundel" style={{ width: 38, height: 38 }}>
+            <Icon name="check" size={20} />
+          </span>
           You&rsquo;re all set, {done.display_name}
         </h1>
         <p className="page-subtitle">
@@ -186,7 +173,12 @@ function WelcomeForm() {
         <strong>{check.email}</strong>.
       </p>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="warning" size={18} />
+          <span>{error}</span>
+        </div>
+      )}
 
       <form onSubmit={submit}>
         <div className="field-row">
@@ -213,8 +205,14 @@ function WelcomeForm() {
             onChange={(e) => setConfirm(e.target.value)}
           />
         </div>
-        <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: "100%" }}>
+        <button
+          className="btn btn-primary btn-fold"
+          type="submit"
+          disabled={submitting}
+          style={{ width: "100%" }}
+        >
           {submitting ? "Saving…" : "Set my password"}
+          {!submitting && <Icon name="arrow-right" size={20} />}
         </button>
       </form>
     </Shell>

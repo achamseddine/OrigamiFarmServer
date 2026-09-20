@@ -172,6 +172,8 @@ export default function GuidePage() {
   return (
     <div>
       <PageHeader
+        icon="sun"
+        tone="gold"
         title="Getting started"
         subtitle="How Origami is run, in the order you do it. Every box below is checked against this platform's own data, so it says where you have actually got to — not where a document assumed you would be."
       />

@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { Icon } from "@/components/Icon";
 import {
   ErrorBanner,
   Loading,
   PageHeader,
+  PanelHead,
   RankedBars,
   StatTile,
   TimeBars,
@@ -20,8 +22,16 @@ export default function BusinessPage() {
   return (
     <div>
       <PageHeader
+        icon="coins"
+        tone="gold"
         title="Business"
         subtitle="Contracted recurring revenue and the commercial pipeline behind it."
+        actions={
+          <Link href="/catalog" className="btn btn-secondary">
+            <Icon name="cart" size={20} />
+            Pricing
+          </Link>
+        }
       />
       <ErrorBanner message={error} />
       {loading && <Loading what="revenue" />}
@@ -31,23 +41,55 @@ export default function BusinessPage() {
           <DataQualityNotices data={data} />
 
           <div className="card-grid">
-            <StatTile value={formatMoney(data.mrr_cents, data.currency)} label="MRR (contracted)" />
-            <StatTile value={formatMoney(data.arr_cents, data.currency)} label="ARR (MRR × 12)" />
-            <StatTile value={formatMoney(data.arpa_cents, data.currency)} label="Average per account" />
-            <StatTile value={data.paying_tenants} label="Paying tenants" />
+            <StatTile
+              value={formatMoney(data.mrr_cents, data.currency)}
+              label="MRR (contracted)"
+              icon="money"
+            />
+            <StatTile
+              value={formatMoney(data.arr_cents, data.currency)}
+              label="ARR (MRR × 12)"
+              icon="chart-line"
+            />
+            <StatTile
+              value={formatMoney(data.arpa_cents, data.currency)}
+              label="Average per account"
+              icon="scale"
+              tone="neutral"
+            />
+            <StatTile
+              value={data.paying_tenants}
+              label="Paying tenants"
+              icon="barn"
+              href="/tenants"
+            />
           </div>
 
           <div className="card-grid">
-            <StatTile value={data.trial_tenants} label="In trial / onboarding" />
+            <StatTile
+              value={data.trial_tenants}
+              label="In trial / onboarding"
+              icon="clock"
+              tone="sky"
+            />
             <StatTile
               value={formatMoney(data.at_risk_mrr_cents, data.currency)}
               label={`At risk — past due (${data.at_risk_tenants})`}
+              icon="warning"
+              tone={data.at_risk_tenants > 0 ? "danger" : "neutral"}
             />
             <StatTile
               value={formatMoney(data.renewals_due_30d_mrr_cents, data.currency)}
               label={`Up for renewal in 30d (${data.renewals_due_30d})`}
+              icon="calendar"
+              tone={data.renewals_due_30d > 0 ? "gold" : "neutral"}
             />
-            <StatTile value={data.lost_tenants} label="Suspended or terminated" />
+            <StatTile
+              value={data.lost_tenants}
+              label="Suspended or terminated"
+              icon="x"
+              tone="neutral"
+            />
           </div>
 
           <div className="panel">
@@ -63,9 +105,7 @@ export default function BusinessPage() {
           </div>
 
           <div className="panel">
-            <div className="chart-title" style={{ marginBottom: 12 }}>
-              Plans
-            </div>
+            <PanelHead icon="cart" title="Plans" note="What each plan costs and what it earns." />
             <div className="table-scroll">
               <table className="data-table">
                 <thead>
@@ -162,14 +202,17 @@ function DataQualityNotices({ data }: { data: MetricsRevenue }) {
 
   return (
     <div className="notice-banner">
-      <strong>Before reading these numbers</strong>
-      <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-        {notices.map((notice) => (
-          <li key={notice} style={{ marginBottom: 4 }}>
-            {notice}
-          </li>
-        ))}
-      </ul>
+      <Icon name="warning" size={18} />
+      <div>
+        <strong>Before reading these numbers</strong>
+        <ul style={{ margin: "8px 0 0", paddingInlineStart: 18 }}>
+          {notices.map((notice) => (
+            <li key={notice} style={{ marginBottom: 4 }}>
+              {notice}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -179,9 +222,12 @@ function Invoicing({ data }: { data: MetricsRevenue }) {
 
   return (
     <div className="panel">
-      <div className="chart-title" style={{ marginBottom: 4 }}>
-        Billing and collections
-      </div>
+      <PanelHead
+        icon="report"
+        tone="neutral"
+        title="Billing and collections"
+        note="Cash billed and received, as opposed to revenue contracted."
+      />
       {!invoicing.billing_configured ? (
         <>
           <div className="chart-note">

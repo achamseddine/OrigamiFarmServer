@@ -1,22 +1,69 @@
-:root {
-  --farmos-cedar: #0b3d2e;
-  --farmos-cedar-2: #145c3d;
-  --farmos-olive: #1f7a4d;
-  --farmos-gold: #d6a84f;
-  --farmos-wheat: #f0d79a;
-  --farmos-stone: #f7f3ea;
-  --farmos-sand: #e8dec9;
-  --farmos-ink: #071814;
-  --farmos-muted: #65756d;
-  --farmos-mist: #eaf1ec;
-  --farmos-danger: #a63c35;
-  --farmos-warning: #d9822b;
-  --farmos-card: #fffdf7;
-  --farmos-border: #e7dec9;
+/* Origami FarmOS — console theme, v1 redesign.
+ *
+ * The palette, radii and touch target below are the design package's own
+ * tokens (06_design_tokens/design_tokens.css) copied verbatim. Everything
+ * after the token block is this console expressed in them.
+ *
+ * Two rules from 07_components/component_spec.md shape most of what
+ * follows and are worth stating once rather than repeating in comments:
+ *
+ *   - a status tint goes on a pale roundel or chip, never as a wash across
+ *     a whole card, and
+ *   - status is never carried by colour alone: every chip and alert prints
+ *     its own word too.
+ */
 
-  --font-display: "Fraunces", Georgia, serif;
+:root {
+  /* --- design tokens, verbatim ------------------------------------- */
+  --farmos-paper: #f7f5f0;
+  --farmos-surface: #ffffff;
+  --farmos-surface-soft: #f1f0ea;
+  --farmos-border: #e3dfd7;
+  --farmos-ink: #1f2320;
+  --farmos-muted: #656a65;
+  --farmos-cedar: #2f6b4f;
+  --farmos-cedar-dark: #174936;
+  --farmos-cedar-fold: #245640;
+  --farmos-cedar-mid: #35795a;
+  --farmos-cedar-pale: #e9efea;
+  --farmos-gold: #d6a84f;
+  --farmos-warning: #a67a2b;
+  --farmos-warning-pale: #f4ecdc;
+  --farmos-danger: #c2543c;
+  --farmos-danger-pale: #f6e6e1;
+  --farmos-success: #2f6b4f;
+  --farmos-sky-blue-pale: #dff1f7;
+  --farmos-purple-pale: #ede5f7;
+  --farmos-black: #0d1713;
+  --farmos-white: #ffffff;
+  --radius-card: 18px;
+  --radius-modal: 30px;
+  --touch-target: 48px;
+
+  /* --- derived, console-only ---------------------------------------- */
+  --radius-control: 12px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(13, 23, 19, 0.04), 0 8px 24px rgba(13, 23, 19, 0.05);
+  --shadow-lift: 0 4px 10px rgba(13, 23, 19, 0.07), 0 16px 36px rgba(13, 23, 19, 0.1);
+  --shadow-sheet: 0 24px 60px rgba(13, 23, 19, 0.24);
+  --sidebar-width: 248px;
+  --appbar-height: 72px;
+
+  /* Kept as aliases so any inline style written against the old names
+     still lands inside the new palette rather than off it. */
+  --farmos-stone: var(--farmos-paper);
+  --farmos-card: var(--farmos-surface);
+  --farmos-mist: var(--farmos-cedar-pale);
+  --farmos-sand: var(--farmos-surface-soft);
+  --farmos-wheat: #dfe8e1;
+  --farmos-olive: var(--farmos-cedar-mid);
+  --farmos-cedar-2: var(--farmos-cedar-mid);
+  --farmos-line: var(--farmos-border);
+
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-arabic: "Noto Sans Arabic", Tahoma, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 * {
@@ -27,9 +74,17 @@ html,
 body {
   padding: 0;
   margin: 0;
-  background: var(--farmos-stone);
+  background: var(--farmos-paper);
   color: var(--farmos-ink);
   font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Arabic is a first-class direction here, not a mirrored afterthought:
+   the whole shell is built from logical properties, so the one thing the
+   document has to change is the typeface. */
+[dir="rtl"] body {
+  font-family: var(--font-arabic);
 }
 
 a {
@@ -40,112 +95,603 @@ button {
   font-family: inherit;
 }
 
+:focus-visible {
+  outline: 2px solid var(--farmos-cedar);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --- app shell -------------------------------------------------------
+   Sidebar for destinations, a top bar for identity and platform state.
+   The mockups put the mark, the sync pill and the avatar on one line
+   above everything, and that line is the same on every screen. */
+
 .app-shell {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
 }
 
 .sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  background: var(--farmos-cedar);
-  color: var(--farmos-wheat);
-  padding: 24px 16px;
+  background: var(--farmos-cedar-dark);
+  color: #dfe8e1;
+  padding: 22px 14px 18px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .sidebar-brand {
-  font-family: var(--font-display);
-  font-size: 1.25rem;
-  color: white;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 6px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-decoration: none;
+}
+
+.sidebar-brand .brand-lockup .words {
+  color: var(--farmos-white);
+}
+
+.sidebar-brand .s {
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--farmos-gold);
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .sidebar-nav a {
-  display: block;
-  padding: 10px 12px;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--touch-target);
+  padding: 0 12px;
+  border-radius: var(--radius-control);
   text-decoration: none;
-  color: var(--farmos-wheat);
-  font-size: 0.9rem;
+  color: #cfdcd3;
+  font-size: 0.88rem;
+  font-weight: 500;
+  border-inline-start: 3px solid transparent;
+  transition: background 0.14s ease, color 0.14s ease;
 }
 
-.sidebar-nav a.active,
-.sidebar-nav a:hover {
-  background: var(--farmos-cedar-2);
-  color: white;
+.sidebar-nav a svg {
+  flex-shrink: 0;
+  opacity: 0.85;
 }
+
+.sidebar-nav a:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--farmos-white);
+}
+
+.sidebar-nav a.active {
+  background: var(--farmos-cedar-fold);
+  color: var(--farmos-white);
+  border-inline-start-color: var(--farmos-gold);
+  font-weight: 600;
+}
+
+.sidebar-nav a.active svg {
+  opacity: 1;
+  color: var(--farmos-gold);
+}
+
+.sidebar-section {
+  margin-top: 16px;
+  margin-bottom: 4px;
+  padding-inline-start: 14px;
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9db3a6;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.78rem;
+  color: #cfdcd3;
+}
+
+/* --- top bar ---------------------------------------------------------- */
+
+.appbar {
+  height: var(--appbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 28px;
+  background: rgba(247, 245, 240, 0.9);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--farmos-border);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.appbar-cluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Mark plus name. The name is UI type, not artwork: the logo itself is
+   the pinwheel and carries no wordmark. */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  text-decoration: none;
+}
+
+.brand-lockup .words {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--farmos-cedar-dark);
+  white-space: nowrap;
+}
+
+.brand-lockup .words .alt {
+  color: var(--farmos-gold);
+  margin-inline-start: 0.3em;
+}
+
+/* The sync pill: platform state, said in words and repeated in colour —
+   "Live" with a green dot, never a bare green dot. */
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  background: var(--farmos-surface-soft);
+  border: 1px solid var(--farmos-border);
+  font-size: 0.78rem;
+  color: var(--farmos-ink);
+  text-decoration: none;
+}
+
+.state-pill .t {
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.state-pill .d {
+  color: var(--farmos-muted);
+  font-size: 0.68rem;
+  line-height: 1.15;
+}
+
+.state-pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--farmos-success);
+  flex-shrink: 0;
+}
+
+.state-pill[data-state="down"] .dot {
+  background: var(--farmos-danger);
+}
+
+.state-pill[data-state="unknown"] .dot {
+  background: var(--farmos-gold);
+}
+
+.icon-btn {
+  width: var(--touch-target);
+  height: var(--touch-target);
+  border-radius: 50%;
+  border: 1px solid var(--farmos-border);
+  background: var(--farmos-surface);
+  color: var(--farmos-ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.icon-btn:hover {
+  background: var(--farmos-cedar-pale);
+  border-color: var(--farmos-cedar);
+}
+
+.icon-btn .badge {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--farmos-danger);
+  border: 2px solid var(--farmos-surface);
+}
+
+/* Avatar + chevron, as one target, exactly as the profile mockup has it. */
+.avatar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--touch-target);
+  padding: 4px 12px 4px 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--farmos-border);
+  background: var(--farmos-surface);
+  cursor: pointer;
+  color: var(--farmos-ink);
+}
+
+.avatar-btn:hover {
+  border-color: var(--farmos-cedar);
+}
+
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--farmos-gold);
+  color: var(--farmos-black);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+/* --- profile side sheet ----------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 23, 19, 0.38);
+  z-index: 40;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
+.sheet {
+  position: fixed;
+  top: 14px;
+  inset-inline-end: 14px;
+  width: min(360px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  background: var(--farmos-surface);
+  border-radius: var(--radius-modal);
+  box-shadow: var(--shadow-sheet);
+  z-index: 50;
+  padding: 22px 20px 16px;
+}
+
+.sheet-id {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+}
+
+.sheet-id .avatar {
+  width: 56px;
+  height: 56px;
+  font-size: 1.3rem;
+  box-shadow: 0 0 0 4px var(--farmos-warning-pale);
+}
+
+.sheet-id .n {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.sheet-id .e {
+  font-size: 0.8rem;
+  color: var(--farmos-muted);
+  overflow-wrap: anywhere;
+}
+
+.sheet-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--farmos-border);
+}
+
+.sheet-links {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+
+.sheet-links a,
+.sheet-links button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--touch-target);
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  border: 0;
+  background: none;
+  text-align: start;
+  text-decoration: none;
+  color: var(--farmos-ink);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  width: 100%;
+}
+
+.sheet-links a:hover,
+.sheet-links button:hover {
+  background: var(--farmos-cedar-pale);
+}
+
+.sheet-links .tail {
+  margin-inline-start: auto;
+  color: var(--farmos-muted);
+  display: flex;
+}
+
+/* Logout is isolated at the bottom, in danger, per the spec. */
+.sheet-out {
+  border-top: 1px solid var(--farmos-border);
+  padding-top: 8px;
+}
+
+.sheet-out button {
+  color: var(--farmos-danger);
+  font-weight: 600;
+}
+
+.sheet-out button:hover {
+  background: var(--farmos-danger-pale);
+}
+
+.sheet-foot {
+  padding-top: 10px;
+  text-align: center;
+}
+
+/* --- main column ------------------------------------------------------ */
 
 .main-content {
-  flex: 1;
-  padding: 32px 40px;
-  max-width: 1200px;
+  padding: 28px 28px 56px;
+  max-width: 1360px;
+}
+
+/* --- page header ------------------------------------------------------
+   The Bekaa panorama sits behind the title at very low contrast, as the
+   header spec asks. It is a vector, text-free and reusable — never the
+   flattened mockup. */
+
+.page-head {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--farmos-cedar-pale) url("/backgrounds/bekaa_header_panorama.svg") center 62% /
+    cover no-repeat;
+  padding: 26px 28px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--farmos-border);
+}
+
+/* A wash, not a filter: the panorama has to stay behind the words rather
+   than compete with them in outdoor light. */
+.page-head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(247, 245, 240, 0.9),
+    rgba(247, 245, 240, 0.82) 55%,
+    rgba(247, 245, 240, 0.94)
+  );
+}
+
+.page-head > * {
+  position: relative;
+}
+
+.page-head-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
 }
 
 .page-title {
   font-family: var(--font-display);
-  font-size: 1.75rem;
-  margin: 0 0 4px 0;
-  color: var(--farmos-cedar);
+  font-size: 1.8rem;
+  line-height: 1.15;
+  margin: 0 0 2px 0;
+  color: var(--farmos-cedar-dark);
 }
 
 .page-subtitle {
   color: var(--farmos-muted);
-  margin: 0 0 24px 0;
+  margin: 0;
+  font-size: 0.9rem;
+  max-width: 78ch;
 }
+
+.page-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Pages that render a bare header outside .page-head still need spacing. */
+.page-head + .error-banner,
+.page-head + .notice-banner {
+  margin-top: -8px;
+}
+
+/* --- KPI cards --------------------------------------------------------- */
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
-  margin-bottom: 32px;
+  grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
 }
 
 .stat-card {
-  background: var(--farmos-card);
+  background: var(--farmos-surface);
   border: 1px solid var(--farmos-border);
-  border-radius: 12px;
-  padding: 20px;
-  cursor: pointer;
-  text-align: left;
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  border-radius: var(--radius-card);
+  padding: 18px 20px;
+  min-height: 118px;
+  text-align: start;
   color: inherit;
   text-decoration: none;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
 }
 
-.stat-card:hover {
-  box-shadow: 0 4px 16px rgba(11, 61, 46, 0.12);
-  transform: translateY(-1px);
+a.stat-card:hover {
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-2px);
+  border-color: var(--farmos-cedar);
 }
 
-.stat-card .value {
-  font-family: var(--font-display);
-  font-size: 2rem;
-  color: var(--farmos-cedar);
+.stat-card .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .stat-card .label {
   color: var(--farmos-muted);
-  font-size: 0.85rem;
-  margin-top: 4px;
+  font-size: 0.82rem;
+  font-weight: 500;
 }
 
-.panel {
-  background: var(--farmos-card);
-  border: 1px solid var(--farmos-border);
-  border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 24px;
+.stat-card .value {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  line-height: 1.1;
+  color: var(--farmos-ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
+
+.stat-card .foot {
+  font-size: 0.76rem;
+  color: var(--farmos-muted);
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stat-card .foot .go {
+  margin-inline-start: auto;
+  color: var(--farmos-cedar);
+  display: flex;
+}
+
+/* The pale semantic roundel. Tint lives here and nowhere else. */
+.roundel {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--farmos-cedar-pale);
+  color: var(--farmos-cedar);
+}
+
+.roundel[data-tone="gold"] {
+  background: var(--farmos-warning-pale);
+  color: var(--farmos-warning);
+}
+
+.roundel[data-tone="danger"] {
+  background: var(--farmos-danger-pale);
+  color: var(--farmos-danger);
+}
+
+.roundel[data-tone="sky"] {
+  background: var(--farmos-sky-blue-pale);
+  color: #2a6b80;
+}
+
+.roundel[data-tone="purple"] {
+  background: var(--farmos-purple-pale);
+  color: #5b3f86;
+}
+
+.roundel[data-tone="neutral"] {
+  background: var(--farmos-surface-soft);
+  color: var(--farmos-muted);
+}
+
+/* --- panels ------------------------------------------------------------ */
+
+.panel {
+  background: var(--farmos-surface);
+  border: 1px solid var(--farmos-border);
+  border-radius: var(--radius-card);
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.panel-head .t {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--farmos-ink);
+}
+
+.panel-head .d {
+  font-size: 0.78rem;
+  color: var(--farmos-muted);
+}
+
+.panel-head .tail {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* --- tables ------------------------------------------------------------ */
 
 table {
   width: 100%;
@@ -154,18 +700,18 @@ table {
 
 th,
 td {
-  text-align: left;
-  padding: 10px 12px;
+  text-align: start;
+  padding: 11px 12px;
   border-bottom: 1px solid var(--farmos-border);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
 
 th {
   color: var(--farmos-muted);
   font-weight: 600;
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
 }
 
 tr.clickable {
@@ -173,172 +719,8 @@ tr.clickable {
 }
 
 tr.clickable:hover {
-  background: var(--farmos-mist);
+  background: var(--farmos-cedar-pale);
 }
-
-.toolbar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-  align-items: center;
-}
-
-input,
-select {
-  font-family: inherit;
-  padding: 8px 12px;
-  border: 1px solid var(--farmos-border);
-  border-radius: 8px;
-  font-size: 0.9rem;
-  background: white;
-}
-
-.btn {
-  font-family: inherit;
-  padding: 9px 16px;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.btn-primary {
-  background: var(--farmos-cedar);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: var(--farmos-cedar-2);
-}
-
-.btn-secondary {
-  background: white;
-  border: 1px solid var(--farmos-border);
-  color: var(--farmos-ink);
-}
-
-.btn-danger {
-  background: var(--farmos-danger);
-  color: white;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.chip {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.chip-active {
-  background: #e3f3e9;
-  color: var(--farmos-olive);
-}
-.chip-trial {
-  background: var(--farmos-wheat);
-  color: #7a5a10;
-}
-.chip-grace {
-  background: #fdecd8;
-  color: var(--farmos-warning);
-}
-.chip-suspended,
-.chip-revoked {
-  background: #f6e1df;
-  color: var(--farmos-danger);
-}
-.chip-terminated {
-  background: #eee;
-  color: var(--farmos-muted);
-}
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--farmos-border);
-  margin-bottom: 24px;
-}
-
-.tab {
-  padding: 10px 16px;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  color: var(--farmos-muted);
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.tab.active {
-  color: var(--farmos-cedar);
-  border-bottom-color: var(--farmos-cedar);
-}
-
-.error-banner {
-  background: #f6e1df;
-  color: var(--farmos-danger);
-  padding: 12px 16px;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  font-size: 0.9rem;
-}
-
-.field-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 16px;
-}
-
-.field-row label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--farmos-muted);
-}
-
-.wizard-steps {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 24px;
-}
-
-.wizard-step {
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  background: var(--farmos-mist);
-  color: var(--farmos-muted);
-}
-
-.wizard-step.active {
-  background: var(--farmos-cedar);
-  color: white;
-}
-
-.wizard-step.done {
-  background: var(--farmos-olive);
-  color: white;
-}
-
-/* --- navigation sections ------------------------------------------- */
-
-.sidebar-section {
-  margin-top: 18px;
-  margin-bottom: 6px;
-  padding-left: 4px;
-  font-size: 0.68rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--farmos-wheat);
-  opacity: 0.75;
-}
-
-/* --- data tables ---------------------------------------------------- */
 
 .table-scroll {
   overflow-x: auto;
@@ -350,19 +732,19 @@ select {
 }
 
 .data-table th {
-  text-align: left;
+  text-align: start;
   font-size: 0.7rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--farmos-muted);
   font-weight: 600;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--farmos-border);
   white-space: nowrap;
 }
 
 .data-table td {
-  padding: 10px 12px;
+  padding: 12px;
   border-bottom: 1px solid var(--farmos-border);
   vertical-align: middle;
   font-size: 0.88rem;
@@ -372,8 +754,12 @@ select {
   border-bottom: none;
 }
 
+.data-table tbody tr:hover {
+  background: var(--farmos-paper);
+}
+
 .data-table .num {
-  text-align: right;
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 
@@ -382,39 +768,317 @@ select {
 }
 
 .row-link:hover {
-  background: var(--farmos-mist);
+  background: var(--farmos-cedar-pale) !important;
 }
 
-/* --- charts ---------------------------------------------------------
-   One data hue for every chart here: each is a single series, so colour
-   carries magnitude, never identity. Status colours stay reserved for
-   the chips, where they always sit beside their own label. */
+/* --- controls ---------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  padding: 11px 14px;
+  border: 1px solid var(--farmos-border);
+  border-radius: var(--radius-control);
+  font-size: 0.9rem;
+  background: var(--farmos-surface);
+  color: var(--farmos-ink);
+  min-height: 44px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--farmos-cedar);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--farmos-cedar-pale);
+}
+
+input::placeholder {
+  color: #9aa09a;
+}
+
+.btn {
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--touch-target);
+  padding: 0 18px;
+  border-radius: var(--radius-control);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  text-decoration: none;
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.btn-primary {
+  background: var(--farmos-cedar);
+  color: var(--farmos-white);
+  box-shadow: 0 2px 8px rgba(47, 107, 79, 0.28);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--farmos-cedar-dark);
+}
+
+.btn-secondary {
+  background: var(--farmos-surface);
+  border-color: var(--farmos-border);
+  color: var(--farmos-ink);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--farmos-cedar);
+  background: var(--farmos-cedar-pale);
+}
+
+.btn-danger {
+  background: var(--farmos-danger);
+  color: var(--farmos-white);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #a8452f;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-sm {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  gap: 6px;
+}
+
+/* The elevated Quick Add of the tablet design, with its folded corner: one
+   corner squared off so the button reads as a folded sheet of paper. */
+.btn-fold {
+  border-start-end-radius: 6px;
+  position: relative;
+}
+
+.btn-fold::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+  width: 14px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.28);
+  clip-path: polygon(0 0, 100% 100%, 100% 0);
+  border-start-end-radius: 6px;
+}
+
+/* --- chips -------------------------------------------------------------
+   Dot plus word, always. The dot is the quick read; the word is what makes
+   the state legible to someone who cannot separate the two greens. */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: var(--radius-pill);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.chip-active {
+  background: var(--farmos-cedar-pale);
+  color: var(--farmos-cedar);
+}
+
+.chip-trial {
+  background: var(--farmos-sky-blue-pale);
+  color: #2a6b80;
+}
+
+.chip-grace {
+  background: var(--farmos-warning-pale);
+  color: var(--farmos-warning);
+}
+
+.chip-suspended,
+.chip-revoked {
+  background: var(--farmos-danger-pale);
+  color: var(--farmos-danger);
+}
+
+.chip-terminated {
+  background: var(--farmos-surface-soft);
+  color: var(--farmos-muted);
+}
+
+/* --- tabs --------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--farmos-border);
+  margin-bottom: 22px;
+  overflow-x: auto;
+}
+
+.tab {
+  min-height: var(--touch-target);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  color: var(--farmos-muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  background: none;
+  border-top: 0;
+  border-inline: 0;
+}
+
+.tab:hover {
+  color: var(--farmos-ink);
+}
+
+.tab.active {
+  color: var(--farmos-cedar);
+  border-bottom-color: var(--farmos-cedar);
+  font-weight: 600;
+}
+
+/* --- banners ------------------------------------------------------------ */
+
+.error-banner,
+.notice-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 13px 16px;
+  border-radius: var(--radius-control);
+  margin-bottom: 16px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.error-banner {
+  background: var(--farmos-danger-pale);
+  color: #8e3a27;
+  border: 1px solid #e8c4b9;
+}
+
+.notice-banner {
+  background: var(--farmos-cedar-pale);
+  border: 1px solid #c7dbcd;
+  color: var(--farmos-ink);
+}
+
+.error-banner svg,
+.notice-banner svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* --- forms -------------------------------------------------------------- */
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.field-row label {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--farmos-ink);
+}
+
+.wizard-steps {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.wizard-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: var(--farmos-surface-soft);
+  color: var(--farmos-muted);
+}
+
+.wizard-step.active {
+  background: var(--farmos-cedar);
+  color: var(--farmos-white);
+  font-weight: 600;
+}
+
+.wizard-step.done {
+  background: var(--farmos-cedar-pale);
+  color: var(--farmos-cedar);
+}
+
+/* --- charts -------------------------------------------------------------
+   One data hue per chart: each is a single series, so colour carries
+   magnitude, never identity. Status colours stay reserved for the chips,
+   where they always sit beside their own word. */
 
 .chart {
   position: relative;
 }
 
 .chart-title {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.95rem;
+  font-weight: 700;
   color: var(--farmos-ink);
   margin-bottom: 2px;
 }
 
 .chart-note {
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   color: var(--farmos-muted);
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  line-height: 1.5;
 }
 
 .time-bars {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 2px;
-  height: 120px;
+  gap: 3px;
+  height: 130px;
   border-bottom: 1px solid var(--farmos-border);
-  padding-bottom: 0;
 }
 
 /* Capped so a series with one or two points reads as a bar rather than a
@@ -431,33 +1095,33 @@ select {
 
 .time-bars .mark {
   width: 100%;
-  background: var(--farmos-olive);
-  border-radius: 4px 4px 0 0;
+  background: var(--farmos-cedar-mid);
+  border-radius: 6px 6px 0 0;
   min-height: 2px;
   transition: background 0.12s ease;
 }
 
 .time-bars .slot:hover .mark {
-  background: var(--farmos-cedar);
+  background: var(--farmos-cedar-dark);
 }
 
 .time-bars .mark.empty {
-  background: var(--farmos-sand);
+  background: var(--farmos-surface-soft);
 }
 
 .time-axis {
   display: flex;
   justify-content: space-between;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   color: var(--farmos-muted);
-  margin-top: 6px;
+  margin-top: 8px;
   font-variant-numeric: tabular-nums;
 }
 
 .ranked-bars {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
 }
 
 .ranked-row {
@@ -468,7 +1132,7 @@ select {
 }
 
 .ranked-row .label {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: var(--farmos-ink);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -476,16 +1140,16 @@ select {
 }
 
 .ranked-row .track {
-  background: var(--farmos-sand);
-  border-radius: 4px;
+  background: var(--farmos-surface-soft);
+  border-radius: var(--radius-pill);
   height: 10px;
   overflow: hidden;
 }
 
 .ranked-row .mark {
   height: 100%;
-  background: var(--farmos-olive);
-  border-radius: 4px;
+  background: var(--farmos-cedar-mid);
+  border-radius: var(--radius-pill);
   min-width: 2px;
 }
 
@@ -494,26 +1158,26 @@ select {
   font-variant-numeric: tabular-nums;
   color: var(--farmos-muted);
   min-width: 3ch;
-  text-align: right;
+  text-align: end;
 }
 
 .chart-tooltip {
   position: fixed;
-  z-index: 20;
-  background: var(--farmos-ink);
-  color: var(--farmos-stone);
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 0.75rem;
+  z-index: 60;
+  background: var(--farmos-black);
+  color: var(--farmos-paper);
+  padding: 7px 11px;
+  border-radius: 8px;
+  font-size: 0.76rem;
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(7, 24, 20, 0.25);
+  box-shadow: var(--shadow-lift);
 }
 
-/* --- the guide schema ------------------------------------------------
-   A flow, not a list: the phases read left to right, and each node
-   carries its own live state so the diagram and the checklist are the
-   same object rather than two things that can disagree. */
+/* --- the guide schema ---------------------------------------------------
+   A flow, not a list: the phases read left to right, and each node carries
+   its own live state so the diagram and the checklist are the same object
+   rather than two things that can disagree. */
 
 .flow-phase {
   margin-bottom: 28px;
@@ -521,13 +1185,13 @@ select {
 
 .flow-phase-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   margin-bottom: 4px;
 }
 
 .flow-phase-head .tag {
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--farmos-gold);
@@ -536,9 +1200,9 @@ select {
 
 .flow-phase-head h3 {
   font-family: var(--font-display);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   margin: 0;
-  color: var(--farmos-cedar);
+  color: var(--farmos-cedar-dark);
 }
 
 .flow-phase .cadence {
@@ -556,19 +1220,18 @@ select {
 
 .flow-arrow {
   align-self: center;
-  color: #b5aa91;
-  font-size: 1.1rem;
-  line-height: 1;
+  color: #b9c4bb;
   flex: 0 0 auto;
+  display: flex;
 }
 
-/* Once the lane has stacked, an arrow still pointing right is pointing at
-   the margin. */
+/* Once the lane has stacked, an arrow still pointing along the inline axis
+   is pointing at the margin. */
 @media (max-width: 760px) {
   .flow-arrow {
     transform: rotate(90deg);
     align-self: flex-start;
-    margin-left: 16px;
+    margin-inline-start: 16px;
   }
 }
 
@@ -578,38 +1241,39 @@ select {
   flex: 1 1 190px;
   min-width: 180px;
   max-width: 310px;
-  background: var(--farmos-card);
+  background: var(--farmos-surface);
   border: 1px solid var(--farmos-border);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: var(--radius-card);
+  padding: 15px 17px;
   text-decoration: none;
   color: inherit;
   display: flex;
   flex-direction: column;
   gap: 6px;
   position: relative;
+  box-shadow: var(--shadow-card);
   transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 a.flow-node:hover {
-  box-shadow: 0 4px 16px rgba(11, 61, 46, 0.12);
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-2px);
 }
 
 /* Colour never carries the state on its own: each node also prints what
    the platform found, so a reader who cannot tell the two greens apart
    still knows which steps are outstanding. */
 .flow-node.done {
-  border-color: #bcdcc8;
+  border-color: #c7dbcd;
 }
 
 .flow-node.todo {
   border-color: var(--farmos-gold);
-  background: #fffaf0;
+  background: #fffdf8;
 }
 
 .flow-node .marker {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -619,10 +1283,10 @@ a.flow-node:hover {
 }
 
 .flow-node.done .marker {
-  color: var(--farmos-olive);
+  color: var(--farmos-cedar);
 }
 .flow-node.todo .marker {
-  color: #9a6b12;
+  color: var(--farmos-warning);
 }
 .flow-node.habit .marker {
   color: var(--farmos-muted);
@@ -649,26 +1313,26 @@ a.flow-node:hover {
 }
 
 .setup-bar {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--farmos-sand);
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--farmos-surface-soft);
   overflow: hidden;
   margin: 10px 0 6px 0;
 }
 
 .setup-bar .fill {
   height: 100%;
-  background: var(--farmos-olive);
-  border-radius: 999px;
+  background: var(--farmos-cedar);
+  border-radius: var(--radius-pill);
   transition: width 0.3s ease;
 }
 
 .next-step {
-  background: var(--farmos-cedar);
-  color: white;
-  border-radius: 12px;
-  padding: 20px 24px;
-  margin-bottom: 28px;
+  background: var(--farmos-cedar-dark);
+  color: var(--farmos-white);
+  border-radius: var(--radius-card);
+  padding: 22px 26px;
+  margin-bottom: 26px;
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
@@ -677,36 +1341,41 @@ a.flow-node:hover {
 }
 
 .next-step .k {
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--farmos-wheat);
+  color: var(--farmos-gold);
   margin-bottom: 4px;
+  font-weight: 700;
 }
 
 .next-step h2 {
   font-family: var(--font-display);
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   margin: 0 0 4px 0;
-  color: white;
+  color: var(--farmos-white);
 }
 
 .next-step p {
   margin: 0;
   font-size: 0.88rem;
-  color: var(--farmos-wheat);
+  color: #d5e2d9;
   max-width: 60ch;
 }
 
 .next-step .btn {
   background: var(--farmos-gold);
-  color: var(--farmos-ink);
+  color: var(--farmos-black);
   border: none;
-  text-decoration: none;
   white-space: nowrap;
+  box-shadow: none;
 }
 
-/* --- how the pieces fit --------------------------------------------- */
+.next-step .btn:hover {
+  background: #c79a41;
+}
+
+/* --- how the pieces fit -------------------------------------------------- */
 
 .pieces {
   display: flex;
@@ -718,19 +1387,19 @@ a.flow-node:hover {
 .piece {
   flex: 1 1 180px;
   border: 1px solid var(--farmos-border);
-  border-radius: 12px;
-  padding: 14px 16px;
-  background: var(--farmos-mist);
+  border-radius: var(--radius-card);
+  padding: 15px 17px;
+  background: var(--farmos-cedar-pale);
 }
 
 .piece.you {
   background: var(--farmos-cedar);
   border-color: var(--farmos-cedar);
-  color: var(--farmos-wheat);
+  color: #dfe8e1;
 }
 
 .piece.you .w {
-  color: white;
+  color: var(--farmos-white);
 }
 
 .piece .w {
@@ -748,7 +1417,7 @@ a.flow-node:hover {
   opacity: 0.85;
 }
 
-/* --- glossary -------------------------------------------------------- */
+/* --- glossary ------------------------------------------------------------ */
 
 .glossary {
   display: grid;
@@ -769,15 +1438,15 @@ a.flow-node:hover {
   line-height: 1.5;
 }
 
-/* --- licence picker --------------------------------------------------
+/* --- licence picker ------------------------------------------------------
    Each option names a licence and the screens it opens, because the code
    alone ("SALES") does not tell an operator that it covers expenses and
    finance too. */
 
 .licence-editor {
-  background: var(--farmos-mist);
-  border: 1px solid var(--farmos-olive);
-  border-radius: 12px;
+  background: var(--farmos-cedar-pale);
+  border: 1px solid #c7dbcd;
+  border-radius: var(--radius-card);
   padding: 18px 20px;
   margin-bottom: 20px;
 }
@@ -793,29 +1462,31 @@ a.flow-node:hover {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  text-align: left;
-  background: var(--farmos-card);
+  text-align: start;
+  background: var(--farmos-surface);
   border: 1px solid var(--farmos-border);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  padding: 12px 14px;
   cursor: pointer;
   font-family: inherit;
+  min-height: var(--touch-target);
   transition: border-color 0.12s ease, background 0.12s ease;
 }
 
 .licence-pick[data-on="true"] {
-  border-color: var(--farmos-olive);
-  background: #f2f9f4;
+  border-color: var(--farmos-cedar);
+  background: #f4f9f5;
 }
 
 .licence-pick .mark {
   font-weight: 700;
   color: var(--farmos-muted);
   line-height: 1.3;
+  display: flex;
 }
 
 .licence-pick[data-on="true"] .mark {
-  color: var(--farmos-olive);
+  color: var(--farmos-cedar);
 }
 
 .licence-pick .code {
@@ -840,16 +1511,17 @@ a.flow-node:hover {
   margin-top: 2px;
 }
 
-/* --- licence pack ----------------------------------------------------
+/* --- licence pack --------------------------------------------------------
    Both halves of the handover on one card, numbered in the order the
    customer does them. Shown once: the API cannot read either back. */
 
 .licence-pack {
-  background: var(--farmos-card);
-  border: 2px solid var(--farmos-olive);
-  border-radius: 12px;
+  background: var(--farmos-surface);
+  border: 2px solid var(--farmos-cedar);
+  border-radius: var(--radius-card);
   padding: 22px 24px;
   margin-bottom: 24px;
+  box-shadow: var(--shadow-card);
 }
 
 .licence-pack .pack-head {
@@ -862,10 +1534,10 @@ a.flow-node:hover {
 }
 
 .licence-pack .pack-head .k {
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--farmos-olive);
+  color: var(--farmos-cedar);
   font-weight: 700;
 }
 
@@ -873,7 +1545,7 @@ a.flow-node:hover {
   font-family: var(--font-display);
   font-size: 1.2rem;
   margin: 2px 0 0 0;
-  color: var(--farmos-cedar);
+  color: var(--farmos-cedar-dark);
 }
 
 .licence-pack .pack-row {
@@ -886,11 +1558,11 @@ a.flow-node:hover {
 }
 
 .licence-pack .pack-row .n {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--farmos-cedar);
-  color: white;
+  color: var(--farmos-white);
   display: grid;
   place-items: center;
   font-size: 0.8rem;
@@ -925,15 +1597,15 @@ a.flow-node:hover {
 /* The key is read aloud and typed by hand, so it is set large, spaced and
    monospaced rather than squeezed into a form field. */
 .licence-key {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 1.15rem;
   letter-spacing: 0.12em;
   font-weight: 600;
-  color: var(--farmos-cedar);
-  background: var(--farmos-mist);
-  border: 1px dashed var(--farmos-olive);
-  border-radius: 8px;
-  padding: 10px 16px;
+  color: var(--farmos-cedar-dark);
+  background: var(--farmos-cedar-pale);
+  border: 1px dashed var(--farmos-cedar);
+  border-radius: var(--radius-control);
+  padding: 12px 16px;
 }
 
 .licence-pack .pack-foot {
@@ -946,12 +1618,185 @@ a.flow-node:hover {
   color: var(--farmos-muted);
 }
 
-/* --- misc ------------------------------------------------------------ */
+/* --- entry screens -------------------------------------------------------
+   Login is the split of the redesign: the Bekaa valley on one side, a white
+   card on the other. The panorama is the package's reusable vector, never
+   the flattened mockup. */
+
+.entry {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr minmax(380px, 40%);
+  background: var(--farmos-paper);
+}
+
+.entry-scene {
+  position: relative;
+  background: #e9e4d8 url("/backgrounds/bekaa_landscape_login.svg") center / cover no-repeat;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 48px;
+  color: var(--farmos-cedar-dark);
+  overflow: hidden;
+}
+
+.entry-scene::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(247, 245, 240, 0.86),
+    rgba(247, 245, 240, 0.28) 45%,
+    rgba(247, 245, 240, 0.55)
+  );
+}
+
+.entry-scene > * {
+  position: relative;
+}
+
+.entry-scene h2 {
+  font-family: var(--font-display);
+  font-size: clamp(1.9rem, 3vw, 2.7rem);
+  line-height: 1.15;
+  margin: 0 0 14px;
+  max-width: 14ch;
+  color: var(--farmos-cedar-dark);
+}
+
+.entry-scene .rule {
+  width: 64px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--farmos-gold);
+  margin-bottom: 14px;
+}
+
+.entry-scene .lede {
+  font-size: 1rem;
+  color: #3c4a42;
+  max-width: 44ch;
+  margin: 0 0 32px;
+}
+
+.entry-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(31, 35, 32, 0.15);
+}
+
+.entry-points div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #3c4a42;
+}
+
+.entry-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 28px;
+  background: var(--farmos-surface);
+}
+
+.entry-card {
+  width: 100%;
+  max-width: 400px;
+}
+
+.entry-card .brand {
+  margin-bottom: 28px;
+}
+
+.entry-card h1 {
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  margin: 0 0 4px;
+  color: var(--farmos-cedar-dark);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.entry-card h1 svg {
+  color: var(--farmos-gold);
+}
+
+.entry-card .lede {
+  color: var(--farmos-muted);
+  font-size: 0.9rem;
+  margin: 0 0 26px;
+}
+
+.entry-card input {
+  width: 100%;
+}
+
+.entry-card .btn {
+  width: 100%;
+}
+
+.entry-foot {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--farmos-border);
+  font-size: 0.76rem;
+  color: var(--farmos-muted);
+  line-height: 1.55;
+}
+
+/* Below a tablet the scene is decoration competing for the fold; the card
+   takes the screen and the panorama becomes a band above it. */
+@media (max-width: 900px) {
+  .entry {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-scene {
+    min-height: 220px;
+    padding: 24px;
+  }
+
+  .entry-scene h2 {
+    font-size: 1.5rem;
+  }
+
+  .entry-scene .lede,
+  .entry-points {
+    display: none;
+  }
+}
+
+/* A single centred card, for the pages that are only a form. */
+.entry-solo {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--farmos-paper) url("/backgrounds/bekaa_header_panorama.svg") center bottom /
+    100% 340px no-repeat;
+}
+
+.entry-solo .panel {
+  width: 100%;
+  max-width: 440px;
+  border-radius: var(--radius-modal);
+  padding: 30px 32px;
+  box-shadow: var(--shadow-lift);
+}
+
+/* --- misc ---------------------------------------------------------------- */
 
 .empty-note {
   color: var(--farmos-muted);
-  font-size: 0.85rem;
-  padding: 16px 0;
+  font-size: 0.86rem;
+  padding: 18px 0;
 }
 
 .inline-actions {
@@ -960,28 +1805,14 @@ a.flow-node:hover {
   flex-wrap: wrap;
 }
 
-.btn-sm {
-  padding: 4px 10px;
-  font-size: 0.75rem;
-}
-
-.notice-banner {
-  background: var(--farmos-mist);
-  border: 1px solid var(--farmos-olive);
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin-bottom: 16px;
-  font-size: 0.85rem;
-}
-
 .meta-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px 24px;
+  gap: 14px 24px;
 }
 
 .meta-grid .k {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--farmos-muted);
@@ -990,4 +1821,83 @@ a.flow-node:hover {
 .meta-grid .v {
   font-size: 0.92rem;
   color: var(--farmos-ink);
+}
+
+/* --- narrow screens -------------------------------------------------------
+   The console is a desktop tool, but it gets opened on a phone to check one
+   number. The sidebar becomes a scrolling rail above the content rather
+   than eating half the viewport. */
+
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    padding: 14px;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+
+  .sidebar-nav > div {
+    display: flex;
+    gap: 6px;
+  }
+
+  .sidebar-nav a {
+    white-space: nowrap;
+    border-inline-start: 0;
+    border-bottom: 3px solid transparent;
+  }
+
+  .sidebar-nav a.active {
+    border-inline-start: 0;
+    border-bottom-color: var(--farmos-gold);
+  }
+
+  .sidebar-section {
+    display: none;
+  }
+
+  .sidebar-foot {
+    display: none;
+  }
+
+  .appbar {
+    padding: 0 16px;
+  }
+
+  .main-content {
+    padding: 18px 16px 48px;
+  }
+
+  .page-head {
+    padding: 20px;
+  }
+}
+
+/* On a phone the avatar's name wraps the top bar onto two lines; the
+   initial and the chevron are enough to find the menu. */
+@media (max-width: 560px) {
+  .avatar-btn span:not(.avatar) {
+    display: none;
+  }
+
+  .state-pill .d {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }

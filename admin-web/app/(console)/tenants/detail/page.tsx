@@ -18,6 +18,7 @@ import {
   TenantUsage,
 } from "@/lib/types";
 import { StatusChip } from "@/components/StatusChip";
+import { Icon } from "@/components/Icon";
 import Link from "next/link";
 import {
   Loading,
@@ -103,16 +104,39 @@ function TenantDetail() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <h1 className="page-title">
-            {tenant.display_name} <span style={{ color: "var(--farmos-muted)", fontWeight: 400 }}>({tenant.company_code})</span>
-          </h1>
-          <p className="page-subtitle">
-            Tenant ID: <code>{tenant.id}</code> · <StatusChip status={tenant.status} />
-          </p>
+      <div className="page-head">
+        <div className="page-head-main">
+          <span className="roundel" style={{ width: 52, height: 52 }}>
+            <Icon name="barn" size={26} />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <Link
+              href="/tenants"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: "0.78rem",
+                color: "var(--farmos-muted)",
+                textDecoration: "none",
+                marginBottom: 2,
+              }}
+            >
+              <Icon name="chevron-left" size={16} />
+              All tenants
+            </Link>
+            <h1 className="page-title">
+              {tenant.display_name}{" "}
+              <span style={{ color: "var(--farmos-muted)", fontWeight: 400 }}>
+                ({tenant.company_code})
+              </span>
+            </h1>
+            <p className="page-subtitle">
+              Tenant ID: <code>{tenant.id}</code> · <StatusChip status={tenant.status} />
+            </p>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="page-actions">
           {tenant.status !== "SUSPENDED" && tenant.status !== "TERMINATED" && (
             <button className="btn btn-secondary" onClick={() => changeStatus("SUSPENDED")}>
               Suspend
@@ -120,11 +144,13 @@ function TenantDetail() {
           )}
           {tenant.status === "SUSPENDED" && (
             <button className="btn btn-primary" onClick={() => changeStatus("ACTIVE")}>
+              <Icon name="check" size={20} />
               Reactivate
             </button>
           )}
           {tenant.status !== "TERMINATED" && (
             <button className="btn btn-danger" onClick={() => changeStatus("TERMINATED")}>
+              <Icon name="x" size={20} />
               Terminate
             </button>
           )}
@@ -301,10 +327,15 @@ function UsageTab({ tenantId }: { tenantId: string }) {
   return (
     <div>
       <div className="card-grid">
-        <StatTile value={data.total_records} label="Live records" />
-        <StatTile value={data.modules_with_data.length} label="Modules in use" />
-        <StatTile value={data.active_users} label="Active users" />
-        <StatTile value={data.active_devices} label="Active devices" />
+        <StatTile value={data.total_records} label="Live records" icon="inventory" />
+        <StatTile
+          value={data.modules_with_data.length}
+          label="Modules in use"
+          icon="package"
+          tone="purple"
+        />
+        <StatTile value={data.active_users} label="Active users" icon="people" tone="sky" />
+        <StatTile value={data.active_devices} label="Active devices" icon="qr" tone="neutral" />
       </div>
 
       <div className="panel">
