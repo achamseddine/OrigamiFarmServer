@@ -5,7 +5,7 @@ should not go negative without explicit override."
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
@@ -13,7 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
-
 from app.farmos.schemas import (
     FeedTransactionCreate,
     InventoryItemCreate,
@@ -23,6 +22,20 @@ from app.farmos.schemas import (
 from app.tenant_api.models import InventoryItem, InventoryMovement
 
 router = APIRouter()
+
+
+def _to_movement_out(m: InventoryMovement) -> InventoryMovementOut:
+    delta = float(m.quantity_delta)
+    return InventoryMovementOut(
+        id=str(m.id),
+        inventory_item_id=str(m.inventory_item_id),
+        direction="in" if delta >= 0 else "out",
+        quantity=abs(delta),
+        reason=m.reason or None,
+        linked_entity_type=m.linked_entity_type,
+        linked_entity_id=m.linked_entity_id,
+        occurred_at=m.occurred_at,
+    )
 
 
 def _to_item_out(item: InventoryItem, tenant_id: uuid.UUID) -> InventoryItemOut:
