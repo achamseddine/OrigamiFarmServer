@@ -378,7 +378,7 @@ def update_plan(
     payload: PlanUpdateRequest,
     db: Session = Depends(get_control_db),
     identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> Plan:
+) -> PlanOut:
     """Repricing a plan is audited: it changes what every tenant on that
     plan contributes to recurring revenue, so it should never be a silent
     edit.
@@ -724,7 +724,7 @@ def invite_membership(
     payload: MembershipInviteRequest,
     db: Session = Depends(get_control_db),
     identity: Identity = Depends(require_platform_role(*_STAFF)),
-) -> TenantMembership:
+) -> MembershipOut:
     _get_tenant_or_404(db, tenant_id)
     user = db.execute(select(UserIdentity).where(UserIdentity.email == payload.email)).scalar_one_or_none()
     if user is None:

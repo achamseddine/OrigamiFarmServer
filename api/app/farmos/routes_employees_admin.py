@@ -11,7 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
@@ -66,7 +66,7 @@ def _to_employee_out(db: Session, user: UserIdentity, membership: TenantMembersh
 
 def _apply_permissions(db: Session, membership_id: uuid.UUID, permissions: list) -> None:
     db.execute(
-        MembershipModulePermission.__table__.delete().where(
+        delete(MembershipModulePermission).where(
             MembershipModulePermission.membership_id == membership_id
         )
     )
