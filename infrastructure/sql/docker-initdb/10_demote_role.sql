@@ -1,0 +1,14 @@
+-- Mounted into /docker-entrypoint-initdb.d by docker-compose.yml and
+-- docker-compose.local.yml, so it runs once, when the postgres container
+-- first initialises its data directory.
+--
+-- The official postgres image creates POSTGRES_USER as a superuser, and
+-- Postgres silently exempts superusers (and BYPASSRLS roles) from
+-- row-level security: no error, no log line, every tenant sees every
+-- other tenant's rows. The API's tenant isolation depends on RLS (see
+-- TENANCY.md), so the role it connects as must not be one. This is the
+-- same statement 00_bootstrap.sql applies on the bare-metal path.
+--
+-- A superuser may demote itself, and nothing the app or its migrations do
+-- needs superuser afterwards: origami still owns both databases.
+ALTER ROLE origami NOSUPERUSER NOBYPASSRLS;

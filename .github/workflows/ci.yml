@@ -50,6 +50,24 @@ jobs:
         working-directory: api
         run: pip install -r requirements-dev.txt
 
+      # The postgres image makes POSTGRES_USER a superuser, and Postgres
+      # silently exempts superusers from row-level security — so the tenant
+      # isolation tests can only fail (or, worse, pass for the wrong reason)
+      # unless the role is demoted first. Same rule as
+      # infrastructure/sql/00_bootstrap.sql and README.md.
+      - name: Demote the database role (RLS does not apply to superusers)
+        working-directory: api
+        run: |
+          python - <<'EOF'
+          import os
+          import psycopg
+          for var in ("CONTROL_DATABASE_URL", "TENANT_DATABASE_URL"):
+              url = os.environ[var].replace("postgresql+psycopg://", "postgresql://")
+              with psycopg.connect(url, autocommit=True) as conn:
+                  conn.execute("ALTER ROLE origami NOSUPERUSER NOBYPASSRLS")
+              print(f"{var}: origami is now NOSUPERUSER NOBYPASSRLS")
+          EOF
+
       - name: Lint (ruff)
         working-directory: api
         run: ruff check .

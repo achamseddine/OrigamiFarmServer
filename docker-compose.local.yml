@@ -6,8 +6,8 @@
 # and replaces the command with `uvicorn --reload`, so the container it
 # runs is not the container you ship. This file builds nothing, mounts no
 # source, and overrides no command — the image's own ENTRYPOINT
-# (api/docker-entrypoint.sh) runs both Alembic upgrades and generates the
-# license keypair, just like it will in Azure. If it works here it will
+# (api/docker-entrypoint.sh) runs both Alembic upgrades, just like it
+# will in Azure. If it works here it will
 # work there, modulo the database being managed rather than a sidecar.
 #
 #   docker compose -f docker-compose.local.yml up -d
@@ -27,6 +27,9 @@ services:
       - "5433:5432"
     volumes:
       - local_control_db:/var/lib/postgresql/data
+      # Demotes the role from superuser on first init; RLS is silently
+      # skipped for superusers. See the script's header.
+      - ./infrastructure/sql/docker-initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U origami -d origami_control"]
       interval: 5s
@@ -43,6 +46,7 @@ services:
       - "5434:5432"
     volumes:
       - local_tenant_db:/var/lib/postgresql/data
+      - ./infrastructure/sql/docker-initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U origami -d origami_tenant_shared"]
       interval: 5s
