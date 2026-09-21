@@ -231,15 +231,6 @@ PNGs are visual references only; nothing in the console renders one as a backgro
 > `docker-compose.local.yml` already create a non-superuser `origami` role for you; only the
 > bare-metal path needs the `CREATE ROLE` above.
 
-Two notes on the license lease keypair, which the steps above deliberately skip. Nothing at
-startup reads it — `app/devices/lease.py` loads it lazily, on the first lease issued — so the
-API runs fine without one, and you only need it if you're exercising device activation or
-offline licensing. When you do, note that `scripts/generate_license_keys.py` writes to
-`<repo>/infrastructure/keys/`, while the app resolves the default
-`LICENSE_LEASE_PRIVATE_KEY_PATH=./infrastructure/keys/...` relative to its working directory —
-`api/`. Run the script, then point the two `LICENSE_LEASE_*_PATH` settings in `api/.env` at the
-absolute path it printed.
-
 ### Option C — plain SQL, no Python or Docker
 
 If you'd rather create the schema from DDL — a DBA who wants to read it first, a managed

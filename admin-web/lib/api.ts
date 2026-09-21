@@ -54,10 +54,16 @@ export async function apiFetch<T>(
   if (!res.ok) {
     // A session that expired mid-visit would otherwise leave every panel
     // showing its own 401. Send the whole page back to sign-in once —
-    // except for the sign-in call itself, whose 401 means "wrong password"
-    // and belongs to the form.
-    const isLoginAttempt = path.startsWith("/platform/v1/auth/login");
-    if (res.status === 401 && !isLoginAttempt && typeof window !== "undefined") {
+    // except for the calls whose 401 is an answer about the credentials
+    // just typed, not about the session: sign-in ("wrong password"),
+    // change-password ("wrong current password"), and the invitation
+    // pages, where the person holding an expired link has no admin
+    // session to send back to. Those belong to their forms.
+    const isCredentialCheck =
+      path.startsWith("/platform/v1/auth/login") ||
+      path.startsWith("/platform/v1/auth/change-password") ||
+      path.startsWith("/api/v1/auth/invitation/");
+    if (res.status === 401 && !isCredentialCheck && typeof window !== "undefined") {
       clearToken();
       if (!window.location.pathname.startsWith("/login")) {
         window.location.href = "/login/";

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
@@ -25,7 +26,7 @@ def _to_animal_out(animal: Animal, detail: bool = False) -> AnimalOut:
     docs/FARMOS_API.md. Auto-mapping by attribute name would silently
     serialize the wrong value.
     """
-    fields = dict(
+    fields: dict[str, Any] = dict(
         id=str(animal.id),
         farm_id=str(animal.tenant_id),
         tag=animal.tag,

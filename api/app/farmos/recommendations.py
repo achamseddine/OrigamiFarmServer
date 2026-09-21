@@ -135,7 +135,10 @@ def _evaluate_harvest_due(db: Session, tenant_id: uuid.UUID, now: datetime) -> N
         field_name = field.name if field else "Unknown field"
         crop_name = crop.name if crop else "crop"
         entity_label = f"{field_name} — {crop_name}"
-        days = max((planting.expected_harvest_date - now).days, 0)
+        harvest_date = planting.expected_harvest_date
+        if harvest_date is None:  # excluded by the query above; narrows the type
+            continue
+        days = max((harvest_date - now).days, 0)
         yield_note = (
             f" (~{float(planting.expected_yield_kg):.0f} kg expected)"
             if planting.expected_yield_kg is not None

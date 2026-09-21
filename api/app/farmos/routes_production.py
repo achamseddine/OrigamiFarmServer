@@ -210,9 +210,8 @@ def record_milk(
 ) -> MilkRecordOut:
     animal = db.get(Animal, uuid.UUID(payload.animal_id))
     now = datetime.now(timezone.utc)
-    under_withdrawal = (
-        animal is not None and animal.withdrawal_until is not None and animal.withdrawal_until > now
-    )
+    withdrawal_until = animal.withdrawal_until if animal is not None else None
+    under_withdrawal = withdrawal_until is not None and withdrawal_until > now
 
     # RULE-WITHDRAWAL (tech spec §14): milk from an animal under withdrawal
     # must be hard-blocked from a sale destination, not just warned about.
@@ -221,7 +220,7 @@ def record_milk(
             status_code=422,
             detail=(
                 "This animal is under a treatment withdrawal period until "
-                f"{animal.withdrawal_until:%Y-%m-%d}. Its milk can't be marked for sale."
+                f"{withdrawal_until:%Y-%m-%d}. Its milk can't be marked for sale."
             ),
         )
 

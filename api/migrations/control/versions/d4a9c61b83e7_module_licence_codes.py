@@ -63,22 +63,24 @@ NEWLY_GATED = sorted(set(MODULE_LICENCES.values()))
 
 
 def upgrade() -> None:
-    connection = op.get_bind()
-
+    # op.execute with the parameters bound onto the statement, rather than
+    # op.get_bind().execute(stmt, params): in Alembic's offline mode
+    # (`alembic upgrade --sql`, which infrastructure/sql/generate.sh depends
+    # on) there is no bind, and op.execute renders the bound values as
+    # literals instead.
     for module_code, licence in MODULE_LICENCES.items():
-        connection.execute(
+        op.execute(
             sa.text(
                 "UPDATE module_catalog SET license_code = :licence "
                 "WHERE module_code = :module_code AND license_code IS NULL"
-            ),
-            {"licence": licence, "module_code": module_code},
+            ).bindparams(licence=licence, module_code=module_code)
         )
 
     # The licence codes have to exist as catalog rows in their own right —
     # a plan includes them, and plan_module has a foreign key to
     # module_catalog.
     for licence in NEWLY_GATED:
-        connection.execute(
+        op.execute(
             sa.text(
                 "INSERT INTO module_catalog (module_code, name_en, name_ar, description, "
                 "version, minimum_app_version, dependencies, default_features, "
@@ -86,14 +88,13 @@ def upgrade() -> None:
                 "VALUES (:code, :code, :code, '', '1.0.0', '0.0.0', '[]'::jsonb, "
                 "'{}'::jsonb, 'AVAILABLE', true, true, '') "
                 "ON CONFLICT (module_code) DO NOTHING"
-            ),
-            {"code": licence},
+            ).bindparams(code=licence)
         )
 
     # No existing farm loses a screen. ON CONFLICT covers a tenant that
     # already holds one of these through a hand-made entitlement.
     for licence in NEWLY_GATED:
-        connection.execute(
+        op.execute(
             sa.text(
                 "INSERT INTO tenant_entitlement "
                 "(id, tenant_id, module_code, status, source, effective_from, "
@@ -105,20 +106,17 @@ def upgrade() -> None:
                 "    SELECT 1 FROM tenant_entitlement e "
                 "    WHERE e.tenant_id = t.id AND e.module_code = CAST(:code AS varchar)"
                 ")"
-            ),
-            {"code": licence},
+            ).bindparams(code=licence)
         )
 
 
 def downgrade() -> None:
-    connection = op.get_bind()
     for module_code, licence in MODULE_LICENCES.items():
-        connection.execute(
+        op.execute(
             sa.text(
                 "UPDATE module_catalog SET license_code = NULL "
                 "WHERE module_code = :module_code AND license_code = :licence"
-            ),
-            {"licence": licence, "module_code": module_code},
+            ).bindparams(licence=licence, module_code=module_code)
         )
     # The granted entitlements are deliberately left in place: they are
     # indistinguishable from ones an admin made, and removing somebody's

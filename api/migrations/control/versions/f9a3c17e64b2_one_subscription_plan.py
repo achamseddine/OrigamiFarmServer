@@ -31,9 +31,6 @@ Revises: e5b2d84f1c06
 
 from __future__ import annotations
 
-import uuid
-
-import sqlalchemy as sa
 from alembic import op
 
 revision = "f9a3c17e64b2"
@@ -46,40 +43,35 @@ PLAN_NAME = "Origami"
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
+    # Self-contained SQL rather than read-then-write from Python: in
+    # Alembic's offline mode (`alembic upgrade --sql`, which
+    # infrastructure/sql/generate.sh depends on) there is no connection to
+    # read a result from, and op.get_bind() is None. Every decision the
+    # Python version made is made by the database here instead.
 
-    plan_id = conn.execute(
-        sa.text("SELECT id FROM plan WHERE code = :code"), {"code": PLAN_CODE}
-    ).scalar()
-
-    if plan_id is None:
-        # Inherit the currency the deployment already uses rather than
-        # assuming USD: a Lebanese operator pricing in USD and one pricing
-        # in EUR both end up with what their existing rows say.
-        currency = (
-            conn.execute(sa.text("SELECT currency FROM plan ORDER BY created_at LIMIT 1")).scalar()
-            or "USD"
-        )
-        plan_id = uuid.uuid4()
-        conn.execute(
-            sa.text(
-                """
-                INSERT INTO plan (id, code, name, status, currency,
-                                  monthly_price_cents, annual_price_cents, limits,
-                                  created_at, updated_at)
-                VALUES (:id, :code, :name, 'ACTIVE', :currency,
-                        NULL, NULL, '{}'::jsonb, now(), now())
-                """
-            ),
-            {"id": plan_id, "code": PLAN_CODE, "name": PLAN_NAME, "currency": currency},
-        )
-
-    conn.execute(
-        sa.text("UPDATE subscription SET plan_id = :id WHERE plan_id <> :id"), {"id": plan_id}
+    # Inherit the currency the deployment already uses rather than
+    # assuming USD: a Lebanese operator pricing in USD and one pricing
+    # in EUR both end up with what their existing rows say.
+    op.execute(
+        f"""
+        INSERT INTO plan (id, code, name, status, currency,
+                          monthly_price_cents, annual_price_cents, limits,
+                          created_at, updated_at)
+        SELECT gen_random_uuid(), '{PLAN_CODE}', '{PLAN_NAME}', 'ACTIVE',
+               COALESCE((SELECT currency FROM plan ORDER BY created_at LIMIT 1), 'USD'),
+               NULL, NULL, '{{}}'::jsonb, now(), now()
+        WHERE NOT EXISTS (SELECT 1 FROM plan WHERE code = '{PLAN_CODE}')
+        """
     )
-    conn.execute(
-        sa.text("UPDATE plan SET status = 'ARCHIVED' WHERE id <> :id AND status <> 'ARCHIVED'"),
-        {"id": plan_id},
+    op.execute(
+        f"""
+        UPDATE subscription
+        SET plan_id = (SELECT id FROM plan WHERE code = '{PLAN_CODE}')
+        WHERE plan_id <> (SELECT id FROM plan WHERE code = '{PLAN_CODE}')
+        """
+    )
+    op.execute(
+        f"UPDATE plan SET status = 'ARCHIVED' WHERE code <> '{PLAN_CODE}' AND status <> 'ARCHIVED'"
     )
 
 
@@ -88,8 +80,6 @@ def downgrade() -> None:
     # is not recoverable from the collapsed state, and inventing an
     # answer would be worse than leaving them where they are. Only the
     # "not on sale" marking is lifted.
-    conn = op.get_bind()
-    conn.execute(
-        sa.text("UPDATE plan SET status = 'ACTIVE' WHERE status = 'ARCHIVED' AND code <> :code"),
-        {"code": PLAN_CODE},
+    op.execute(
+        f"UPDATE plan SET status = 'ACTIVE' WHERE status = 'ARCHIVED' AND code <> '{PLAN_CODE}'"
     )

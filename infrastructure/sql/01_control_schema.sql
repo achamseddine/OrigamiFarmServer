@@ -568,5 +568,164 @@ ALTER TABLE audit_event ADD COLUMN device VARCHAR;
 
 UPDATE alembic_version SET version_num='9cff7b1c5dc1' WHERE alembic_version.version_num = '67cdc086039d';
 
+-- Running upgrade 9cff7b1c5dc1 -> a1c4e7f92b30
+
+ALTER TABLE plan ADD COLUMN currency VARCHAR(3) DEFAULT 'USD' NOT NULL;
+
+ALTER TABLE plan ADD COLUMN monthly_price_cents INTEGER;
+
+ALTER TABLE plan ADD COLUMN annual_price_cents INTEGER;
+
+UPDATE alembic_version SET version_num='a1c4e7f92b30' WHERE alembic_version.version_num = '9cff7b1c5dc1';
+
+-- Running upgrade a1c4e7f92b30 -> b7d21f508c44
+
+ALTER TABLE user_identity ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE;
+
+UPDATE alembic_version SET version_num='b7d21f508c44' WHERE alembic_version.version_num = 'a1c4e7f92b30';
+
+-- Running upgrade b7d21f508c44 -> c3f81a2e7d95
+
+CREATE TABLE membership_invitation (
+    id UUID NOT NULL, 
+    tenant_id UUID NOT NULL, 
+    membership_id UUID NOT NULL, 
+    token_hash VARCHAR NOT NULL, 
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+    accepted_at TIMESTAMP WITH TIME ZONE, 
+    revoked_at TIMESTAMP WITH TIME ZONE, 
+    invited_by UUID, 
+    delivery VARCHAR(16) DEFAULT 'manual' NOT NULL, 
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+    PRIMARY KEY (id), 
+    FOREIGN KEY(tenant_id) REFERENCES tenant (id) ON DELETE CASCADE, 
+    FOREIGN KEY(membership_id) REFERENCES tenant_membership (id) ON DELETE CASCADE, 
+    FOREIGN KEY(invited_by) REFERENCES user_identity (id) ON DELETE SET NULL, 
+    UNIQUE (token_hash)
+);
+
+CREATE INDEX ix_membership_invitation_tenant_id ON membership_invitation (tenant_id);
+
+CREATE INDEX ix_membership_invitation_membership_id ON membership_invitation (membership_id);
+
+CREATE UNIQUE INDEX ix_membership_invitation_token_hash ON membership_invitation (token_hash);
+
+UPDATE alembic_version SET version_num='c3f81a2e7d95' WHERE alembic_version.version_num = 'b7d21f508c44';
+
+-- Running upgrade c3f81a2e7d95 -> d4a9c61b83e7
+
+UPDATE module_catalog SET license_code = 'CORE' WHERE module_code = 'morning_operations' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'CORE' WHERE module_code = 'tasks' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'CORE' WHERE module_code = 'employees' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'CORE' WHERE module_code = 'reports' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'CORE' WHERE module_code = 'settings' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'ANIMALS' WHERE module_code = 'animals' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'ANIMAL_HEALTH' WHERE module_code = 'animal_health' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'FEED' WHERE module_code = 'feed_nutrition' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'MILK' WHERE module_code = 'milk_production' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'EGGS' WHERE module_code = 'egg_production' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'AGRICULTURE' WHERE module_code = 'agriculture' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'PRODUCE' WHERE module_code = 'produce_harvest' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'INVENTORY' WHERE module_code = 'inventory' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'SALES' WHERE module_code = 'sales' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'SALES' WHERE module_code = 'expenses' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'SALES' WHERE module_code = 'finance' AND license_code IS NULL;
+
+UPDATE module_catalog SET license_code = 'AI_INTELLIGENCE' WHERE module_code = 'ai_intelligence' AND license_code IS NULL;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('AGRICULTURE', 'AGRICULTURE', 'AGRICULTURE', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('AI_INTELLIGENCE', 'AI_INTELLIGENCE', 'AI_INTELLIGENCE', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('ANIMALS', 'ANIMALS', 'ANIMALS', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('ANIMAL_HEALTH', 'ANIMAL_HEALTH', 'ANIMAL_HEALTH', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('CORE', 'CORE', 'CORE', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('EGGS', 'EGGS', 'EGGS', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('FEED', 'FEED', 'FEED', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('INVENTORY', 'INVENTORY', 'INVENTORY', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('MILK', 'MILK', 'MILK', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('PRODUCE', 'PRODUCE', 'PRODUCE', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO module_catalog (module_code, name_en, name_ar, description, version, minimum_app_version, dependencies, default_features, commercial_status, trial_allowed, active, "group") VALUES ('SALES', 'SALES', 'SALES', '', '1.0.0', '0.0.0', '[]'::jsonb, '{}'::jsonb, 'AVAILABLE', true, true, '') ON CONFLICT (module_code) DO NOTHING;
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('AGRICULTURE' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('AGRICULTURE' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('AI_INTELLIGENCE' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('AI_INTELLIGENCE' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('ANIMALS' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('ANIMALS' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('ANIMAL_HEALTH' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('ANIMAL_HEALTH' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('CORE' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('CORE' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('EGGS' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('EGGS' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('FEED' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('FEED' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('INVENTORY' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('INVENTORY' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('MILK' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('MILK' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('PRODUCE' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('PRODUCE' AS varchar));
+
+INSERT INTO tenant_entitlement (id, tenant_id, module_code, status, source, effective_from,  configuration, created_at, updated_at) SELECT gen_random_uuid(), t.id, CAST('SALES' AS varchar), 'ACTIVE', 'PLAN', now(),        '{}'::jsonb, now(), now() FROM tenant t WHERE NOT EXISTS (    SELECT 1 FROM tenant_entitlement e     WHERE e.tenant_id = t.id AND e.module_code = CAST('SALES' AS varchar));
+
+UPDATE alembic_version SET version_num='d4a9c61b83e7' WHERE alembic_version.version_num = 'c3f81a2e7d95';
+
+-- Running upgrade d4a9c61b83e7 -> e5b2d84f1c06
+
+UPDATE tenant_membership
+           SET role = 'owner'
+         WHERE tenant_role = 'TENANT_OWNER'
+           AND role = 'worker';
+
+UPDATE tenant_membership
+           SET role = 'manager'
+         WHERE tenant_role = 'FARM_MANAGER'
+           AND role = 'worker';
+
+UPDATE alembic_version SET version_num='e5b2d84f1c06' WHERE alembic_version.version_num = 'd4a9c61b83e7';
+
+-- Running upgrade e5b2d84f1c06 -> f9a3c17e64b2
+
+INSERT INTO plan (id, code, name, status, currency,
+                          monthly_price_cents, annual_price_cents, limits,
+                          created_at, updated_at)
+        SELECT gen_random_uuid(), 'ORIGAMI', 'Origami', 'ACTIVE',
+               COALESCE((SELECT currency FROM plan ORDER BY created_at LIMIT 1), 'USD'),
+               NULL, NULL, '{}'::jsonb, now(), now()
+        WHERE NOT EXISTS (SELECT 1 FROM plan WHERE code = 'ORIGAMI');
+
+UPDATE subscription
+        SET plan_id = (SELECT id FROM plan WHERE code = 'ORIGAMI')
+        WHERE plan_id <> (SELECT id FROM plan WHERE code = 'ORIGAMI');
+
+UPDATE plan SET status = 'ARCHIVED' WHERE code <> 'ORIGAMI' AND status <> 'ARCHIVED';
+
+UPDATE alembic_version SET version_num='f9a3c17e64b2' WHERE alembic_version.version_num = 'e5b2d84f1c06';
+
 COMMIT;
 
