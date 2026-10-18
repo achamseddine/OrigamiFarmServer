@@ -132,6 +132,16 @@ _CONTROL_TABLES = [
 ]
 _TENANT_TABLES = [
     "sync_event",
+    "feed_performance_alert",
+    "feed_performance_assessment",
+    "feed_exposure_window",
+    "feed_batch_performance_score",
+    "supplier_feed_performance",
+    "feed_performance_monitor",
+    "scheduled_job_run",
+    "notification_route",
+    "farm_asset",
+    "unit_of_measure",
     "protocol_run_step",
     "emergency_protocol_run",
     "protocol_match",

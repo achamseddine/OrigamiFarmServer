@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
+from fastapi.exceptions import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -152,6 +153,7 @@ def open_case(
         o.health_case_id = case.id
     if getattr(subject, "status", None) == "healthy":
         subject.status = "under_observation"
+    _performance_context_changed(db, access, subject_type, subject, "health_case_opened")
     return case
 
 
@@ -209,7 +211,24 @@ def close_case(
         if p.status in ("prescribed", "active"):
             p.status = "completed"
             p.completed_at = at
+    subject_type = "animal" if case.animal_id else "group"
+    try:
+        subject = subject_or_404(db, subject_type, case.animal_id or case.animal_group_id)
+    except HTTPException:
+        subject = None
+    if subject is not None:
+        _performance_context_changed(db, access, subject_type, subject, "health_case_closed")
     return case
+
+
+def _performance_context_changed(
+    db: Session, access: AccessContext, subject_type: str, subject, trigger: str
+) -> None:
+    """FEED-PERFORMANCE-INTELLIGENCE §12 HealthCaseOpened / Closed: a local
+    import, since the performance layer reads the cases."""
+    from app.farmos import feed_performance_service as perf
+
+    perf.on_context_changed(db, access, subject_type, subject, trigger=trigger)
 
 
 # ------------------------------------------------------------- diagnoses

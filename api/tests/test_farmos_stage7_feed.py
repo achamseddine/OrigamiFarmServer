@@ -525,7 +525,10 @@ def test_numbered_mixes_consume_lots_produce_a_lot_and_report_their_usage(client
     assert issue["program_code"] == "DAIRY-DOE" and issue["assignment_type"] == "explicit"
     assert usage["ledger_adjustments"][0]["reason"] == "waste"
     assert usage["cost_per_unit"] is not None and all(c["lot_code"] for c in usage["components"])
-    assert usage["performance"] is None
+    # The mix is scored the moment it is completed (stage 9): the usage view
+    # carries the score card headline, with no open alert on a clean mix.
+    assert usage["performance"]["formula_compliance_score"] is not None
+    assert usage["performance"]["open_alerts"] == []
     assert _get(client, h, f"/feed-batches/{batch['id']}/usage")["issued_quantity"] == 30
     assert client.get(f"{API}/feed-mixes/999", headers=h).status_code == 404
 

@@ -275,9 +275,9 @@ def _validate_version_payload(
             if lo is not None and hi is not None and lo > hi:
                 raise EmergencyError("minimum_dose_quantity cannot exceed maximum_dose_quantity.")
             # Units are references (FOUNDATION uom).
-            med["dose_unit"] = uom_service.require(med.get("dose_unit"), what="dose unit")
+            med["dose_unit"] = uom_service.require(db, med.get("dose_unit"), what="dose unit")
             if med.get("weight_unit"):
-                med["weight_unit"] = uom_service.require(med["weight_unit"], what="weight unit")
+                med["weight_unit"] = uom_service.require(db, med["weight_unit"], what="weight unit")
             if (med.get("weight_max_age_days") or 0) < 0:
                 raise EmergencyError("weight_max_age_days cannot be negative.")
         elif med:
@@ -1051,7 +1051,7 @@ def _escalate_assessment(
         + ". No drug, dose or route is shown because no current approved protocol applies."
     )
     recipient = routing.primary_recipient(
-        access.tenant_id, "emergency_escalation", prefer_role="veterinarian"
+        access.tenant_id, "emergency_escalation", prefer_role="veterinarian", db=db
     )
     _task(
         db,
@@ -1233,7 +1233,7 @@ def _notify(
     ):
         if not flag:
             continue
-        recipient = routing.primary_recipient(access.tenant_id, route, prefer_role=who)
+        recipient = routing.primary_recipient(access.tenant_id, route, prefer_role=who, db=db)
         description = (
             f"{version.protocol.code} v{version.version_no} started at {at:%H:%M} "
             "by the person at the animal. "
@@ -1399,8 +1399,8 @@ def prepare_step(
         lot = None
         needed: float | None = None
         if dose is not None and not problems:
-            if uom_service.compatible(med.dose_unit, item.unit):
-                needed = round(uom_service.convert(dose * heads, med.dose_unit, item.unit), 6)
+            if uom_service.compatible(db, med.dose_unit, item.unit):
+                needed = round(uom_service.convert(db, dose * heads, med.dose_unit, item.unit), 6)
                 lot = next(
                     (c for c in ph.eligible_lots(db, product) if c.quantity_on_hand + ph.EPS >= needed), None
                 )
@@ -1729,7 +1729,7 @@ def escalate_run(
     assessment.escalation_reasons = [*(assessment.escalation_reasons or []), reason]
     name = getattr(subject, "name", "")
     recipient = routing.primary_recipient(
-        access.tenant_id, "emergency_escalation", prefer_role="veterinarian"
+        access.tenant_id, "emergency_escalation", prefer_role="veterinarian", db=db
     )
     _task(
         db,
@@ -1846,7 +1846,7 @@ def check_overdue_reassessments(db: Session, access: AccessContext) -> dict:
         version = db.get(em.EmergencyProtocolVersion, r.protocol_version_id)
         recipient = routing.member(access.tenant_id, r.started_by) if r.started_by else None
         if recipient is None:
-            recipient = routing.primary_recipient(access.tenant_id, "emergency_reassessment")
+            recipient = routing.primary_recipient(access.tenant_id, "emergency_reassessment", db=db)
         name = getattr(subject, "name", "")
         title = f"Reassess {name} now — {version.protocol.title if version else 'protocol'}"
         _task(

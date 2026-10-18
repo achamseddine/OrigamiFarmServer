@@ -8,18 +8,19 @@ services:
   control-db:
     image: postgres:16
     environment:
-      POSTGRES_USER: origami
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: origami_dev_password
       POSTGRES_DB: origami_control
     ports:
       - "5433:5432"
     volumes:
       - control_db_data:/var/lib/postgresql/data
-      # Demotes the role from superuser on first init; RLS is silently
-      # skipped for superusers. See the script's header.
+      # Creates the non-superuser `origami` role the API connects as, on
+      # first init; RLS is silently skipped for superusers, and PostgreSQL
+      # 16 refuses to demote the bootstrap user. See the script's header.
       - ./infrastructure/sql/docker-initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U origami -d origami_control"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d origami_control"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -27,7 +28,7 @@ services:
   tenant-db:
     image: postgres:16
     environment:
-      POSTGRES_USER: origami
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: origami_dev_password
       POSTGRES_DB: origami_tenant_shared
     ports:
@@ -36,7 +37,7 @@ services:
       - tenant_db_data:/var/lib/postgresql/data
       - ./infrastructure/sql/docker-initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U origami -d origami_tenant_shared"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d origami_tenant_shared"]
       interval: 5s
       timeout: 5s
       retries: 10

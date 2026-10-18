@@ -21,6 +21,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.farmos import asset_service as assets
 from app.farmos import feed_catalog as catalog
 from app.farmos import feed_inventory_service as inv
 from app.farmos import feed_models as fm
@@ -301,6 +302,7 @@ def _intended_target(
 
 
 def validate_intended_use(
+    db: Session,
     *,
     species_code: str | None,
     management_profile: str | None,
@@ -308,10 +310,10 @@ def validate_intended_use(
     operator_id: str | None,
 ) -> None:
     """FEED-SCHEMA §20: intended species and profile are references to the
-    configured catalog, the mixer is a farm asset, the operator a user —
-    classification and provenance, never free text. (The operator's
-    membership on this farm is checked by the router against the control
-    database.)"""
+    configured catalog, the mixer is a registered, in-service farm asset
+    (`/assets`), the operator a user — classification and provenance,
+    never free text. (The operator's membership on this farm is checked
+    by the router against the control database.)"""
     if species_code and species_code not in livestock_catalog.SPECIES_BY_CODE:
         raise FeedError(f"Unknown species '{species_code}'.")
     if management_profile and management_profile not in livestock_catalog.MANAGEMENT_PROFILE_CODES:
@@ -320,9 +322,7 @@ def validate_intended_use(
             "See GET /species/{code}/configuration for the configured profiles."
         )
     if mixer_asset_id:
-        # Farm assets arrive with the platform stage; until then no mixer
-        # can be named, and a free-text name is never accepted.
-        raise FeedError("Mixer asset not found; register the mixer under Assets first.", 404)
+        assets.require_usable(db, mixer_asset_id, asset_type="mixer", purpose="a mix")
     if operator_id and inv.parse_uuid(operator_id) is None:
         raise FeedError("Operator not found on this farm.", 404)
 
@@ -348,6 +348,7 @@ def start_batch(
     usage-policy check on every component against the intended use (§33:
     the restriction is revalidated when the physical batch is created)."""
     validate_intended_use(
+        db,
         species_code=intended_species_code,
         management_profile=intended_management_profile,
         mixer_asset_id=mixer_asset_id,
@@ -404,7 +405,7 @@ def start_batch(
         intended_species_code=species,
         intended_management_profile=intended_management_profile,
         production_date=ensure_utc(production_date) or when,
-        mixer_asset_id=None,
+        mixer_asset_id=inv.parse_uuid(mixer_asset_id),
         operator_id=inv.parse_uuid(operator_id) or access.user_id,
         status="in_progress",
         target_quantity=target_quantity,
@@ -455,10 +456,12 @@ def complete_batch(
     if actual_quantity <= 0:
         raise FeedError("Actual quantity produced must be greater than zero.")
     validate_intended_use(
-        species_code=None, management_profile=None, mixer_asset_id=mixer_asset_id, operator_id=operator_id
+        db, species_code=None, management_profile=None, mixer_asset_id=mixer_asset_id, operator_id=operator_id
     )
     if operator_id:
         batch.operator_id = inv.parse_uuid(operator_id)
+    if mixer_asset_id:
+        batch.mixer_asset_id = inv.parse_uuid(mixer_asset_id)
     version = db.get(fm.FeedFormulaVersion, batch.formula_version_id) if batch.formula_version_id else None
     formula = version.formula if version else None
     provided = {str(a["feed_product_id"]): a for a in actuals}
@@ -641,6 +644,9 @@ def mix_settings_dict(seq: fm.FeedMixSequence) -> dict:
 
 
 def mix_usage(db: Session, batch: fm.FeedBatch) -> dict:
+    # Local import: the performance layer reads mix usage (a cycle otherwise).
+    from app.farmos import feed_performance_service as perf
+
     """The numbered mix's whole life (§20): what went into it, what came
     out, every dated issue to an animal or group through the output lot,
     waste and corrections on that lot, and the remaining quantity — which
@@ -807,7 +813,7 @@ def mix_usage(db: Session, batch: fm.FeedBatch) -> dict:
         "operator_name": None,
         "mixed_by": str(batch.mixed_by) if batch.mixed_by else None,
         "mixer_asset_id": str(batch.mixer_asset_id) if batch.mixer_asset_id else None,
-        "mixer_asset_name": None,
+        "mixer_asset_name": assets.asset_name(db, batch.mixer_asset_id),
         "notes": batch.notes,
         "target_quantity": batch.target_quantity,
         "actual_quantity": batch.actual_quantity,
@@ -846,8 +852,7 @@ def mix_usage(db: Session, batch: fm.FeedBatch) -> dict:
         "exposed_subjects": trace["exposed_subjects"] if trace else [],
         "issues": issues,
         "ledger_adjustments": ledger,
-        # Feed-performance scoring arrives with a later stage.
-        "performance": None,
+        "performance": perf.batch_performance_summary(db, batch),
     }
 
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -23,6 +26,26 @@ configure_logging(settings.log_level)
 if settings.is_production and settings.auth_dev_mode:
     raise RuntimeError("AUTH_DEV_MODE must never be enabled in production")
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """The scheduled analytical cycles (app/farmos/scheduler_service.py)
+    run as a background task when SCHEDULER_ENABLED is set — on exactly
+    one instance of a deployment. Off by default."""
+    from app.farmos import scheduler_service
+
+    task: asyncio.Task | None = scheduler_service.start()
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutting down
+                pass
+
+
 app = FastAPI(
     title="Origami Server API",
     version="0.1.0",
@@ -30,6 +53,7 @@ app = FastAPI(
         "Multi-tenant control plane and secure FarmOS API platform. "
         "See /docs for the OpenAPI schema, grouped by tag."
     ),
+    lifespan=_lifespan,
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -121,6 +145,7 @@ from app.farmos.routes_employees import router as farmos_employees_router  # noq
 from app.farmos.routes_employees_admin import router as farmos_employees_admin_router  # noqa: E402
 from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
 from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
+from app.farmos.routes_feed_performance import router as farmos_feed_performance_router  # noqa: E402
 from app.farmos.routes_feeding import router as farmos_feeding_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
@@ -132,6 +157,7 @@ from app.farmos.routes_mouneh import router as farmos_mouneh_router  # noqa: E40
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
 from app.farmos.routes_observations import router as farmos_observations_router  # noqa: E402
 from app.farmos.routes_pharmacy import router as farmos_pharmacy_router  # noqa: E402
+from app.farmos.routes_platform import router as farmos_platform_router  # noqa: E402
 from app.farmos.routes_priorities import router as farmos_priorities_router  # noqa: E402
 from app.farmos.routes_procurement import router as farmos_procurement_router  # noqa: E402
 from app.farmos.routes_production import router as farmos_production_router  # noqa: E402
@@ -170,6 +196,8 @@ app.include_router(farmos_emergency_router, prefix="/api/v1", tags=["FarmOS: Eme
 app.include_router(farmos_procurement_router, prefix="/api/v1", tags=["FarmOS: Procurement"])
 app.include_router(farmos_feed_router, prefix="/api/v1", tags=["FarmOS: Feed"])
 app.include_router(farmos_feeding_router, prefix="/api/v1", tags=["FarmOS: Feeding"])
+app.include_router(farmos_feed_performance_router, prefix="/api/v1", tags=["FarmOS: Feed Performance"])
+app.include_router(farmos_platform_router, prefix="/api/v1", tags=["FarmOS: Platform"])
 app.include_router(farmos_production_router, prefix="/api/v1", tags=["FarmOS: Production"])
 app.include_router(farmos_agriculture_router, prefix="/api/v1", tags=["FarmOS: Agriculture"])
 app.include_router(farmos_employees_admin_router, prefix="/api/v1", tags=["FarmOS: Employees Admin"])

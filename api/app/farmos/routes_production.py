@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.farmos import capability_service, livestock_service
+from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
 from app.farmos.livestock_catalog import Cap
@@ -117,6 +118,9 @@ def record_eggs(
     )
     db.add(record)
     db.flush()
+    # §12 ProductionRecorded: the flock's feed-performance monitors read again.
+    if group is not None and group.deleted_at is None:
+        perf.on_production_recorded(db, access, "group", group)
     return _to_egg_out(record)
 
 
@@ -281,4 +285,6 @@ def record_milk(
     # (feed architecture §11) — a task, never an automatic ration change.
     if animal is not None:
         programs.review_after_milk(db, access, animal)
+        # §12 ProductionRecorded: the animal's and its herd's monitors read again.
+        perf.on_production_recorded(db, access, "animal", animal)
     return _to_milk_out(record, under_withdrawal_warning=under_withdrawal)

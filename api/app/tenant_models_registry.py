@@ -4,11 +4,13 @@ from app.common.db import TenantBase
 from app.farmos import emergency_models as _farmos_emergency_models  # noqa: F401
 from app.farmos import farm_models as _farmos_farm_models  # noqa: F401
 from app.farmos import feed_models as _farmos_feed_models  # noqa: F401
+from app.farmos import feed_performance_models as _farmos_feed_performance_models  # noqa: F401
 from app.farmos import finance_models as _farmos_finance_models  # noqa: F401
 from app.farmos import health_case_models as _farmos_health_case_models  # noqa: F401
 from app.farmos import livestock_models as _farmos_livestock_models  # noqa: F401
 from app.farmos import mouneh_models as _farmos_mouneh_models  # noqa: F401
 from app.farmos import pharmacy_models as _farmos_pharmacy_models  # noqa: F401
+from app.farmos import platform_models as _farmos_platform_models  # noqa: F401
 from app.farmos import procurement_models as _farmos_procurement_models  # noqa: F401
 from app.farmos import production_models as _farmos_production_models  # noqa: F401
 from app.farmos import visits_models as _farmos_visits_models  # noqa: F401

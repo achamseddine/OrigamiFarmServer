@@ -111,8 +111,8 @@ def _apply_product_fields(db: Session, access: AccessContext, product: MedicineP
         if k in simple and v is not None:
             setattr(product, k, v)
     # Units are references (FOUNDATION uom): the code must exist.
-    product.strength_uom = uom_service.optional(product.strength_uom, what="strength unit")
-    product.pack_uom = uom_service.optional(product.pack_uom, what="pack unit")
+    product.strength_uom = uom_service.optional(db, product.strength_uom, what="strength unit")
+    product.pack_uom = uom_service.optional(db, product.pack_uom, what="pack unit")
     if fields.get("withdrawal_rules") is not None:
         rules = dict(fields["withdrawal_rules"])
         for key in ("milk_days", "meat_days", "egg_days"):
@@ -145,7 +145,7 @@ def _apply_product_fields(db: Session, access: AccessContext, product: MedicineP
                     ingredient_name=pc.ingredient_name(ing["code"], ing.get("name")),
                     concentration_value=ing.get("concentration_value"),
                     concentration_uom=uom_service.optional(
-                        ing.get("concentration_uom"), what="concentration unit"
+                        db, ing.get("concentration_uom"), what="concentration unit"
                     ),
                     concentration_basis=ing.get("concentration_basis"),
                 )
@@ -177,7 +177,7 @@ def create_product(
         if name:
             item.name = name
         item.category = "medicine"
-        item.unit = uom_service.require(item.unit, what="stock unit")
+        item.unit = uom_service.require(db, item.unit, what="stock unit")
     else:
         if not name or not name.strip():
             raise PharmacyError("A medicine needs a name")
@@ -186,7 +186,7 @@ def create_product(
             last_modified_by=access.membership_id,
             name=name.strip(),
             category="medicine",
-            unit=uom_service.require(unit or "items", what="stock unit"),
+            unit=uom_service.require(db, unit or "items", what="stock unit"),
             current_qty=0,
             reorder_level=0,
             supplier_label=supplier_label,
@@ -366,10 +366,10 @@ def receive_lot(
         supplier_pk = parse_uuid(supplier_id)
         if supplier_pk is None:
             raise PharmacyError("supplier_id must be an id.")
-    stock_unit = uom_service.require(item.unit, what="stock unit")
-    entered_unit = uom_service.require(unit or stock_unit, what="unit")
-    qty = uom_service.convert(quantity, entered_unit, stock_unit)
-    rejected = uom_service.convert(rejected_quantity, entered_unit, stock_unit)
+    stock_unit = uom_service.require(db, item.unit, what="stock unit")
+    entered_unit = uom_service.require(db, unit or stock_unit, what="unit")
+    qty = uom_service.convert(db, quantity, entered_unit, stock_unit)
+    rejected = uom_service.convert(db, rejected_quantity, entered_unit, stock_unit)
     requisition = None
     if source_reference_type == "purchase_requisition" and source_reference_id:
         requisition = procurement.get_requisition(db, source_reference_id)
@@ -492,7 +492,7 @@ def reserved_quantity(
     for r in active_reservations(db, product, lot=lot, location_id=location_id):
         if exclude is not None and r.id == exclude.id:
             continue
-        total += uom_service.convert(reservation_remaining(r), r.unit, item.unit)
+        total += uom_service.convert(db, reservation_remaining(r), r.unit, item.unit)
     return round(total, 6)
 
 
@@ -517,8 +517,8 @@ def reserve(
         raise PharmacyError(f"purpose_type must be one of {list(pc.RESERVATION_PURPOSES)}")
     if quantity <= 0:
         raise PharmacyError("Reserved quantity must be greater than zero.")
-    unit_code = uom_service.require(unit or item.unit, what="unit")
-    qty = uom_service.convert(quantity, unit_code, item.unit)
+    unit_code = uom_service.require(db, unit or item.unit, what="unit")
+    qty = uom_service.convert(db, quantity, unit_code, item.unit)
     if lot is not None:
         if lot.inventory_item_id != product.inventory_item_id:
             raise PharmacyError("That lot belongs to another medicine.")
@@ -1674,7 +1674,7 @@ def administer(
     at = ensure_utc(administered_at) or now_utc()
     if dose_quantity <= 0:
         raise PharmacyError("Dose must be greater than zero.")
-    dose_unit = uom_service.require(dose_unit, what="dose unit")
+    dose_unit = uom_service.require(db, dose_unit, what="dose unit")
     if route_code not in pc.ROUTES:
         raise PharmacyError(f"route_code must be one of {list(pc.ROUTES)}")
     if product.administration_routes and route_code not in product.administration_routes:
@@ -1723,13 +1723,13 @@ def administer(
     if heads <= 0:
         raise PharmacyError("head_count must be at least one.")
     if quantity_consumed is None:
-        if not uom_service.compatible(dose_unit, item.unit):
+        if not uom_service.compatible(db, dose_unit, item.unit):
             raise PharmacyError(
                 f"The dose is in {dose_unit} and {item.name} is stocked in {item.unit}; "
                 "give quantity_consumed "
                 f"in {item.unit}."
             )
-        quantity_consumed = round(uom_service.convert(dose_quantity * heads, dose_unit, item.unit), 6)
+        quantity_consumed = round(uom_service.convert(db, dose_quantity * heads, dose_unit, item.unit), 6)
     if quantity_consumed <= 0:
         raise PharmacyError("Quantity consumed must be greater than zero.")
     reservation = None

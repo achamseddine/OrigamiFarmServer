@@ -90,7 +90,7 @@ def create_requisition(
 ) -> PurchaseRequisition:
     if not lines:
         raise ProcurementError("A requisition needs at least one line.")
-    buyer = routing.primary_recipient(access.tenant_id, "procurement_requisition")
+    buyer = routing.primary_recipient(access.tenant_id, "procurement_requisition", db=db)
     req = PurchaseRequisition(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
@@ -114,10 +114,10 @@ def create_requisition(
         qty = float(line.get("requested_quantity") or 0)
         if qty <= 0:
             raise ProcurementError(f"Requested quantity for {item.name} must be greater than zero.")
-        unit = uom_service.require(line.get("uom_code") or item.unit, what="unit")
+        unit = uom_service.require(db, line.get("uom_code") or item.unit, what="unit")
         price = line.get("estimated_unit_price")
-        if price is None and item.unit_cost is not None and uom_service.compatible(unit, item.unit):
-            price = round(float(item.unit_cost) * uom_service.convert(1, unit, item.unit), 6)
+        if price is None and item.unit_cost is not None and uom_service.compatible(db, unit, item.unit):
+            price = round(float(item.unit_cost) * uom_service.convert(db, 1, unit, item.unit), 6)
         req.lines.append(
             PurchaseRequisitionLine(
                 tenant_id=access.tenant_id,
@@ -304,7 +304,7 @@ def incoming_quantity(db: Session, inventory_item_id: uuid.UUID, unit: str) -> f
     ).all()
     for line in rows:
         try:
-            total += uom_service.convert(line.requested_quantity, line.uom_code, unit)
+            total += uom_service.convert(db, line.requested_quantity, line.uom_code, unit)
         except FeedError:  # a line in an unconvertible unit does not count as incoming
             continue
     return round(total, 6)

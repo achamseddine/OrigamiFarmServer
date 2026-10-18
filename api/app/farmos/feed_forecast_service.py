@@ -25,7 +25,9 @@ from app.farmos import feed_inventory_service as inv
 from app.farmos import feed_models as fm
 from app.farmos import feed_policy_service as policy
 from app.farmos import feeding_program_service as programs
+from app.farmos import routing_service as routing
 from app.farmos.deps import AccessContext
+from app.farmos.farm_models import Notification
 from app.farmos.feed_catalog import FeedError
 from app.farmos.livestock_service import ensure_utc, now_utc
 from app.farmos.production_models import MilkRecord
@@ -308,6 +310,108 @@ def acknowledge_reorder(
     db.add(task)
     db.flush()
     return task
+
+
+def refresh_bell_signals(db: Session, access: AccessContext) -> dict:
+    """The feed signals on the farm's bell: one `feed_reorder_required`
+    entry per product at risk (§29), suppressed while a replenishment task
+    covers it, and one `feed_variance` entry per open reconciliation whose
+    variance is beyond the product's threshold (§27). An entry whose
+    condition has cleared is marked read. Called after the facts that move
+    them (a receipt, an acknowledgement, a count) and by the daily cycle."""
+    at = now_utc()
+    live: set[str] = set()
+    reorders = 0
+    for r in reorder_recommendations(db, access):
+        if r["covered_by_task_id"]:
+            continue
+        unit = catalog.describe(r["unit"])
+        when = r.get("projected_stockout_at")
+        title = f"Reorder {r['name']}" if r["status"] == "reorder" else f"Stockout risk: {r['name']}"
+        parts = [f"{r['available']:.0f} {unit} available"]
+        if r.get("reserved"):
+            parts.append(f"{r['reserved']:.0f} reserved")
+        if r.get("days_of_cover") is not None:
+            parts.append(f"{r['days_of_cover']} days of cover")
+        if r.get("lead_time_days") is not None:
+            parts.append(f"lead time {r['lead_time_days']} d")
+        if when is not None:
+            parts.append(f"runs out ~{ensure_utc(when):%d %b}")
+        if r.get("suggested_reorder_quantity"):
+            parts.append(f"suggest {r['suggested_reorder_quantity']:.0f} {unit}")
+        if r.get("programs_affected"):
+            parts.append("affects " + ", ".join(r["programs_affected"]))
+        routing.notify_bell(
+            db,
+            access.tenant_id,
+            module_code="feed_nutrition",
+            notification_type="feed_reorder_required",
+            title=title,
+            description=" · ".join(parts),
+            priority=r["priority"],
+            entity_type="feed_product",
+            entity_id=r["feed_product_id"],
+            source_type="feed_reorder",
+            source_id=r["feed_product_id"],
+            actor=access.membership_id,
+        )
+        live.add(r["feed_product_id"])
+        reorders += 1
+    for n in db.scalars(
+        select(Notification).where(
+            Notification.source_type == "feed_reorder",
+            Notification.read_at.is_(None),
+            Notification.deleted_at.is_(None),
+        )
+    ):
+        if n.source_id not in live:
+            n.read_at = at
+    live_recs: set[str] = set()
+    variances = 0
+    for rec in db.scalars(
+        select(fm.FeedReconciliation).where(
+            fm.FeedReconciliation.status == "open",
+            fm.FeedReconciliation.variance_pct.is_not(None),
+            fm.FeedReconciliation.deleted_at.is_(None),
+        )
+    ):
+        threshold = variance_threshold(db, rec.feed_product_id)
+        pct = abs(rec.variance_pct or 0)
+        if pct <= threshold:
+            continue
+        product = db.get(fm.FeedProduct, rec.feed_product_id)
+        name = product.name if product else "feed"
+        unit = catalog.describe(rec.unit)
+        routing.notify_bell(
+            db,
+            access.tenant_id,
+            module_code="feed_nutrition",
+            notification_type="feed_variance",
+            title=f"Stock variance on {name}: {rec.variance_pct:+.1f}%",
+            description=(
+                f"Counted {rec.counted_closing_quantity:g} {unit} against an expected "
+                f"{rec.expected_closing_quantity:g} {unit} (threshold ±{threshold:g}%). "
+                "Explain and close the reconciliation; a posted adjustment is a ledger movement."
+            ),
+            priority="high" if pct > 2 * threshold else "medium",
+            entity_type="feed_reconciliation",
+            entity_id=str(rec.id),
+            source_type="feed_reconciliation",
+            source_id=str(rec.id),
+            actor=access.membership_id,
+        )
+        live_recs.add(str(rec.id))
+        variances += 1
+    for n in db.scalars(
+        select(Notification).where(
+            Notification.source_type == "feed_reconciliation",
+            Notification.read_at.is_(None),
+            Notification.deleted_at.is_(None),
+        )
+    ):
+        if n.source_id not in live_recs:
+            n.read_at = at
+    return {"reorder": reorders, "variance": variances}
 
 
 # --------------------------------------------------------- reconciliation

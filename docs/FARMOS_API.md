@@ -7,10 +7,11 @@ to close gaps the captured examples left open (see "Known, deliberate gaps" belo
 here once built), plus the 18 Stage 6 endpoints of the generic animal model (species configuration,
 capability resolver, identifiers, animal groups, care record), the 63 Stage 7 endpoints of the
 generic feed architecture (products and lots, formulas and numbered mixes, feeding programs and
-events, usage policy, allocations, days of cover, reorder, reconciliation, costs) and the 65 Stage 8
+events, usage policy, allocations, days of cover, reorder, reconciliation, costs), the 65 Stage 8
 endpoints of the farm pharmacy, health cases, purchase requisitions and the emergency protocol
-engine including offline protocol runs, all ported from the reference backend's published OpenAPI
-contract. This is a **fixed external contract**, not free-form internal API design: field
+engine including offline protocol runs, and the 26 Stage 9 endpoints of the platform masters (units
+of measure, farm assets, notification routes, the scheduled cycles) and feed-performance
+intelligence, all ported from the reference backend's published OpenAPI contract. This is a **fixed external contract**, not free-form internal API design: field
 names, types, status codes, and response shapes match the app's expectations exactly, even where
 that diverges from this codebase's own conventions elsewhere (see "Deliberate divergences from the
 rest of this codebase" below).
@@ -19,7 +20,8 @@ Every route lives under `/api/v1`, mounted in `app/main.py`, one router module p
 group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_models.py`
 (`farm_models.py`, `production_models.py`, `finance_models.py`, `mouneh_models.py`,
 `visits_models.py`, `livestock_models.py`, `feed_models.py`, `pharmacy_models.py`,
-`health_case_models.py`, `emergency_models.py`, `procurement_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
+`health_case_models.py`, `emergency_models.py`, `procurement_models.py`, `platform_models.py`,
+`feed_performance_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
 `InventoryItem`/`InventoryMovement` — extended, not replaced, since `app/sync/` already depended on
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
 
@@ -201,13 +203,14 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 6 | Livestock: species catalog & capability resolver, identifiers, animal groups, care record (conditions, weights) | The resolver-driven Add Animal form, group (flock/herd) subjects, and the animal's care record on the detail screen |
 | 7 | Feed architecture: products & lots, formulas & numbered mixes, nutrient profiles, feeding programs/assignments/events, usage policy, allocations, days of cover/forecast/reorder, reconciliation, costs | The tablet's feed workspace, the mixing screen, the animal's feeding section and the feed-room daily plan |
 | 8 | Farm pharmacy (medicines, lots, reservations, transfers, policies, alerts, administrations), health cases (diagnoses, plans), purchase requisitions, emergency protocols (authoring & veterinary approval, triage, runs, reassessment, offline package & offline runs) | The pharmacy dashboard, the emergency flow at the animal — online and offline — and the clinical half of the animal's digital twin |
+| 9 | Platform masters (units of measure as references, farm assets named by mixes, notification routes, the scheduled cycles with their run log) and feed-performance intelligence (monitors, exposure windows with lineage, explained assessments, mix and supplier scores, deduplicated alerts, the feed signals on the bell) | The feed workspace's Performance tab and the mix score card, Settings → Units / Assets / Notifications, and a farm that is evaluated daily even on a quiet day |
 
-Each stage's tests live in `api/tests/test_farmos_stage{1..8}[_suffix].py` and run against real
+Each stage's tests live in `api/tests/test_farmos_stage{1..9}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
-Stages 6, 7 and 8 are the first three of a staged port of the reference backend's newer contract
-(288 operations in its OpenAPI document). The remaining stage: feed-performance intelligence and
-the platform masters (units of measure, assets, notification routes, scheduled jobs).
+Stages 6 to 9 are the staged port of the reference backend's newer contract (288 operations in its
+OpenAPI document), complete with stage 9. What the port deliberately leaves out is listed under
+"Known, deliberate gaps".
 
 ## Endpoint inventory by group
 
@@ -231,7 +234,9 @@ the routing map — which router module owns which path.
 | Emergency protocols | `routes_emergency.py` (shapes in `emergency_schemas.py`) | `GET /emergency/{summary,sign-codes,offline-package}`, `POST /emergency/offline-runs`, `POST /emergency/reassessments/check`, `GET/POST /emergency/protocols`, `GET /emergency/protocols/{id}`, `POST …/versions`, `POST …/versions/{v}/{approve,withdraw}`, `GET/POST /emergency/assessments`, `GET /emergency/assessments/{id}`, `POST …/{start,close}`, `GET /emergency/runs`, `GET /emergency/runs/{id}`, `POST …/steps/{s}/{prepare,confirm,skip}`, `POST …/{reassess,escalate,resolve}` |
 | Feed & inventory (item level) | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` — feed items are lot-tracked behind the scenes |
 | Feeding (generic feed architecture) | `routes_feeding.py` (shapes in `feed_schemas.py`) | `GET/POST /feed-products`, `GET/PATCH /feed-products/{id}`, `GET/PUT /feed-products/{id}/usage-policy`, `POST …/usage-policy/validate`, `GET /feed-lots`, `POST /feed-lots/receive`, `PATCH /feed-lots/{id}/status`, `GET /feed-lots/{id}/trace`, `POST /feed-inventory/adjustments`, `GET/POST /feed-formulas`, `GET /feed-formulas/{id}`, `POST …/versions`, `GET …/versions/{v}`, `POST …/versions/{v}/activate`, `GET …/versions/{v}/scale`, `GET …/versions/{v}/nutrients`, `GET/POST /feed-batches`, `GET /feed-batches/{id}`, `GET …/usage`, `POST …/complete`, `POST …/quarantine`, `GET/PUT /feed-mix-settings`, `GET /feed-mixes/{n}`, `GET /feed-nutrients`, `GET/POST /feed-nutrient-profiles`, `GET/POST /feeding-programs`, `GET /feeding-programs/{id}`, `POST …/versions`, `POST …/versions/{v}/activate`, `POST /feeding-programs/resolve`, `GET /livestock-subjects/{id}/feeding-plan`, `GET/POST …/feeding-assignments`, `DELETE …/feeding-assignments/{id}`, `GET …/feeding-history`, `GET/POST /feeding-events`, `POST /feeding-events/{id}/reverse`, `GET /feeding-plan/today`, `GET /feed-inventory/{availability,days-of-cover,forecast,reorder-recommendations}`, `POST /feed-inventory/reorder-recommendations/{id}/acknowledge`, `GET/PUT /feed-reorder-policies`, `GET/POST /feed-allocations`, `POST /feed-allocations/{id}/{release,transfer}`, `GET/POST /feed-reconciliations`, `GET /feed-reconciliations/{id}`, `POST …/close`, `GET /feed-costs` |
-| Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` |
+| Feed performance | `routes_feed_performance.py` (shapes in `platform_schemas.py`) | `GET /feed-performance/summary`, `POST /feed-performance/evaluate`, `GET/POST /feed-performance/monitors`, `PATCH …/monitors/{id}`, `POST …/monitors/{id}/evaluate`, `GET /feed-performance/{assessments,exposures,alerts}`, `POST …/alerts/{id}/{acknowledge,resolve}`, `GET /feed-performance/batches`, `GET …/batches/{id}`, `GET /feed-performance/{suppliers,ingredient-lots,effective-feed-value}` |
+| Platform masters | `routes_platform.py` (shapes in `platform_schemas.py`) | `GET/POST /units-of-measure`, `GET/POST /assets`, `GET/PATCH /assets/{id}`, `GET /notification-routes`, `PUT /notification-routes/{code}`, `GET /scheduler/{jobs,runs}`, `POST /scheduler/run` |
+| Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` — a milk or egg record re-evaluates the subject's feed-performance monitors |
 | Agriculture | `routes_agriculture.py` | `GET/POST /crop-plantings`, `GET/POST/DELETE /crops`, `POST/PATCH /fields`, `POST /harvest` |
 | Sales & finance | `routes_finance.py` | `GET/POST /expenses`, `GET/POST /sales` |
 | Tasks | `routes_tasks.py` | `GET/POST/PATCH/DELETE /tasks` |
@@ -423,6 +428,40 @@ where cited, not as a generic framework:
   package, a version no longer current or never offline-eligible, a match the server does not
   confirm, a step or lot the current rules refuse — as discrepancies that escalate; nothing is
   silently rewritten.
+- **A unit a document names is a reference.** `GET /units-of-measure` is the built-in catalogue plus
+  the farm's own rows (`POST`, Settings configure); a medicine's stock, strength and pack units, a
+  lot's unit, a dose unit and a requisition line's unit must be one of them, and a farm unit
+  converts through the base unit of its dimension it names (a quintal is 100 kg; a carton never
+  silently becomes a dose). A unit one farm adds is invisible to every other farm.
+- **A mix names a registered, in-service mixer.** `mixer_asset_id` on a batch must be a farm asset
+  of type `mixer` (`POST /assets`) that is `active`; a tank, an unknown id or a mixer out of service
+  is refused and the batch and usage views name the mixer back.
+- **Routing decides recipients, never whether an alert exists.** `PUT /notification-routes/{code}`
+  names roles and/or members a route reaches (an empty list restores the built-in default:
+  managers and owners, veterinarians for the clinical routes); escalation tasks, draft requisitions
+  and feed-performance review tasks are assigned to the routed person, replaced rows stay inactive
+  for the record.
+- **The cycles run for every live farm.** `GET /scheduler/jobs` lists the daily feed-performance
+  cycle, the daily pharmacy scan and the 15-minute overdue-reassessment check with their last and
+  next runs; `POST /scheduler/run` (owner or manager) runs them now; every run is a
+  `scheduled_job_run` row and a failed job rolls its own writes back to a savepoint and never stops
+  the others. The background loop (`SCHEDULER_ENABLED`, off by default, one instance per
+  deployment) runs the due jobs under the farm owner's membership.
+- **Feed performance is an association with its evidence, never a cause or a shadow truth.** A
+  monitor names one subject, one metric and one explicit baseline method; an assessment carries the
+  baseline actually applied (a fallback is recorded), the evaluation window, the feed changes with
+  their lineage (mix, formula version, ingredient lots, suppliers), the confounders checked and the
+  context the farm does not record — missing context lowers the confidence and is never read as
+  "no change". Alerts are deduplicated per condition, sit on the bell while open, are acknowledged
+  without resolving and resolve themselves when the evidence clears; closing one by hand needs
+  approve and a reason. A mix is scored on completion (formula compliance is a manufacturing
+  finding kept apart from any ingredient question); supplier rows are per supplier × ingredient
+  from the lots the mixes actually used; nothing here changes a formula, a program, a lot's status
+  or a supplier's standing.
+- **The feed signals reach the bell.** A product under its reorder point is a `feed_reorder_required`
+  entry until a replenishment task covers it; an open reconciliation beyond the product's variance
+  threshold is a `feed_variance` entry until it is closed; both are refreshed by the facts that move
+  them and by the daily cycle.
 
 ## Known, deliberate gaps
 
@@ -448,34 +487,35 @@ where cited, not as a generic framework:
   the tablet can cache them. Nothing in the tablet contract edits the catalog, so this matches the
   reference backend's behaviour; a per-farm override layer (a farm's own breeds, a disabled
   capability) would be a tenant table on top of this, not a change to the resolver.
-- **Feed reference data is code-defined.** The nutrient catalog and the unit-of-measure table with
-  its conversions live in `app/farmos/feed_catalog.py`, the same for every farm, like the livestock
-  catalog; `GET /feed-nutrients` serves it and `POST /feed-nutrient-profiles` rejects a code outside
-  it. Farm-defined nutrients and units arrive with the platform stage (`/units-of-measure`).
-- **Feed signals are not yet on the notification bell.** Reorder recommendations and reconciliation
-  variances are read from `GET /feed-inventory/reorder-recommendations` and
-  `GET /feed-reconciliations`; the reference backend also surfaces them as `feed_reorder_required` /
-  `feed_variance` notifications, which this port will add with the platform stage's signal routing.
-  Feed-performance scoring is absent too: `GET /feed-mixes/{n}` returns `"performance": null` and
-  the feed-performance endpoints are not mounted until that stage.
-- **Suppliers, locations and mixer assets are ids without a master yet.** `supplier_id` on feed
-  and medicine lots and `preferred_supplier_id` on policies and requisition lines are stored as
-  given (`supplier_label` carries the name meanwhile); a pharmacy `location_id` is an opaque code
-  the farm chooses (per-location balances, transfers and policies work on it, nothing validates it
-  against a locations master); `mixer_asset_id` is refused with 404 until `/assets` exists — a
-  free-text mixer name is never accepted. All three masters arrive with the platform stage.
-- **Notification routing uses the built-in defaults.** Escalations go to the veterinarian (then
-  managers), run notifications to the roles the version names, draft requisitions to a manager or
-  the owner; a farm's own `notification_routes` configuration arrives with the platform stage.
-  Pharmacy alerts and emergency escalations do reach the farm-wide bell (`GET /notifications`) and
-  leave it when acknowledged, resolved or closed.
-- **The scheduled scans are endpoints, not a scheduler.** `POST /pharmacy/evaluate` (the daily
-  pharmacy scan) and `POST /emergency/reassessments/check` (overdue reassessments) are idempotent
-  and safe to call from any scheduler; this repository does not yet run one.
-- **Pharmacy reference data is code-defined.** Medicine categories, the built-in active-ingredient
-  list and the unit-of-measure catalogue (`app/farmos/pharmacy_catalog.py`,
-  `app/farmos/feed_catalog.py`) are the same for every farm; a farm may use any ingredient code
-  (its name travels with the product) but a unit a document names must exist in the catalogue.
+- **The nutrient catalog and the built-in units are code-defined.** The nutrient catalog and the
+  built-in unit-of-measure catalogue with its conversions live in `app/farmos/feed_catalog.py`, the
+  same for every farm, like the livestock catalog; `GET /feed-nutrients` serves the nutrients and
+  `POST /feed-nutrient-profiles` rejects a code outside them. A farm's own *units* are rows
+  (`POST /units-of-measure`); farm-defined nutrients are not.
+- **Suppliers and locations are ids without a master.** `supplier_id` on feed and medicine lots
+  and `preferred_supplier_id` on policies and requisition lines are stored as given
+  (`supplier_label` carries the name, and the supplier performance rows group by it); a pharmacy or
+  asset `location_id` is an opaque code the farm chooses (per-location balances, transfers and
+  policies work on it, nothing validates it against a locations master). The reference backend
+  has no `/suppliers` or `/locations` endpoints either.
+- **The bell is farm-wide, not per person.** Routing decides who a task is assigned to and who an
+  escalation names; the bell entries themselves (`GET /notifications`) are one per farm, visible to
+  everyone with the module, as the rest of this contract's notifications are. The reference
+  backend addresses a copy of each entry to every routed recipient.
+- **Context the animal record does not carry is reported as missing, not inferred.** Days in milk,
+  calving and dry-off dates are not on the server's `Animal`; a lactation-adjusted or
+  production-curve baseline falls back to the rolling subject baseline and says so, and the
+  confidence drops for the missing context. A monitor may state `configuration.lactation_started_at`
+  to supply days in milk until the record carries it. Group and location moves are counted from the
+  audit trail (`animal.updated` with `group_name` / `location_label`), feeding-program changes from
+  the assignments.
+- **Pharmacy reference data is code-defined.** Medicine categories and the built-in
+  active-ingredient list (`app/farmos/pharmacy_catalog.py`) are the same for every farm; a farm may
+  use any ingredient code (its name travels with the product).
+- **The scheduler is one process, not a cluster.** `SCHEDULER_ENABLED` runs the due jobs from one
+  API instance's event loop every `SCHEDULER_INTERVAL_MINUTES`; a deployment with several replicas
+  enables it on one of them or drives `POST /scheduler/run` from an external scheduler. There is
+  no leader election.
 
 ## Testing
 
@@ -485,7 +525,7 @@ python -m pytest -q tests/test_farmos_stage1.py tests/test_farmos_stage2.py \
   tests/test_farmos_stage3.py tests/test_farmos_stage4.py \
   tests/test_farmos_stage5_mouneh.py tests/test_farmos_stage5_visits.py \
   tests/test_farmos_stage6_livestock.py tests/test_farmos_stage7_feed.py \
-  tests/test_farmos_stage8_clinical.py
+  tests/test_farmos_stage8_clinical.py tests/test_farmos_stage9_platform_performance.py
 ```
 
 Every test runs against real `origami_control_test` / `origami_tenant_shared_test` databases (RLS

@@ -18,6 +18,7 @@ from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
 from app.farmos import capability_service, identifier_service, livestock_service
+from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
 from app.farmos import livestock_catalog as catalog
 from app.farmos.deps import (
@@ -494,6 +495,7 @@ def record_weight(
     animal.version += 1
     animal.last_modified_by = access.membership_id
     db.flush()
+    perf.on_context_changed(db, access, "animal", animal, trigger="weight_recorded")
     _audit(
         control_db,
         access,

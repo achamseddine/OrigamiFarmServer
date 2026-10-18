@@ -23,11 +23,13 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType, MembershipStatus
+from app.farmos import asset_service as assets
 from app.farmos import feed_batch_service as batches
 from app.farmos import feed_catalog as catalog
 from app.farmos import feed_forecast_service as forecast
 from app.farmos import feed_inventory_service as inv
 from app.farmos import feed_models as fm
+from app.farmos import feed_performance_service as perf
 from app.farmos import feed_policy_service as policy
 from app.farmos import feeding_program_service as programs
 from app.farmos import livestock_service
@@ -296,7 +298,7 @@ def _batch_out(db: Session, control_db: Session, b: fm.FeedBatch) -> dict:
         "operator_id": _s(operator),
         "operator_name": names.get(operator) if operator else None,
         "mixer_asset_id": _s(b.mixer_asset_id),
-        "mixer_asset_name": None,
+        "mixer_asset_name": assets.asset_name(db, b.mixer_asset_id),
         "status": b.status,
         "target_quantity": b.target_quantity,
         "actual_quantity": b.actual_quantity,
@@ -724,6 +726,10 @@ def receive_lot(
         actor=access.membership_id,
         actor_user=access.user_id,
     )
+    # §12 supplier receipt: supplier rows and the cost picture refresh;
+    # the reorder signals on the bell follow the new stock.
+    perf.on_receipt(db, access)
+    forecast.refresh_bell_signals(db, access)
     _audit(
         control_db,
         access,
@@ -746,6 +752,7 @@ def update_lot_status(
     lot = inv.get_lot(db, lot_id)
     before = lot.status
     inv.set_lot_status(db, lot, payload.status, actor=access.membership_id)
+    perf.on_lot_status_changed(db, access, lot)
     _audit(
         control_db,
         access,
@@ -1130,6 +1137,7 @@ def complete_batch(
         operator_id=payload.operator_id,
         mixer_asset_id=payload.mixer_asset_id,
     )
+    perf.on_batch_completed(db, access, batch)
     _audit(
         control_db,
         access,
@@ -1152,6 +1160,9 @@ def quarantine_batch(
     batch = _batch_or_404(db, batch_id)
     batches.quarantine_batch(db, access, batch, reason=payload.reason)
     db.flush()
+    output_lot = db.get(fm.FeedLot, batch.output_lot_id) if batch.output_lot_id else None
+    if output_lot is not None:
+        perf.on_lot_status_changed(db, access, output_lot)
     _audit(
         control_db,
         access,
@@ -1414,6 +1425,7 @@ def create_assignment(
             403,
         )
     row = programs.assign(db, access, subject_type, subject, **payload.model_dump())
+    perf.on_context_changed(db, access, subject_type, subject, trigger="feeding_program_assigned")
     _audit(
         control_db,
         access,
@@ -1446,6 +1458,7 @@ def end_assignment(
         raise FeedError("Assignment not found", 404)
     programs.end_assignment(db, access, a, reason=reason)
     db.flush()
+    perf.on_context_changed(db, access, subject_type, subject, trigger="feeding_program_changed")
     _audit(
         control_db,
         access,
@@ -1491,6 +1504,7 @@ def record_feeding_event(
         notes=payload.notes,
         allow_negative=payload.allow_negative,
     )
+    perf.on_feeding_recorded(db, access, payload.subject_type, subject)
     _audit(
         control_db,
         access,
@@ -1535,6 +1549,9 @@ def reverse_feeding_event(
     if event is None:
         raise FeedError("Feeding event not found", 404)
     reversal = programs.reverse_feeding(db, access, event, reason=payload.reason)
+    reversed_subject = programs.subject_row(db, event.subject_type, event.subject_id)
+    if reversed_subject is not None:
+        perf.on_feeding_recorded(db, access, event.subject_type, reversed_subject)
     _audit(
         control_db,
         access,
@@ -1606,6 +1623,7 @@ def acknowledge_reorder(
     task = forecast.acknowledge_reorder(
         db, access, product, quantity=payload.quantity, note=payload.note, assigned_to=payload.assigned_to
     )
+    forecast.refresh_bell_signals(db, access)
     _audit(
         control_db,
         access,
@@ -1806,6 +1824,7 @@ def create_reconciliation(
     )
     threshold = forecast.variance_threshold(db, product.id)
     flagged = rec.variance_pct is not None and abs(rec.variance_pct) > threshold
+    forecast.refresh_bell_signals(db, access)
     _audit(
         control_db,
         access,
@@ -1851,6 +1870,7 @@ def close_reconciliation(
         db, access, rec, post_adjustment=payload.post_adjustment, explanation=payload.explanation
     )
     db.flush()
+    forecast.refresh_bell_signals(db, access)
     _audit(
         control_db,
         access,

@@ -9,25 +9,31 @@ jobs:
   api:
     runs-on: ubuntu-latest
     services:
+      # POSTGRES_USER is the image's bootstrap superuser. The API must NOT
+      # connect as it: Postgres silently exempts superusers from row-level
+      # security, and since PostgreSQL 16 the bootstrap user cannot be
+      # demoted either ("The bootstrap user must have the SUPERUSER
+      # attribute"). So the superuser stays `postgres` and the step below
+      # creates the non-superuser `origami` role the URLs connect as.
       control-db:
         image: postgres:16
         env:
-          POSTGRES_USER: origami
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: origami_ci_password
           POSTGRES_DB: origami_control_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U origami -d origami_control_test"
+          --health-cmd "pg_isready -U postgres -d origami_control_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
       tenant-db:
         image: postgres:16
         env:
-          POSTGRES_USER: origami
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: origami_ci_password
           POSTGRES_DB: origami_tenant_shared_test
         ports: ["5433:5432"]
         options: >-
-          --health-cmd "pg_isready -U origami -d origami_tenant_shared_test"
+          --health-cmd "pg_isready -U postgres -d origami_tenant_shared_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
 
     env:
@@ -50,22 +56,33 @@ jobs:
         working-directory: api
         run: pip install -r requirements-dev.txt
 
-      # The postgres image makes POSTGRES_USER a superuser, and Postgres
-      # silently exempts superusers from row-level security — so the tenant
-      # isolation tests can only fail (or, worse, pass for the wrong reason)
-      # unless the role is demoted first. Same rule as
-      # infrastructure/sql/00_bootstrap.sql and README.md.
-      - name: Demote the database role (RLS does not apply to superusers)
+      # Postgres silently exempts superusers from row-level security — so the
+      # tenant isolation tests can only fail (or, worse, pass for the wrong
+      # reason) if the API connects as one. Same rule as
+      # infrastructure/sql/00_bootstrap.sql and README.md: the application
+      # role is created NOSUPERUSER NOBYPASSRLS and owns its database, so
+      # the migrations it runs own the tables they create.
+      - name: Create the application role (RLS does not apply to superusers)
         working-directory: api
         run: |
           python - <<'EOF'
           import os
           import psycopg
-          for var in ("CONTROL_DATABASE_URL", "TENANT_DATABASE_URL"):
+          for var, dbname in (
+              ("CONTROL_DATABASE_URL", "origami_control_test"),
+              ("TENANT_DATABASE_URL", "origami_tenant_shared_test"),
+          ):
               url = os.environ[var].replace("postgresql+psycopg://", "postgresql://")
-              with psycopg.connect(url, autocommit=True) as conn:
+              admin = url.replace("origami:", "postgres:", 1)
+              with psycopg.connect(admin, autocommit=True) as conn:
+                  if conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'origami'").fetchone() is None:
+                      conn.execute("CREATE ROLE origami LOGIN PASSWORD 'origami_ci_password'")
                   conn.execute("ALTER ROLE origami NOSUPERUSER NOBYPASSRLS")
-              print(f"{var}: origami is now NOSUPERUSER NOBYPASSRLS")
+                  conn.execute(f"ALTER DATABASE {dbname} OWNER TO origami")
+              with psycopg.connect(url) as conn:
+                  row = conn.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()
+                  assert row == (False, False), row
+              print(f"{var}: origami owns {dbname}, NOSUPERUSER NOBYPASSRLS")
           EOF
 
       - name: Lint (ruff)

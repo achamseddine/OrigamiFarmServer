@@ -98,6 +98,15 @@ class Settings(BaseSettings):
     # relaunch rather than a refresh flow.
     farmos_token_ttl_days: int = 180
 
+    # The scheduled analytical cycles (app/farmos/scheduler_service.py):
+    # the daily feed-performance cycle, the daily pharmacy scan and the
+    # 15-minute overdue-reassessment check, run for every active tenant.
+    # Off by default: a deployment with several API replicas, or one that
+    # drives POST /scheduler/run from an external scheduler, must not run
+    # the loop in every process. Enable it on exactly one instance.
+    scheduler_enabled: bool = False
+    scheduler_interval_minutes: int = 5
+
     @property
     def cors_origins_list(self) -> list[str]:
         """The allowlist, normalised to what a browser actually sends.
