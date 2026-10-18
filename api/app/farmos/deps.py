@@ -129,6 +129,22 @@ def require_permission(module_code: str, action: str) -> Callable:
     return _dependency
 
 
+def require_any_permission(*checks: tuple[str, str]) -> Callable:
+    """Passes when the caller holds any one of the (module, action) pairs —
+    the pharmacy, for one, sits between stock and animal health."""
+
+    def _dependency(access: AccessContext = Depends(get_access_context)) -> AccessContext:
+        for module_code, action in checks:
+            if access.has(module_code, action):
+                return access
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to do that. Ask your farm owner or manager for access.",
+        )
+
+    return _dependency
+
+
 def require_owner_or_manager(access: AccessContext = Depends(get_access_context)) -> AccessContext:
     if not access.full_access:
         raise HTTPException(status_code=403, detail="Only the farm owner or a manager can do that.")

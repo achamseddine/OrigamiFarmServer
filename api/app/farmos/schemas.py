@@ -986,6 +986,11 @@ class TreatmentOut(BaseModel):
     status: str
     cost: float | None
     notes: str | None
+    # The stocked medicine the prescription names, and the clinical frame
+    # it belongs to (pharmacy / health cases, stage 8).
+    medicine_product_id: str | None = None
+    health_case_id: str | None = None
+    treatment_plan_id: str | None = None
 
 
 class TreatmentCreate(BaseModel):
@@ -1002,6 +1007,9 @@ class TreatmentCreate(BaseModel):
     vet_id: str | None = None
     cost: float | None = None
     notes: str | None = None
+    medicine_product_id: str | None = None
+    health_case_id: str | None = None
+    treatment_plan_id: str | None = None
 
 
 class ObservationOut(BaseModel):

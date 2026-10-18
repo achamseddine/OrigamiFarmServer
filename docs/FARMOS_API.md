@@ -5,10 +5,12 @@ across 19 functional groups, reverse-engineered and verified against a real refe
 examples from a demo snapshot, 11 captured live from the running app), plus 5 endpoints added since
 to close gaps the captured examples left open (see "Known, deliberate gaps" below — each one moved
 here once built), plus the 18 Stage 6 endpoints of the generic animal model (species configuration,
-capability resolver, identifiers, animal groups, care record) and the 63 Stage 7 endpoints of the
+capability resolver, identifiers, animal groups, care record), the 63 Stage 7 endpoints of the
 generic feed architecture (products and lots, formulas and numbered mixes, feeding programs and
-events, usage policy, allocations, days of cover, reorder, reconciliation, costs), both ported from
-the reference backend's published OpenAPI contract. This is a **fixed external contract**, not free-form internal API design: field
+events, usage policy, allocations, days of cover, reorder, reconciliation, costs) and the 65 Stage 8
+endpoints of the farm pharmacy, health cases, purchase requisitions and the emergency protocol
+engine including offline protocol runs, all ported from the reference backend's published OpenAPI
+contract. This is a **fixed external contract**, not free-form internal API design: field
 names, types, status codes, and response shapes match the app's expectations exactly, even where
 that diverges from this codebase's own conventions elsewhere (see "Deliberate divergences from the
 rest of this codebase" below).
@@ -16,7 +18,8 @@ rest of this codebase" below).
 Every route lives under `/api/v1`, mounted in `app/main.py`, one router module per functional
 group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_models.py`
 (`farm_models.py`, `production_models.py`, `finance_models.py`, `mouneh_models.py`,
-`visits_models.py`, `livestock_models.py`, `feed_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
+`visits_models.py`, `livestock_models.py`, `feed_models.py`, `pharmacy_models.py`,
+`health_case_models.py`, `emergency_models.py`, `procurement_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
 `InventoryItem`/`InventoryMovement` — extended, not replaced, since `app/sync/` already depended on
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
 
@@ -197,14 +200,14 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 5 | Module licensing, Mouneh, Farm Visits | Licensed add-ons — hidden entirely by the app when inactive, safe to build last |
 | 6 | Livestock: species catalog & capability resolver, identifiers, animal groups, care record (conditions, weights) | The resolver-driven Add Animal form, group (flock/herd) subjects, and the animal's care record on the detail screen |
 | 7 | Feed architecture: products & lots, formulas & numbered mixes, nutrient profiles, feeding programs/assignments/events, usage policy, allocations, days of cover/forecast/reorder, reconciliation, costs | The tablet's feed workspace, the mixing screen, the animal's feeding section and the feed-room daily plan |
+| 8 | Farm pharmacy (medicines, lots, reservations, transfers, policies, alerts, administrations), health cases (diagnoses, plans), purchase requisitions, emergency protocols (authoring & veterinary approval, triage, runs, reassessment, offline package & offline runs) | The pharmacy dashboard, the emergency flow at the animal — online and offline — and the clinical half of the animal's digital twin |
 
-Each stage's tests live in `api/tests/test_farmos_stage{1..6}[_suffix].py` and run against real
+Each stage's tests live in `api/tests/test_farmos_stage{1..8}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
-Stages 6 and 7 are the first two of a staged port of the reference backend's newer contract (288
-operations in its OpenAPI document). The remaining stages, in order: pharmacy and emergency
-protocols including offline protocol runs; feed-performance intelligence, platform (units/assets),
-health cases and procurement.
+Stages 6, 7 and 8 are the first three of a staged port of the reference backend's newer contract
+(288 operations in its OpenAPI document). The remaining stage: feed-performance intelligence and
+the platform masters (units of measure, assets, notification routes, scheduled jobs).
 
 ## Endpoint inventory by group
 
@@ -220,8 +223,12 @@ the routing map — which router module owns which path.
 | Farm | `routes_farms.py` | `GET /farms/me` |
 | Animals | `routes_animals.py` | `GET/POST /animals`, `GET/PATCH/PUT /animals/{id}` |
 | Livestock (generic animal model) | `routes_livestock.py` | `GET /species`, `GET /species/{code}/configuration`, `GET /capabilities`, `POST /animal-capabilities/resolve`, `GET /animals/{id}/capabilities`, `GET/POST /animals/{id}/identifiers`, `DELETE /animals/{id}/identifiers/{id}`, `GET/POST /animal-groups`, `GET/PATCH /animal-groups/{id}`, `GET /animal-groups/{id}/capabilities`, `GET/POST /animals/{id}/conditions`, `DELETE /animals/{id}/conditions/{id}`, `GET/POST /animals/{id}/weights` |
-| Animal health | `routes_health.py` | `GET/POST /health/treatments` |
-| Observations | `routes_observations.py` | `GET/POST /observations` |
+| Animal health | `routes_health.py` | `GET/POST /health/treatments` — a treatment may name the stocked medicine (`medicine_product_id`), its health case and treatment plan |
+| Health cases | `routes_health_cases.py` (shapes in `emergency_schemas.py`) | `GET/POST /health/cases`, `GET/PATCH /health/cases/{id}`, `POST …/close`, `POST …/diagnoses`, `POST …/plans` |
+| Observations | `routes_observations.py` | `GET/POST /observations` — a new observation joins the subject's open case; a severe one starts emergency triage |
+| Pharmacy | `routes_pharmacy.py` (shapes in `pharmacy_schemas.py`) | `GET /pharmacy/summary`, `POST /pharmacy/evaluate`, `GET /pharmacy/{categories,ingredients}`, `GET/POST /pharmacy/medicines`, `GET/PATCH /pharmacy/medicines/{id}`, `GET /pharmacy/lots`, `POST /pharmacy/lots/receive`, `PATCH /pharmacy/lots/{id}/{status,storage}`, `POST /pharmacy/lots/{id}/open`, `POST /pharmacy/{adjustments,transfers}`, `GET/POST /pharmacy/reservations`, `POST …/reservations/{id}/release`, `GET /pharmacy/policies`, `PUT /pharmacy/policies/{item_id}`, `GET /pharmacy/alerts`, `POST /pharmacy/alerts/{id}/{acknowledge,resolve,requisition}`, `GET/POST /pharmacy/administrations`, `POST …/administrations/{id}/reverse` |
+| Procurement | `routes_procurement.py` | `GET/POST /procurement/requisitions`, `GET /procurement/requisitions/{id}`, `POST …/{submit,approve,reject,cancel}` |
+| Emergency protocols | `routes_emergency.py` (shapes in `emergency_schemas.py`) | `GET /emergency/{summary,sign-codes,offline-package}`, `POST /emergency/offline-runs`, `POST /emergency/reassessments/check`, `GET/POST /emergency/protocols`, `GET /emergency/protocols/{id}`, `POST …/versions`, `POST …/versions/{v}/{approve,withdraw}`, `GET/POST /emergency/assessments`, `GET /emergency/assessments/{id}`, `POST …/{start,close}`, `GET /emergency/runs`, `GET /emergency/runs/{id}`, `POST …/steps/{s}/{prepare,confirm,skip}`, `POST …/{reassess,escalate,resolve}` |
 | Feed & inventory (item level) | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` — feed items are lot-tracked behind the scenes |
 | Feeding (generic feed architecture) | `routes_feeding.py` (shapes in `feed_schemas.py`) | `GET/POST /feed-products`, `GET/PATCH /feed-products/{id}`, `GET/PUT /feed-products/{id}/usage-policy`, `POST …/usage-policy/validate`, `GET /feed-lots`, `POST /feed-lots/receive`, `PATCH /feed-lots/{id}/status`, `GET /feed-lots/{id}/trace`, `POST /feed-inventory/adjustments`, `GET/POST /feed-formulas`, `GET /feed-formulas/{id}`, `POST …/versions`, `GET …/versions/{v}`, `POST …/versions/{v}/activate`, `GET …/versions/{v}/scale`, `GET …/versions/{v}/nutrients`, `GET/POST /feed-batches`, `GET /feed-batches/{id}`, `GET …/usage`, `POST …/complete`, `POST …/quarantine`, `GET/PUT /feed-mix-settings`, `GET /feed-mixes/{n}`, `GET /feed-nutrients`, `GET/POST /feed-nutrient-profiles`, `GET/POST /feeding-programs`, `GET /feeding-programs/{id}`, `POST …/versions`, `POST …/versions/{v}/activate`, `POST /feeding-programs/resolve`, `GET /livestock-subjects/{id}/feeding-plan`, `GET/POST …/feeding-assignments`, `DELETE …/feeding-assignments/{id}`, `GET …/feeding-history`, `GET/POST /feeding-events`, `POST /feeding-events/{id}/reverse`, `GET /feeding-plan/today`, `GET /feed-inventory/{availability,days-of-cover,forecast,reorder-recommendations}`, `POST /feed-inventory/reorder-recommendations/{id}/acknowledge`, `GET/PUT /feed-reorder-policies`, `GET/POST /feed-allocations`, `POST /feed-allocations/{id}/{release,transfer}`, `GET/POST /feed-reconciliations`, `GET /feed-reconciliations/{id}`, `POST …/close`, `GET /feed-costs` |
 | Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` |
@@ -357,6 +364,66 @@ where cited, not as a generic framework:
   `Notification` gets created, so `GET /notifications` and the notification half of `GET
   /priorities` now reflect real, rule-evaluated farm state instead of only test-seeded rows.
 
+- **The pharmacy's eligible stock is not its on-hand stock.** Every medicine is an inventory item
+  with lots (`inventory_lot`); a lot's on-hand moves only with a posted `inventory_movement`, and
+  eligibility is read from lot facts: on hand − quarantined / blocked / recalled − expired or past
+  its after-opening use-by − under a storage or cold-chain exception − reserved for another
+  purpose. Every receipt records the manufacturer's lot and the expiry unless the product carries a
+  recorded `lot_tracking_exception`. Taking a lot out of use needs a reason; a person clears a
+  storage exception; an adjustment needs an explanation and never goes below zero; a transfer is a
+  paired OUT / IN under one `correlation_id` and leaves on-hand unchanged.
+- **Stock alerts are logistics findings, never treatment advice.** The farm's own policy
+  (`PUT /pharmacy/policies/{item}`: essential, minimum, critical, target, days of cover, expiry
+  warning) drives OK / LOW / CRITICAL / OUT; one open alert per condition, refreshed by every
+  re-evaluation (each receipt, dose, adjustment, status change and `POST /pharmacy/evaluate`),
+  resolved when the condition clears, superseded when the policy changes. `recommended_reorder =
+  max(0, target − eligible − confirmed incoming)` rounded up to the pack; an alert opens at most one
+  DRAFT purchase requisition, with a task for the buyer, and never a purchase order.
+- **Stocking a medicine never authorises its use.** `POST /pharmacy/administrations` needs Animal
+  Health *create*; a prescription-only product needs an active treatment of that product (or an
+  approved protocol step); the route and species must be ones the product is authorised for; the
+  dose comes from the exact lot named or first-expiry-first-out among eligible lots, never an
+  ineligible one; the withdrawal windows come from the product's `withdrawal_rules` and land on the
+  animal (and every animal of a group); a reversal puts the quantity back on the same lot and leaves
+  the withdrawal standing.
+- **Observation is not diagnosis, diagnosis is not treatment.** A health case (`HC-000001`) is the
+  episode; a diagnosis (with a certainty, superseded never overwritten) and a treatment plan are
+  recorded only by a diagnostic role; a treatment under a plan activates it; closing a case needs an
+  outcome and resolves its diagnoses and plans. Observations of the last day join a new case and
+  later ones land on the open case by themselves.
+- **A purchase requisition is a document, not a purchase.** Draft → submitted → approved / rejected
+  (by a manager, the owner or someone with Inventory *approve*; the authority is snapshotted on the
+  decision) → received when a goods receipt names it. Submitted and approved lines are *confirmed
+  incoming* for the pharmacy's arithmetic; a draft nobody acted on is withdrawn with the shortage.
+- **The emergency engine never invents a drug, dose or route.** A protocol version is operational
+  only after a veterinarian approves it with a reference (a manager drafts and withdraws; the
+  approval is written once); every medication instruction lives on an approved version. Triage
+  (`POST /emergency/assessments`) scores the signs — reported ones plus the last day's observations —
+  against every current version for the species and subject scope, checks the animal's facts
+  (species, sex, stage, weight and its age, pregnancy, lactation, withdrawal, recent medication,
+  open diagnoses, recorded allergies and conditions) against the eligibility rules and explains the
+  match; a danger sign, a required sign missing, a BLOCK / REQUIRE_VET rule, a score under the
+  version's confidence or no applicable version escalates instead: a task to the routed
+  veterinarian / manager, a bell entry, the subject's health case opened or joined.
+- **A run executes the approved steps, nothing else.** Starting a run opens or joins the health
+  case and notifies the manager and veterinarian as the version requires. A medication step is
+  prepared from the approved rule and the animal's authoritative weight (entered now and recorded,
+  or the latest dated record, refused when older than the protocol allows); a dose outside the
+  approved range, a recorded allergy to the product or its ingredients, a repeat too soon or no
+  eligible lot blocks the step and escalates the run. Confirming it records a prescription-provenance
+  treatment under the run's plan and administers the exact lot through the pharmacy. Reassessment
+  re-scores the same version: a danger sign or no improvement escalates; improvement continues; a
+  withdrawn version cannot start and escalates the matched case. Escalations are kept even when the
+  request is answered with the refusal.
+- **Offline execution is recorded as it happened and revalidated at sync.** `GET
+  /emergency/offline-package` ships only offline-eligible approved versions, signed by content, with
+  the medicine mapping and an eligible-stock snapshot. `POST /emergency/offline-runs` (idempotent on
+  `operation_id`) re-runs triage pinned to the version the tablet used, records what the tablet
+  showed and did with device, actor and occurrence times, and lists every difference — a stale
+  package, a version no longer current or never offline-eligible, a match the server does not
+  confirm, a step or lot the current rules refuse — as discrepancies that escalate; nothing is
+  silently rewritten.
+
 ## Known, deliberate gaps
 
 - **`POST /expenses` and `POST /sales` field shapes are inferred, not captured.** The 81+11
@@ -391,16 +458,24 @@ where cited, not as a generic framework:
   `feed_variance` notifications, which this port will add with the platform stage's signal routing.
   Feed-performance scoring is absent too: `GET /feed-mixes/{n}` returns `"performance": null` and
   the feed-performance endpoints are not mounted until that stage.
-- **Suppliers and mixer assets are ids without a master yet.** `feed_lot.supplier_id` is stored as
-  given (the `/suppliers` master arrives with procurement; `supplier_label` carries the name
-  meanwhile) and `mixer_asset_id` is refused with 404 until `/assets` exists — a free-text mixer
-  name is never accepted.
-- **The animal care record is partly ahead of its modules.** `GET /animals/{id}` already returns
-  `capabilities`, `identifiers`, `withdrawals`, `active_conditions` and `latest_weight` with real
-  data, but `recent_administrations` is always `[]` and `open_health_case`/`emergency` always
-  `null` until the pharmacy and clinical modules land (next port stages). `withdrawals` carries
-  only the treatment-set `record_until`; the `milk_until`/`meat_until` windows come with
-  medication administrations. The keys are present now so the tablet renders one shape.
+- **Suppliers, locations and mixer assets are ids without a master yet.** `supplier_id` on feed
+  and medicine lots and `preferred_supplier_id` on policies and requisition lines are stored as
+  given (`supplier_label` carries the name meanwhile); a pharmacy `location_id` is an opaque code
+  the farm chooses (per-location balances, transfers and policies work on it, nothing validates it
+  against a locations master); `mixer_asset_id` is refused with 404 until `/assets` exists — a
+  free-text mixer name is never accepted. All three masters arrive with the platform stage.
+- **Notification routing uses the built-in defaults.** Escalations go to the veterinarian (then
+  managers), run notifications to the roles the version names, draft requisitions to a manager or
+  the owner; a farm's own `notification_routes` configuration arrives with the platform stage.
+  Pharmacy alerts and emergency escalations do reach the farm-wide bell (`GET /notifications`) and
+  leave it when acknowledged, resolved or closed.
+- **The scheduled scans are endpoints, not a scheduler.** `POST /pharmacy/evaluate` (the daily
+  pharmacy scan) and `POST /emergency/reassessments/check` (overdue reassessments) are idempotent
+  and safe to call from any scheduler; this repository does not yet run one.
+- **Pharmacy reference data is code-defined.** Medicine categories, the built-in active-ingredient
+  list and the unit-of-measure catalogue (`app/farmos/pharmacy_catalog.py`,
+  `app/farmos/feed_catalog.py`) are the same for every farm; a farm may use any ingredient code
+  (its name travels with the product) but a unit a document names must exist in the catalogue.
 
 ## Testing
 
@@ -409,7 +484,8 @@ cd api
 python -m pytest -q tests/test_farmos_stage1.py tests/test_farmos_stage2.py \
   tests/test_farmos_stage3.py tests/test_farmos_stage4.py \
   tests/test_farmos_stage5_mouneh.py tests/test_farmos_stage5_visits.py \
-  tests/test_farmos_stage6_livestock.py tests/test_farmos_stage7_feed.py
+  tests/test_farmos_stage6_livestock.py tests/test_farmos_stage7_feed.py \
+  tests/test_farmos_stage8_clinical.py
 ```
 
 Every test runs against real `origami_control_test` / `origami_tenant_shared_test` databases (RLS

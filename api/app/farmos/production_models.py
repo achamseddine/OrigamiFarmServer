@@ -39,6 +39,14 @@ class Treatment(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBa
     status: Mapped[str] = mapped_column(String(32), default="active")
     cost: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(nullable=True)
+    # When the farm pharmacy stocks the medicine, the treatment names the
+    # product (== its inventory item id) and an administration under it
+    # must be of that product (MEDICINE-PHARMACY-SCHEMA §11).
+    medicine_product_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    # The clinical episode and prescription frame this action belongs to
+    # (HEALTH-VETERINARY-SCHEMA).
+    health_case_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    treatment_plan_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
 
 
 # Rough, deliberately simple confidence-by-quality lookup: there is no ML
@@ -72,6 +80,9 @@ class Observation(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, Tenant
     observed_at: Mapped[datetime] = mapped_column()
     observer_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True))
     notes: Mapped[str | None] = mapped_column(nullable=True)
+    # The open health case this observation joined, if the subject had one
+    # (HEALTH-VETERINARY-SCHEMA): evidence on the episode, never a diagnosis.
+    health_case_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
 
 
 class MilkRecord(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):

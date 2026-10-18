@@ -95,7 +95,8 @@ def test_worker_cannot_record_a_treatment(client, control_db):
 
 
 def test_veterinarian_role_can_record_a_treatment(client, control_db):
-    tenant = create_tenant(control_db, company_code=unique_code("FARM-VET3"))
+    tenant, owner_token = _owner(client, control_db, "FARM-VET3", "vet3owner@origami-demo.com")
+    animal_id = _create_animal(client, owner_token, tenant)
     vet_user, _ = add_farmos_user(
         control_db,
         tenant,
@@ -106,11 +107,26 @@ def test_veterinarian_role_can_record_a_treatment(client, control_db):
     control_db.commit()
     token = farmos_login(client, "vet@origami-demo.com", FARMOS_DEMO_PASSWORD)
 
+    # The subject must exist: a treatment on an unknown animal is refused.
     resp = client.post(
         "/api/v1/health/treatments",
         json={
             "entity_type": "animal",
             "entity_id": str(vet_user.id),
+            "medication": "Amoxicillin",
+            "dose": "20 ml",
+            "route": "intramuscular",
+            "responsible_user_id": str(vet_user.id),
+        },
+        headers=farmos_headers(token),
+    )
+    assert resp.status_code == 404, resp.text
+
+    resp = client.post(
+        "/api/v1/health/treatments",
+        json={
+            "entity_type": "animal",
+            "entity_id": animal_id,
             "medication": "Amoxicillin",
             "dose": "20 ml",
             "route": "intramuscular",

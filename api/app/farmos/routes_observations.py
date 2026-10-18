@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.farmos import emergency_service
+from app.farmos import health_case_service as cases
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
 from app.farmos.production_models import (
     DEFAULT_OBSERVATION_CONFIDENCE,
@@ -92,4 +94,9 @@ def create_observation(
     )
     db.add(observation)
     db.flush()
+    # The observation is evidence on the subject's open health case, and a
+    # severe one starts emergency triage by itself (CLINICAL-DECISION-SUPPORT
+    # §12) — never a diagnosis, never a drug.
+    cases.attach_observation(db, observation)
+    emergency_service.on_observation(db, access, observation)
     return _to_observation_out(observation, access.tenant_id)

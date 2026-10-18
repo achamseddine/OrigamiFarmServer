@@ -134,6 +134,11 @@ class InventoryMovement(UUIDPrimaryKeyMixin, SyncedEntityMixin, TenantBase):
     # existed; a feed movement always names its lot.
     lot_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
     unit_cost: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    # Where the stock moved (INVENTORY-SCHEMA §4, §7): a pharmacy transfer
+    # is a paired OUT / IN sharing one correlation id, and a lot's balance
+    # per location is derived from the movements that name one.
+    location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    correlation_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
 
 
 class Task(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):

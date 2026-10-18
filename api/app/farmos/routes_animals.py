@@ -21,12 +21,17 @@ from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
 from app.farmos import capability_service, identifier_service, livestock_service
+from app.farmos import emergency_models as em
 from app.farmos import feeding_program_service as programs
+from app.farmos import health_case_service as cases
+from app.farmos import pharmacy_service as ph
 from app.farmos.capability_service import CapabilitySet
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
 from app.farmos.livestock_catalog import Cap
 from app.farmos.livestock_models import AnimalIdentifier
+from app.farmos.pharmacy_models import MedicationAdministration
 from app.farmos.production_models import MilkRecord, Observation, Treatment
+from app.farmos.routing_service import NameCache
 from app.farmos.schemas import AnimalCreate, AnimalDetailOut, AnimalMove, AnimalOut, AnimalUpdate
 from app.tenant_api.models import Animal
 
@@ -93,10 +98,9 @@ def _to_animal_out(animal: Animal, identifiers: list[AnimalIdentifier]) -> Anima
 
 def _to_animal_detail(db: Session, control_db: Session, animal: Animal) -> AnimalDetailOut:
     """The digital twin: the record, every identifier it carries, what it
-    can do, and its care record. Medication administrations, the open
-    health case and the live emergency are empty until the pharmacy and
-    clinical modules land (docs/FARMOS_API.md, "Known, deliberate gaps")
-    — the keys are already there so the tablet renders one shape."""
+    can do, its care record, the last medication administrations with the
+    withdrawal windows they applied, the open health case and the live
+    emergency (an open, running or escalated assessment)."""
     identifiers = identifier_service.all_identifiers(db, animal.id)
     cap_set = livestock_service.capabilities_for_animal(animal)
     conditions = livestock_service.active_conditions(db, animal.id)
@@ -104,15 +108,61 @@ def _to_animal_detail(db: Session, control_db: Session, animal: Animal) -> Anima
     names = livestock_service.user_names(
         control_db, [c.recorded_by for c in conditions] + ([weight.recorded_by] if weight else [])
     )
+    administrations = db.scalars(
+        select(MedicationAdministration)
+        .where(
+            MedicationAdministration.subject_type == "animal",
+            MedicationAdministration.subject_id == animal.id,
+            MedicationAdministration.deleted_at.is_(None),
+        )
+        .order_by(MedicationAdministration.administered_at.desc())
+        .limit(10)
+    ).all()
+    case = cases.current_case(db, "animal", animal.id)
+    live = db.scalar(
+        select(em.EmergencyAssessment)
+        .where(
+            em.EmergencyAssessment.animal_id == animal.id,
+            em.EmergencyAssessment.status.in_(("open", "protocol_started", "escalated")),
+        )
+        .order_by(em.EmergencyAssessment.started_at.desc())
+        .limit(1)
+    )
+    live_run = (
+        db.scalar(
+            select(em.EmergencyProtocolRun)
+            .where(em.EmergencyProtocolRun.emergency_assessment_id == live.id)
+            .order_by(em.EmergencyProtocolRun.started_at.desc())
+            .limit(1)
+        )
+        if live
+        else None
+    )
+    name_cache = NameCache()
     return AnimalDetailOut(
         **_animal_fields(animal, identifiers),
         capabilities=cap_set.to_dict() if cap_set else {},
-        recent_administrations=[],
-        withdrawals=livestock_service.withdrawals_for(animal),
+        recent_administrations=[ph.administration_dict(db, a, name_cache) for a in administrations],
+        withdrawals=livestock_service.withdrawals_for(
+            animal, [a for a in administrations if a.status == "recorded"]
+        ),
         active_conditions=[livestock_service.to_condition_out(c, names).model_dump() for c in conditions],
         latest_weight=livestock_service.to_weight_out(weight, names).model_dump() if weight else None,
-        open_health_case=None,
-        emergency=None,
+        open_health_case=cases.case_dict(db, case, name_cache, with_details=False) if case else None,
+        emergency=(
+            {
+                "id": str(live.id),
+                "status": live.status,
+                "triage_level": live.triage_level,
+                "started_at": live.started_at.isoformat(),
+                "explanation": live.explanation,
+                "escalation_reasons": live.escalation_reasons or [],
+                "run_id": str(live_run.id) if live_run else None,
+                "run_status": live_run.status if live_run else None,
+            }
+            if live
+            else None
+        ),
     )
 
 

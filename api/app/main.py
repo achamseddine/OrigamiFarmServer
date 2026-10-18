@@ -116,6 +116,7 @@ from app.farmos.routes_agriculture import router as farmos_agriculture_router  #
 from app.farmos.routes_animals import router as farmos_animals_router  # noqa: E402
 from app.farmos.routes_audit import router as farmos_audit_router  # noqa: E402
 from app.farmos.routes_auth import router as farmos_auth_router  # noqa: E402
+from app.farmos.routes_emergency import router as farmos_emergency_router  # noqa: E402
 from app.farmos.routes_employees import router as farmos_employees_router  # noqa: E402
 from app.farmos.routes_employees_admin import router as farmos_employees_admin_router  # noqa: E402
 from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
@@ -123,13 +124,16 @@ from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
 from app.farmos.routes_feeding import router as farmos_feeding_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
+from app.farmos.routes_health_cases import router as farmos_health_cases_router  # noqa: E402
 from app.farmos.routes_invitations import router as farmos_invitations_router  # noqa: E402
 from app.farmos.routes_livestock import router as farmos_livestock_router  # noqa: E402
 from app.farmos.routes_modules import router as farmos_modules_router  # noqa: E402
 from app.farmos.routes_mouneh import router as farmos_mouneh_router  # noqa: E402
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
 from app.farmos.routes_observations import router as farmos_observations_router  # noqa: E402
+from app.farmos.routes_pharmacy import router as farmos_pharmacy_router  # noqa: E402
 from app.farmos.routes_priorities import router as farmos_priorities_router  # noqa: E402
+from app.farmos.routes_procurement import router as farmos_procurement_router  # noqa: E402
 from app.farmos.routes_production import router as farmos_production_router  # noqa: E402
 from app.farmos.routes_recommendations import router as farmos_recommendations_router  # noqa: E402
 from app.farmos.routes_reports import router as farmos_reports_router  # noqa: E402
@@ -159,7 +163,11 @@ app.include_router(farmos_notifications_router, prefix="/api/v1", tags=["FarmOS:
 app.include_router(farmos_priorities_router, prefix="/api/v1", tags=["FarmOS: Priorities"])
 app.include_router(farmos_reports_router, prefix="/api/v1", tags=["FarmOS: Reports"])
 app.include_router(farmos_health_router, prefix="/api/v1", tags=["FarmOS: Animal Health"])
+app.include_router(farmos_health_cases_router, prefix="/api/v1", tags=["FarmOS: Health Cases"])
 app.include_router(farmos_observations_router, prefix="/api/v1", tags=["FarmOS: Observations"])
+app.include_router(farmos_pharmacy_router, prefix="/api/v1", tags=["FarmOS: Pharmacy"])
+app.include_router(farmos_emergency_router, prefix="/api/v1", tags=["FarmOS: Emergency"])
+app.include_router(farmos_procurement_router, prefix="/api/v1", tags=["FarmOS: Procurement"])
 app.include_router(farmos_feed_router, prefix="/api/v1", tags=["FarmOS: Feed"])
 app.include_router(farmos_feeding_router, prefix="/api/v1", tags=["FarmOS: Feeding"])
 app.include_router(farmos_production_router, prefix="/api/v1", tags=["FarmOS: Production"])

@@ -255,18 +255,27 @@ def record_weight(
     return row
 
 
-def withdrawals_for(animal: Animal) -> dict[str, Any]:
-    """The withdrawal windows the animal is under. Milk/meat windows come
-    from medication administrations (pharmacy, a later stage); until then
-    only the treatment-set `withdrawal_until` on the record applies."""
+def withdrawals_for(animal: Animal, administrations: Iterable[Any] = ()) -> dict[str, Any]:
+    """The withdrawal windows the animal is under: the milk / meat windows
+    the pharmacy applied from each recorded administration's authorised
+    rule (MEDICINE-PHARMACY-SCHEMA §11), and the treatment-set
+    `withdrawal_until` on the record. A reversed administration's window
+    still stands — a mistaken entry does not prove the animal was not dosed."""
     at = now_utc()
     record_until = ensure_utc(animal.withdrawal_until)
     if record_until is not None and record_until <= at:
         record_until = None
+    milk = [
+        m for m in (ensure_utc(a.withdrawal_milk_until) for a in administrations) if m is not None and m > at
+    ]
+    meat = [
+        m for m in (ensure_utc(a.withdrawal_meat_until) for a in administrations) if m is not None and m > at
+    ]
+    active = bool(milk or meat or record_until)
     return {
-        "active": record_until is not None,
-        "milk_until": None,
-        "meat_until": None,
+        "active": active,
+        "milk_until": max(milk).isoformat() if milk else None,
+        "meat_until": max(meat).isoformat() if meat else None,
         "record_until": record_until.isoformat() if record_until else None,
-        "reason": animal.withdrawal_reason if record_until else None,
+        "reason": animal.withdrawal_reason if active else None,
     }

@@ -1,12 +1,14 @@
 """Animal health: treatments. Diagnosing and prescribing is gated to a
 veterinarian or the farm owner/manager (see require_diagnostic_role) —
 recording an observation (app/farmos/routes_observations.py) is not.
+
+A treatment may name the stocked medicine it prescribes
+(`medicine_product_id`) and the health case / treatment plan it belongs
+to; an administration under it must then be of that product
+(app/farmos/pharmacy_service.py, MEDICINE-PHARMACY-SCHEMA §11).
 """
 
 from __future__ import annotations
-
-import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -15,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
+from app.farmos import health_case_service as cases
 from app.farmos.deps import (
     AccessContext,
     check_farm_id,
@@ -24,7 +27,6 @@ from app.farmos.deps import (
 )
 from app.farmos.production_models import Treatment
 from app.farmos.schemas import TreatmentCreate, TreatmentOut
-from app.tenant_api.models import Animal
 
 router = APIRouter()
 
@@ -46,6 +48,9 @@ def _to_treatment_out(t: Treatment) -> TreatmentOut:
         status=t.status,
         cost=float(t.cost) if t.cost is not None else None,
         notes=t.notes,
+        medicine_product_id=str(t.medicine_product_id) if t.medicine_product_id else None,
+        health_case_id=str(t.health_case_id) if t.health_case_id else None,
+        treatment_plan_id=str(t.treatment_plan_id) if t.treatment_plan_id else None,
     )
 
 
@@ -56,11 +61,13 @@ def list_treatments(
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[TreatmentOut]:
     check_farm_id(farm_id, access)
-    rows = db.execute(
-        select(Treatment)
-        .where(Treatment.deleted_at.is_(None))
-        .order_by(Treatment.start_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(Treatment).where(Treatment.deleted_at.is_(None)).order_by(Treatment.start_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     return [_to_treatment_out(row) for row in rows]
 
 
@@ -72,42 +79,7 @@ def record_treatment(
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> TreatmentOut:
-    treatment = Treatment(
-        tenant_id=access.tenant_id,
-        entity_type=payload.entity_type,
-        entity_id=payload.entity_id,
-        diagnosis=payload.diagnosis,
-        medication=payload.medication,
-        dose=payload.dose,
-        route=payload.route,
-        start_at=payload.start_at or datetime.now(timezone.utc),
-        end_at=payload.end_at,
-        withdrawal_until=payload.withdrawal_until,
-        vet_id=uuid.UUID(payload.vet_id) if payload.vet_id else None,
-        responsible_user_id=uuid.UUID(payload.responsible_user_id),
-        cost=payload.cost,
-        notes=payload.notes,
-        last_modified_by=access.membership_id,
-    )
-    db.add(treatment)
-
-    # RULE-WITHDRAWAL: an animal under treatment with a withdrawal period
-    # carries that onto its own record, so POST /production/milk can hard-
-    # block selling milk from it without re-deriving the rule from history.
-    if payload.entity_type == "animal" and payload.withdrawal_until is not None:
-        try:
-            animal_id = uuid.UUID(payload.entity_id)
-        except ValueError:
-            animal_id = None
-        if animal_id is not None:
-            animal = db.get(Animal, animal_id)
-            if animal is not None:
-                animal.withdrawal_until = payload.withdrawal_until
-                animal.withdrawal_reason = payload.diagnosis or payload.medication
-                animal.version += 1
-                animal.last_modified_by = access.membership_id
-
-    db.flush()
+    treatment = cases.record_treatment(db, access, **payload.model_dump())
 
     record_audit_event(
         control_db,
@@ -120,6 +92,11 @@ def record_treatment(
         entity_id=str(treatment.id),
         module_code="animal_health",
         summary=f"Recorded a {payload.medication} treatment for {payload.entity_type} {payload.entity_id}",
+        changes={
+            "medicine_product_id": payload.medicine_product_id,
+            "health_case_id": str(treatment.health_case_id) if treatment.health_case_id else None,
+            "withdrawal_until": payload.withdrawal_until.isoformat() if payload.withdrawal_until else None,
+        },
     )
 
     return _to_treatment_out(treatment)
