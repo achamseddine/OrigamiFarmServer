@@ -288,10 +288,18 @@ def test_feed_transaction_updates_inventory_and_blocks_negative(client, control_
         headers=farmos_headers(token),
     )
     assert history.status_code == 200, history.text
-    # Only the two transactions that actually moved stock exist — the
-    # blocked over-withdrawal never created a row. Newest first.
-    directions = [(m["direction"], m["quantity"]) for m in history.json()]
-    assert directions == [("out", 1000.0), ("out", 30.0)]
+    # Only the transactions that actually moved stock exist — the blocked
+    # over-withdrawal never created a row. Newest first. Feed items are
+    # lot-tracked (Stage 7): the item's 100 kg became an opening lot, the
+    # 30 kg came out of it, and the forced 1,000 kg is two movements — the
+    # 70 kg the lot still held and 930 kg against no lot, so the gap the
+    # override created stays visible in the ledger.
+    moves = history.json()
+    assert all(m["direction"] == "out" for m in moves)
+    assert moves[-1]["quantity"] == 30.0 and moves[-1]["lot_id"] is not None
+    assert sorted(m["quantity"] for m in moves[:-1]) == [70.0, 930.0]
+    assert [m["lot_id"] for m in moves if m["quantity"] == 930.0] == [None]
+    assert sum(m["quantity"] for m in moves) == 1030.0
 
 
 # --- Production ----------------------------------------------------------

@@ -21,6 +21,7 @@ from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
 from app.farmos import capability_service, identifier_service, livestock_service
+from app.farmos import feeding_program_service as programs
 from app.farmos.capability_service import CapabilitySet
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
 from app.farmos.livestock_catalog import Cap
@@ -380,6 +381,9 @@ def update_animal(
     animal.version += 1
     animal.last_modified_by = access.membership_id
     db.flush()
+    # A change to what the feeding resolver reads asks for a feeding review
+    # (feed architecture §10) — a task, never a silent reassignment.
+    programs.review_animal_if_relevant(db, access, animal, set(payload.model_dump(exclude_unset=True)))
     if audit_changes:
         _audit_animal(
             control_db,

@@ -129,6 +129,11 @@ class InventoryMovement(UUIDPrimaryKeyMixin, SyncedEntityMixin, TenantBase):
     linked_entity_type: Mapped[str | None] = mapped_column(nullable=True)
     linked_entity_id: Mapped[str | None] = mapped_column(nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # The feed lot this movement belongs to (feed architecture §26). Null
+    # for items that are not feed, and for movements made before lots
+    # existed; a feed movement always names its lot.
+    lot_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    unit_cost: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
 
 
 class Task(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):

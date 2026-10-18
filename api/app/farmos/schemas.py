@@ -1077,8 +1077,13 @@ class FeedTransactionCreate(BaseModel):
 class InventoryMovementOut(BaseModel):
     id: str
     inventory_item_id: str
+    # The feed product and lot this movement belongs to (feed architecture
+    # §26); null for non-feed stock and for movements made before lots.
+    feed_product_id: str | None = None
+    lot_id: str | None = None
     direction: str
     quantity: float
+    unit_cost: float | None = None
     reason: str | None
     linked_entity_type: str | None
     linked_entity_id: str | None

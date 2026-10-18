@@ -18,6 +18,7 @@ from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
 from app.farmos import capability_service, identifier_service, livestock_service
+from app.farmos import feeding_program_service as programs
 from app.farmos import livestock_catalog as catalog
 from app.farmos.deps import (
     AccessContext,
@@ -306,6 +307,10 @@ def update_group(
     group.version += 1
     group.last_modified_by = access.membership_id
     db.flush()
+    # A group that grew, changed stage or changed profile may fit a different
+    # feeding program — a review, never a silent reassignment (feed §10).
+    if {"count", "life_stage", "management_profile", "sex_composition"} & changes.keys():
+        programs.review_feeding(db, access, "group", group, trigger="group_changed")
     if audit_changes:
         _audit(
             control_db,

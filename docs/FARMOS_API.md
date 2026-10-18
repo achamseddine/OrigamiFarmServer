@@ -5,8 +5,10 @@ across 19 functional groups, reverse-engineered and verified against a real refe
 examples from a demo snapshot, 11 captured live from the running app), plus 5 endpoints added since
 to close gaps the captured examples left open (see "Known, deliberate gaps" below — each one moved
 here once built), plus the 18 Stage 6 endpoints of the generic animal model (species configuration,
-capability resolver, identifiers, animal groups, care record) ported from the reference backend's
-published OpenAPI contract. This is a **fixed external contract**, not free-form internal API design: field
+capability resolver, identifiers, animal groups, care record) and the 63 Stage 7 endpoints of the
+generic feed architecture (products and lots, formulas and numbered mixes, feeding programs and
+events, usage policy, allocations, days of cover, reorder, reconciliation, costs), both ported from
+the reference backend's published OpenAPI contract. This is a **fixed external contract**, not free-form internal API design: field
 names, types, status codes, and response shapes match the app's expectations exactly, even where
 that diverges from this codebase's own conventions elsewhere (see "Deliberate divergences from the
 rest of this codebase" below).
@@ -14,7 +16,7 @@ rest of this codebase" below).
 Every route lives under `/api/v1`, mounted in `app/main.py`, one router module per functional
 group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_models.py`
 (`farm_models.py`, `production_models.py`, `finance_models.py`, `mouneh_models.py`,
-`visits_models.py`, `livestock_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
+`visits_models.py`, `livestock_models.py`, `feed_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
 `InventoryItem`/`InventoryMovement` — extended, not replaced, since `app/sync/` already depended on
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
 
@@ -194,14 +196,15 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 4 | Employees (admin CRUD), Sales/Expenses (read), Audit, Recommendations, Reports (`/daily-summary`) | Management and oversight |
 | 5 | Module licensing, Mouneh, Farm Visits | Licensed add-ons — hidden entirely by the app when inactive, safe to build last |
 | 6 | Livestock: species catalog & capability resolver, identifiers, animal groups, care record (conditions, weights) | The resolver-driven Add Animal form, group (flock/herd) subjects, and the animal's care record on the detail screen |
+| 7 | Feed architecture: products & lots, formulas & numbered mixes, nutrient profiles, feeding programs/assignments/events, usage policy, allocations, days of cover/forecast/reorder, reconciliation, costs | The tablet's feed workspace, the mixing screen, the animal's feeding section and the feed-room daily plan |
 
 Each stage's tests live in `api/tests/test_farmos_stage{1..6}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
-Stage 6 is the first of a staged port of the reference backend's newer contract (288 operations in
-its OpenAPI document). The remaining stages, in order: feed architecture and numbered feed mixes;
-pharmacy and emergency protocols including offline protocol runs; feed-performance intelligence,
-platform (units/assets), health cases and procurement.
+Stages 6 and 7 are the first two of a staged port of the reference backend's newer contract (288
+operations in its OpenAPI document). The remaining stages, in order: pharmacy and emergency
+protocols including offline protocol runs; feed-performance intelligence, platform (units/assets),
+health cases and procurement.
 
 ## Endpoint inventory by group
 
@@ -219,7 +222,8 @@ the routing map — which router module owns which path.
 | Livestock (generic animal model) | `routes_livestock.py` | `GET /species`, `GET /species/{code}/configuration`, `GET /capabilities`, `POST /animal-capabilities/resolve`, `GET /animals/{id}/capabilities`, `GET/POST /animals/{id}/identifiers`, `DELETE /animals/{id}/identifiers/{id}`, `GET/POST /animal-groups`, `GET/PATCH /animal-groups/{id}`, `GET /animal-groups/{id}/capabilities`, `GET/POST /animals/{id}/conditions`, `DELETE /animals/{id}/conditions/{id}`, `GET/POST /animals/{id}/weights` |
 | Animal health | `routes_health.py` | `GET/POST /health/treatments` |
 | Observations | `routes_observations.py` | `GET/POST /observations` |
-| Feed & inventory | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` |
+| Feed & inventory (item level) | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` — feed items are lot-tracked behind the scenes |
+| Feeding (generic feed architecture) | `routes_feeding.py` (shapes in `feed_schemas.py`) | `GET/POST /feed-products`, `GET/PATCH /feed-products/{id}`, `GET/PUT /feed-products/{id}/usage-policy`, `POST …/usage-policy/validate`, `GET /feed-lots`, `POST /feed-lots/receive`, `PATCH /feed-lots/{id}/status`, `GET /feed-lots/{id}/trace`, `POST /feed-inventory/adjustments`, `GET/POST /feed-formulas`, `GET /feed-formulas/{id}`, `POST …/versions`, `GET …/versions/{v}`, `POST …/versions/{v}/activate`, `GET …/versions/{v}/scale`, `GET …/versions/{v}/nutrients`, `GET/POST /feed-batches`, `GET /feed-batches/{id}`, `GET …/usage`, `POST …/complete`, `POST …/quarantine`, `GET/PUT /feed-mix-settings`, `GET /feed-mixes/{n}`, `GET /feed-nutrients`, `GET/POST /feed-nutrient-profiles`, `GET/POST /feeding-programs`, `GET /feeding-programs/{id}`, `POST …/versions`, `POST …/versions/{v}/activate`, `POST /feeding-programs/resolve`, `GET /livestock-subjects/{id}/feeding-plan`, `GET/POST …/feeding-assignments`, `DELETE …/feeding-assignments/{id}`, `GET …/feeding-history`, `GET/POST /feeding-events`, `POST /feeding-events/{id}/reverse`, `GET /feeding-plan/today`, `GET /feed-inventory/{availability,days-of-cover,forecast,reorder-recommendations}`, `POST /feed-inventory/reorder-recommendations/{id}/acknowledge`, `GET/PUT /feed-reorder-policies`, `GET/POST /feed-allocations`, `POST /feed-allocations/{id}/{release,transfer}`, `GET/POST /feed-reconciliations`, `GET /feed-reconciliations/{id}`, `POST …/close`, `GET /feed-costs` |
 | Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` |
 | Agriculture | `routes_agriculture.py` | `GET/POST /crop-plantings`, `GET/POST/DELETE /crops`, `POST/PATCH /fields`, `POST /harvest` |
 | Sales & finance | `routes_finance.py` | `GET/POST /expenses`, `GET/POST /sales` |
@@ -292,6 +296,55 @@ where cited, not as a generic framework:
   create) appends a dated, methodised record; `animal.weight_kg` becomes the most recent by
   `measured_at`, so a back-dated entry is kept in history without overwriting the latest. A weight
   sent on `POST`/`PUT /animals` goes through the same ledger (`source_type: animal_update`).
+- **Feed stock is the ledger; the balance is derived.** Every feed product owns one `inventory_item`
+  and every kilogram that moves is an `inventory_movement` naming its `feed_lot` (purchase,
+  production, opening balance, mixing, feeding, waste, return, adjustment). `inventory_item.current_qty`
+  and `feed_lot.quantity_on_hand` are maintained from those rows and never edited; availability =
+  on hand − quarantined/blocked/recalled/expired lots − stock reserved for another purpose. An
+  `out` is issued FIFO from usable, unreserved lots; a shortfall is a 422 that shows the arithmetic
+  unless `allow_negative` is passed, and then the uncovered quantity is recorded against no lot.
+  Adjustments need an explanation; an unexplained difference stays a reconciliation variance.
+- **Five feed concepts, never one table** (`app/farmos/feed_models.py`): product, formula (with
+  immutable versions), batch, feeding program (with versions and applicability rules) and feeding
+  event. A formula version is locked the moment a completed batch references it; a recipe change
+  is a new version. A feeding event is immutable; a mistake is a reversal event that points at the
+  original and puts the stock back on the lots it left.
+- **Every mix is a numbered mix (FEED-SCHEMA §20).** `POST /feed-batches` takes the farm's next
+  number from one row-locked sequence per tenant (`feed_mix_sequence`), whatever the mix is intended
+  for; the number is never reused or renumbered, refused starts consume none, and an
+  `Idempotency-Key` replay returns the same mix. `intended_species_code` / `intended_management_profile`
+  are catalog references validated against every component's usage policy before the number is
+  taken; `operator_id` must be an active member of the farm (checked against the control database),
+  the mixer is a farm asset (none can be named until the platform stage lands, so `mixer_asset_id`
+  is 404 today). Completing a batch consumes the actual weighed quantities, costs the mix from the
+  lots it drew, and receives the output as a `farm_produced` lot whose code is the mix code;
+  `GET /feed-mixes/{n}` and `GET /feed-batches/{id}/usage` read the mix's whole life — ingredients
+  and their lots, output lot, every dated issue with the feeding program and assignment it was made
+  under, waste and corrections, and the ledger-derived remaining quantity. `PUT /feed-mix-settings`
+  (Feed & Nutrition *configure*) changes only the display format of future codes.
+- **Usage policy is enforced at every door.** A product (or one lot) carries allow / block / limit
+  rules over species, profile, stage, reproductive state and age, an inclusion cap and
+  `requires_approved_formula`; the same evaluation runs when a formula component is added, a batch
+  is started or completed, a program is activated or assigned, and a feeding is recorded. A
+  lot-level policy may tighten but never broaden the product's. `POST …/usage-policy/validate`
+  returns the decision with its reasons.
+- **Programs resolve, assignments decide, reviews never reassign.** `POST /feeding-programs/resolve`
+  matches a real or described subject against every active program version's rules (most specific
+  rule wins, priority breaks ties, an unknown metric is a warning, never a silent match). A group's
+  explicit assignment is inherited by every animal in it (same farm, same species, same
+  `group_name`) that has none of its own; inheritance is computed, never stored, so an individual
+  supplement, override or restriction sits on top of the group program. A restriction needs Feed &
+  Nutrition *approve* or Animal Health *create*. A change the resolver reads (`PUT /animals/{id}`
+  sex/stage/profile/pregnant/lactating/group/weight/birth date, `PATCH /animal-groups/{id}` count/
+  stage/profile/composition, a milk record when a program has a production band) opens one
+  `feeding_review` task per subject and changes nothing else; an explicit assignment closes it.
+- **Days of cover, reorder and reconciliation are read from the same ledger.** Demand comes from
+  the active programs and head counts (farm-produced demand expands into its formula's ingredients)
+  or, failing that, from the last 14 days of consumption, and the answer says which. A breach of
+  the reorder policy or of lead time + margin is a recommendation that names the programs at risk;
+  acknowledging it opens a `feed_reorder` task and suppresses the recommendation while the task is
+  open. A reconciliation categorises every movement in the period and closes only with an
+  explained `reconciliation_adjustment` — never as consumption or waste.
 - **CONSTITUTION.md: never generate a recommendation without persisted evidence.**
   `GET /recommendations` (default `refresh=true`) re-evaluates real rules against this farm's real
   stored data before returning anything — `app/farmos/recommendations.py` implements
@@ -328,6 +381,20 @@ where cited, not as a generic framework:
   the tablet can cache them. Nothing in the tablet contract edits the catalog, so this matches the
   reference backend's behaviour; a per-farm override layer (a farm's own breeds, a disabled
   capability) would be a tenant table on top of this, not a change to the resolver.
+- **Feed reference data is code-defined.** The nutrient catalog and the unit-of-measure table with
+  its conversions live in `app/farmos/feed_catalog.py`, the same for every farm, like the livestock
+  catalog; `GET /feed-nutrients` serves it and `POST /feed-nutrient-profiles` rejects a code outside
+  it. Farm-defined nutrients and units arrive with the platform stage (`/units-of-measure`).
+- **Feed signals are not yet on the notification bell.** Reorder recommendations and reconciliation
+  variances are read from `GET /feed-inventory/reorder-recommendations` and
+  `GET /feed-reconciliations`; the reference backend also surfaces them as `feed_reorder_required` /
+  `feed_variance` notifications, which this port will add with the platform stage's signal routing.
+  Feed-performance scoring is absent too: `GET /feed-mixes/{n}` returns `"performance": null` and
+  the feed-performance endpoints are not mounted until that stage.
+- **Suppliers and mixer assets are ids without a master yet.** `feed_lot.supplier_id` is stored as
+  given (the `/suppliers` master arrives with procurement; `supplier_label` carries the name
+  meanwhile) and `mixer_asset_id` is refused with 404 until `/assets` exists — a free-text mixer
+  name is never accepted.
 - **The animal care record is partly ahead of its modules.** `GET /animals/{id}` already returns
   `capabilities`, `identifiers`, `withdrawals`, `active_conditions` and `latest_weight` with real
   data, but `recent_administrations` is always `[]` and `open_health_case`/`emergency` always
@@ -342,7 +409,7 @@ cd api
 python -m pytest -q tests/test_farmos_stage1.py tests/test_farmos_stage2.py \
   tests/test_farmos_stage3.py tests/test_farmos_stage4.py \
   tests/test_farmos_stage5_mouneh.py tests/test_farmos_stage5_visits.py \
-  tests/test_farmos_stage6_livestock.py
+  tests/test_farmos_stage6_livestock.py tests/test_farmos_stage7_feed.py
 ```
 
 Every test runs against real `origami_control_test` / `origami_tenant_shared_test` databases (RLS

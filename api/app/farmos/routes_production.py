@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.farmos import capability_service, livestock_service
+from app.farmos import feeding_program_service as programs
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
 from app.farmos.livestock_catalog import Cap
 from app.farmos.livestock_models import AnimalGroup
@@ -58,11 +59,15 @@ def list_egg_records(
 ) -> list[EggRecordOut]:
     check_farm_id(farm_id, access)
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    rows = db.execute(
-        select(EggRecord)
-        .where(EggRecord.deleted_at.is_(None), EggRecord.recorded_at >= since)
-        .order_by(EggRecord.recorded_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(EggRecord)
+            .where(EggRecord.deleted_at.is_(None), EggRecord.recorded_at >= since)
+            .order_by(EggRecord.recorded_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     return [_to_egg_out(row) for row in rows]
 
 
@@ -125,9 +130,7 @@ def list_production_fields(
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[FieldOut]:
     check_farm_id(farm_id, access)
-    rows = db.execute(
-        select(Field).where(Field.deleted_at.is_(None)).order_by(Field.name)
-    ).scalars().all()
+    rows = db.execute(select(Field).where(Field.deleted_at.is_(None)).order_by(Field.name)).scalars().all()
     return [to_field_out(row) for row in rows]
 
 
@@ -156,11 +159,15 @@ def list_harvest_records(
 ) -> list[HarvestRecordOut]:
     check_farm_id(farm_id, access)
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    rows = db.execute(
-        select(HarvestRecord)
-        .where(HarvestRecord.deleted_at.is_(None), HarvestRecord.recorded_at >= since)
-        .order_by(HarvestRecord.recorded_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(HarvestRecord)
+            .where(HarvestRecord.deleted_at.is_(None), HarvestRecord.recorded_at >= since)
+            .order_by(HarvestRecord.recorded_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     return [_to_harvest_out(row) for row in rows]
 
 
@@ -212,11 +219,15 @@ def list_milk_records(
 ) -> list[MilkRecordOut]:
     check_farm_id(farm_id, access)
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    rows = db.execute(
-        select(MilkRecord)
-        .where(MilkRecord.deleted_at.is_(None), MilkRecord.recorded_at >= since)
-        .order_by(MilkRecord.recorded_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(MilkRecord)
+            .where(MilkRecord.deleted_at.is_(None), MilkRecord.recorded_at >= since)
+            .order_by(MilkRecord.recorded_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     return [_to_milk_out(row) for row in rows]
 
 
@@ -266,4 +277,8 @@ def record_milk(
     )
     db.add(record)
     db.flush()
+    # A yield that crosses a production band asks for a feeding review
+    # (feed architecture §11) — a task, never an automatic ration change.
+    if animal is not None:
+        programs.review_after_milk(db, access, animal)
     return _to_milk_out(record, under_withdrawal_warning=under_withdrawal)

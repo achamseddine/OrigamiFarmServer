@@ -120,6 +120,7 @@ from app.farmos.routes_employees import router as farmos_employees_router  # noq
 from app.farmos.routes_employees_admin import router as farmos_employees_admin_router  # noqa: E402
 from app.farmos.routes_farms import router as farmos_farms_router  # noqa: E402
 from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
+from app.farmos.routes_feeding import router as farmos_feeding_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
 from app.farmos.routes_invitations import router as farmos_invitations_router  # noqa: E402
@@ -160,6 +161,7 @@ app.include_router(farmos_reports_router, prefix="/api/v1", tags=["FarmOS: Repor
 app.include_router(farmos_health_router, prefix="/api/v1", tags=["FarmOS: Animal Health"])
 app.include_router(farmos_observations_router, prefix="/api/v1", tags=["FarmOS: Observations"])
 app.include_router(farmos_feed_router, prefix="/api/v1", tags=["FarmOS: Feed"])
+app.include_router(farmos_feeding_router, prefix="/api/v1", tags=["FarmOS: Feeding"])
 app.include_router(farmos_production_router, prefix="/api/v1", tags=["FarmOS: Production"])
 app.include_router(farmos_agriculture_router, prefix="/api/v1", tags=["FarmOS: Agriculture"])
 app.include_router(farmos_employees_admin_router, prefix="/api/v1", tags=["FarmOS: Employees Admin"])
