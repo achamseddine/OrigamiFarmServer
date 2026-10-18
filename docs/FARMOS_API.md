@@ -4,7 +4,9 @@
 across 19 functional groups, reverse-engineered and verified against a real reference backend (81
 examples from a demo snapshot, 11 captured live from the running app), plus 5 endpoints added since
 to close gaps the captured examples left open (see "Known, deliberate gaps" below — each one moved
-here once built). This is a **fixed external contract**, not free-form internal API design: field
+here once built), plus the 18 Stage 6 endpoints of the generic animal model (species configuration,
+capability resolver, identifiers, animal groups, care record) ported from the reference backend's
+published OpenAPI contract. This is a **fixed external contract**, not free-form internal API design: field
 names, types, status codes, and response shapes match the app's expectations exactly, even where
 that diverges from this codebase's own conventions elsewhere (see "Deliberate divergences from the
 rest of this codebase" below).
@@ -12,7 +14,7 @@ rest of this codebase" below).
 Every route lives under `/api/v1`, mounted in `app/main.py`, one router module per functional
 group (`app/farmos/routes_*.py`). Farm-data-plane models live in `app/farmos/*_models.py`
 (`farm_models.py`, `production_models.py`, `finance_models.py`, `mouneh_models.py`,
-`visits_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
+`visits_models.py`, `livestock_models.py`) plus the pre-existing `app/tenant_api/models.py` (`Animal`, `Task`, `Field`,
 `InventoryItem`/`InventoryMovement` — extended, not replaced, since `app/sync/` already depended on
 them). All of it is RLS-protected exactly like the rest of the tenant data plane — see TENANCY.md.
 
@@ -191,9 +193,15 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 3 | Animal Health, Observations, Feed, Production, Agriculture | Recording actual farm work |
 | 4 | Employees (admin CRUD), Sales/Expenses (read), Audit, Recommendations, Reports (`/daily-summary`) | Management and oversight |
 | 5 | Module licensing, Mouneh, Farm Visits | Licensed add-ons — hidden entirely by the app when inactive, safe to build last |
+| 6 | Livestock: species catalog & capability resolver, identifiers, animal groups, care record (conditions, weights) | The resolver-driven Add Animal form, group (flock/herd) subjects, and the animal's care record on the detail screen |
 
-Each stage's tests live in `api/tests/test_farmos_stage{1..5}[_suffix].py` and run against real
+Each stage's tests live in `api/tests/test_farmos_stage{1..6}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
+
+Stage 6 is the first of a staged port of the reference backend's newer contract (288 operations in
+its OpenAPI document). The remaining stages, in order: feed architecture and numbered feed mixes;
+pharmacy and emergency protocols including offline protocol runs; feed-performance intelligence,
+platform (units/assets), health cases and procurement.
 
 ## Endpoint inventory by group
 
@@ -208,6 +216,7 @@ the routing map — which router module owns which path.
 | Employees (admin) | `routes_employees_admin.py` | `GET/POST/PATCH/DELETE /employees`, `PUT /employees/{id}/permissions` |
 | Farm | `routes_farms.py` | `GET /farms/me` |
 | Animals | `routes_animals.py` | `GET/POST /animals`, `GET/PATCH/PUT /animals/{id}` |
+| Livestock (generic animal model) | `routes_livestock.py` | `GET /species`, `GET /species/{code}/configuration`, `GET /capabilities`, `POST /animal-capabilities/resolve`, `GET /animals/{id}/capabilities`, `GET/POST /animals/{id}/identifiers`, `DELETE /animals/{id}/identifiers/{id}`, `GET/POST /animal-groups`, `GET/PATCH /animal-groups/{id}`, `GET /animal-groups/{id}/capabilities`, `GET/POST /animals/{id}/conditions`, `DELETE /animals/{id}/conditions/{id}`, `GET/POST /animals/{id}/weights` |
 | Animal health | `routes_health.py` | `GET/POST /health/treatments` |
 | Observations | `routes_observations.py` | `GET/POST /observations` |
 | Feed & inventory | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` |
@@ -245,8 +254,44 @@ where cited, not as a generic framework:
   nobody else gets a route to it, permission grid or not.
 - **Constitution: "Workers record observations; workers do not diagnose."** `POST /observations`
   has no diagnostic-role gate and its schema structurally has no `diagnosis` field; `POST
-  /health/treatments` (the only place a diagnosis is recordable) is gated to a veterinarian or the
-  farm owner/manager (`app/farmos/deps.py:require_diagnostic_role`).
+  /health/treatments` (the only place a diagnosis is recordable) and `POST`/`DELETE
+  /animals/{id}/conditions` (a standing allergy, adverse reaction, chronic condition or
+  contraindication) are gated to a veterinarian or the farm owner/manager
+  (`app/farmos/deps.py:require_diagnostic_role`). A condition is ended, never deleted.
+- **Generic animal model — one `Animal`, no per-species tables.** Species is a code from the
+  catalog in `app/farmos/livestock_catalog.py` (`cow`, `sheep`, `goat`, `horse`, `layer_hen`,
+  `duck`, `turkey`, `other`), validated on every write with a 422 that lists the known codes.
+  What an animal can do is resolved by `app/farmos/capability_service.py` from species + sex +
+  life stage + management profile: configuration first (the most specific granting rule wins, a
+  disabling rule is a veto — "broiler flocks do not lay"), biology last (a male is never pregnant,
+  a hen never in calf, a ewe never lays — not configurable). `POST /animal-capabilities/resolve`
+  returns the same answer the write endpoints enforce, so the tablet's form never offers something
+  the server refuses. `pregnant`/`lactating` are refused (422) when the resolved set lacks
+  `PREGNANCY`/`LACTATION`; a flag merely restated by an edit form is not re-judged, so an animal
+  registered before the resolver existed is not refused for a profile it never had.
+- **Identifiers are rows, not a column.** `animal_identifier` holds every ear tag, RFID,
+  microchip, leg band, passport, farm number or name an animal carries; `animal.tag` only mirrors
+  the primary one's value for lists and search. The resolver decides which types a species may
+  carry and which it must (a horse must have a microchip, cattle an ear tag); uniqueness is per
+  farm + type + issuing authority (409 names the other animal). Retiring keeps the row with
+  `status: retired` so a record naming the old tag still resolves; the last required identifier
+  cannot be retired (422); editing `tag` through `PUT /animals/{id}` retires the old primary and
+  attaches a new one. An animal that predates identifiers (seeded, synced, or registered by an
+  older client with only `tag`) has that tag materialised as its primary identifier the first time
+  its record is read — inside the tenant-scoped request, because under `FORCE ROW LEVEL SECURITY`
+  a migration cannot see any tenant's rows to backfill them.
+- **Species cannot change once history exists.** `PUT /animals/{id}` with a different `species`
+  is 409 once the animal has a milk, treatment or observation record.
+- **Production writes respect capabilities.** `POST /production/milk` is 422 for an animal whose
+  resolved set suppresses `MILK_PRODUCTION` by biology (a bull, a hen) and, for an animal that
+  carries a management profile, when the profile does not grant it (a meat cow); an animal with no
+  profile on record is held to biology only. `POST /production/eggs` applies the same rule to
+  `EGG_PRODUCTION` when `flock_id` is a registered animal group; a free-text flock label is
+  accepted as before.
+- **Weights are a dated ledger.** `POST /animals/{id}/weights` (Animals edit *or* Animal Health
+  create) appends a dated, methodised record; `animal.weight_kg` becomes the most recent by
+  `measured_at`, so a back-dated entry is kept in history without overwriting the latest. A weight
+  sent on `POST`/`PUT /animals` goes through the same ledger (`source_type: animal_update`).
 - **CONSTITUTION.md: never generate a recommendation without persisted evidence.**
   `GET /recommendations` (default `refresh=true`) re-evaluates real rules against this farm's real
   stored data before returning anything — `app/farmos/recommendations.py` implements
@@ -277,6 +322,18 @@ where cited, not as a generic framework:
 - **No PATCH/cancel/check-in on `VisitBooking`.** The captured contract has Create and Confirm only;
   `checked_in_at`/`completed_at`/`cancelled_at` exist on the model and wire shape (matching real
   example responses) but nothing in this API surface sets them yet.
+- **The livestock catalog is code-defined, the same for every farm.** Species, breeds, life
+  stages, management profiles, capabilities and their rules (`app/farmos/livestock_catalog.py`)
+  are served from code rather than tenant tables; breed and rule ids are stable UUID5 values so
+  the tablet can cache them. Nothing in the tablet contract edits the catalog, so this matches the
+  reference backend's behaviour; a per-farm override layer (a farm's own breeds, a disabled
+  capability) would be a tenant table on top of this, not a change to the resolver.
+- **The animal care record is partly ahead of its modules.** `GET /animals/{id}` already returns
+  `capabilities`, `identifiers`, `withdrawals`, `active_conditions` and `latest_weight` with real
+  data, but `recent_administrations` is always `[]` and `open_health_case`/`emergency` always
+  `null` until the pharmacy and clinical modules land (next port stages). `withdrawals` carries
+  only the treatment-set `record_until`; the `milk_until`/`meat_until` windows come with
+  medication administrations. The keys are present now so the tablet renders one shape.
 
 ## Testing
 
@@ -284,7 +341,8 @@ where cited, not as a generic framework:
 cd api
 python -m pytest -q tests/test_farmos_stage1.py tests/test_farmos_stage2.py \
   tests/test_farmos_stage3.py tests/test_farmos_stage4.py \
-  tests/test_farmos_stage5_mouneh.py tests/test_farmos_stage5_visits.py
+  tests/test_farmos_stage5_mouneh.py tests/test_farmos_stage5_visits.py \
+  tests/test_farmos_stage6_livestock.py
 ```
 
 Every test runs against real `origami_control_test` / `origami_tenant_shared_test` databases (RLS

@@ -12,7 +12,10 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.farmos import capability_service, livestock_service
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
+from app.farmos.livestock_catalog import Cap
+from app.farmos.livestock_models import AnimalGroup
 from app.farmos.production_models import EggRecord, HarvestRecord, MilkRecord
 from app.farmos.routes_agriculture import to_field_out
 from app.farmos.schemas import (
@@ -79,6 +82,21 @@ def record_eggs(
                 f"Sellable + broken + consumed + hatched + wasted ({accounted}) "
                 f"can't be more than the total eggs collected ({payload.total_eggs})."
             ),
+        )
+    # Laying is a capability (generic animal model §12): when the flock is
+    # a registered animal group, a broiler flock or a herd of goats cannot
+    # have an egg record. A free-text flock label is accepted as before.
+    try:
+        group = db.get(AnimalGroup, uuid.UUID(payload.flock_id))
+    except ValueError:
+        group = None
+    if group is not None and group.deleted_at is None:
+        try:
+            cap_set = capability_service.resolve_for_group(group)
+        except capability_service.UnknownSpecies:
+            cap_set = None
+        livestock_service.check_production_capability(
+            cap_set, Cap.EGG_PRODUCTION, group.name, configured=True
         )
     record = EggRecord(
         tenant_id=access.tenant_id,
@@ -210,6 +228,17 @@ def record_milk(
 ) -> MilkRecordOut:
     animal = db.get(Animal, uuid.UUID(payload.animal_id))
     now = datetime.now(timezone.utc)
+    if animal is not None:
+        # Milk is a capability (generic animal model §12): a bull, a hen or
+        # a mare cannot have a milk record; a cow registered with a meat
+        # profile cannot either. An animal with no profile on record is
+        # held to biology only.
+        livestock_service.check_production_capability(
+            livestock_service.capabilities_for_animal(animal),
+            Cap.MILK_PRODUCTION,
+            animal.name,
+            configured=animal.management_profile is not None,
+        )
     withdrawal_until = animal.withdrawal_until if animal is not None else None
     under_withdrawal = withdrawal_until is not None and withdrawal_until > now
 

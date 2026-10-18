@@ -132,6 +132,10 @@ _CONTROL_TABLES = [
 ]
 _TENANT_TABLES = [
     "sync_event",
+    "animal_weight_record",
+    "animal_health_condition",
+    "animal_identifier",
+    "animal_group",
     "inventory_movement",
     "inventory_item",
     "notification",

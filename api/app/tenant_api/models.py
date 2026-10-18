@@ -38,12 +38,23 @@ class Animal(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase)
 
     __tablename__ = "animal"
 
-    tag: Mapped[str] = mapped_column(String(64))
+    # The primary identifier's value, mirrored from animal_identifier so
+    # lists and search keep working unchanged (generic animal model §4).
+    # Nullable: a mare with a microchip and no ear tag has no "tag".
+    tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column()
+    # A code from app/farmos/livestock_catalog.py (`cow`, `layer_hen`…),
+    # validated by the API — adding a species is configuration, not a column.
     species: Mapped[str] = mapped_column(String(64))
     breed: Mapped[str | None] = mapped_column(nullable=True)
+    breed_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sex: Mapped[str | None] = mapped_column(String(1), nullable=True)
     birth_date: Mapped[datetime | None] = mapped_column(nullable=True)
+    birth_date_estimated: Mapped[bool] = mapped_column(default=False)
+    # With species and sex, these two decide what this animal can do —
+    # see app/farmos/capability_service.py.
+    life_stage: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    management_profile: Mapped[str | None] = mapped_column(String(30), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="healthy")
     location_label: Mapped[str | None] = mapped_column(nullable=True)
     health_score: Mapped[int] = mapped_column(default=100)

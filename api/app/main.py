@@ -123,6 +123,7 @@ from app.farmos.routes_feed import router as farmos_feed_router  # noqa: E402
 from app.farmos.routes_finance import router as farmos_finance_router  # noqa: E402
 from app.farmos.routes_health import router as farmos_health_router  # noqa: E402
 from app.farmos.routes_invitations import router as farmos_invitations_router  # noqa: E402
+from app.farmos.routes_livestock import router as farmos_livestock_router  # noqa: E402
 from app.farmos.routes_modules import router as farmos_modules_router  # noqa: E402
 from app.farmos.routes_mouneh import router as farmos_mouneh_router  # noqa: E402
 from app.farmos.routes_notifications import router as farmos_notifications_router  # noqa: E402
@@ -151,6 +152,7 @@ app.include_router(farmos_invitations_router, prefix="/api/v1", tags=["FarmOS: I
 app.include_router(farmos_employees_router, prefix="/api/v1", tags=["FarmOS: Employees"])
 app.include_router(farmos_farms_router, prefix="/api/v1", tags=["FarmOS: Farm"])
 app.include_router(farmos_animals_router, prefix="/api/v1", tags=["FarmOS: Animals"])
+app.include_router(farmos_livestock_router, prefix="/api/v1", tags=["FarmOS: Livestock"])
 app.include_router(farmos_tasks_router, prefix="/api/v1", tags=["FarmOS: Tasks"])
 app.include_router(farmos_notifications_router, prefix="/api/v1", tags=["FarmOS: Notifications"])
 app.include_router(farmos_priorities_router, prefix="/api/v1", tags=["FarmOS: Priorities"])

@@ -241,12 +241,17 @@ def test_audit_trail_records_animal_move_and_treatment(client, control_db):
     )
     assert events.status_code == 200
     body = events.json()
-    assert len(body) == 1
-    assert body[0]["action"] == "animal.updated"
+    # Newest first: the move, then the registration itself (Stage 6 audits
+    # every animal mutation, registration included).
+    assert [e["action"] for e in body] == ["animal.updated", "animal.created"]
     assert body[0]["changes_json"]["location_label"]["to"] == "Isolation Pen"
 
     all_events = client.get("/api/v1/audit", headers=farmos_headers(token))
-    assert {e["action"] for e in all_events.json()} == {"animal.updated", "treatment.created"}
+    assert {e["action"] for e in all_events.json()} == {
+        "animal.created",
+        "animal.updated",
+        "treatment.created",
+    }
 
 
 def test_worker_without_reports_view_cannot_see_audit(client, control_db):
