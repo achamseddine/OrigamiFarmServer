@@ -163,6 +163,7 @@ from app.farmos.routes_procurement import router as farmos_procurement_router  #
 from app.farmos.routes_production import router as farmos_production_router  # noqa: E402
 from app.farmos.routes_recommendations import router as farmos_recommendations_router  # noqa: E402
 from app.farmos.routes_reports import router as farmos_reports_router  # noqa: E402
+from app.farmos.routes_responsibilities import router as farmos_responsibilities_router  # noqa: E402
 from app.farmos.routes_tasks import router as farmos_tasks_router  # noqa: E402
 from app.farmos.routes_visit_bookings import router as farmos_visit_bookings_router  # noqa: E402
 from app.farmos.routes_visits import router as farmos_visits_router  # noqa: E402
@@ -208,6 +209,7 @@ app.include_router(farmos_modules_router, prefix="/api/v1", tags=["FarmOS: Modul
 app.include_router(farmos_mouneh_router, prefix="/api/v1", tags=["FarmOS: Mouneh"])
 app.include_router(farmos_visits_router, prefix="/api/v1", tags=["FarmOS: Visits"])
 app.include_router(farmos_visit_bookings_router, prefix="/api/v1", tags=["FarmOS: Visit Bookings"])
+app.include_router(farmos_responsibilities_router, prefix="/api/v1", tags=["FarmOS: Responsibilities"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(platform_auth_router, prefix="/platform/v1/auth", tags=["Platform Auth"])

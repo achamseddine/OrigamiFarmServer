@@ -132,6 +132,7 @@ _CONTROL_TABLES = [
 ]
 _TENANT_TABLES = [
     "sync_event",
+    "work_responsibility",
     "feed_performance_alert",
     "feed_performance_assessment",
     "feed_exposure_window",

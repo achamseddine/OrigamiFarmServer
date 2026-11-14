@@ -13,6 +13,7 @@ from app.farmos import pharmacy_models as _farmos_pharmacy_models  # noqa: F401
 from app.farmos import platform_models as _farmos_platform_models  # noqa: F401
 from app.farmos import procurement_models as _farmos_procurement_models  # noqa: F401
 from app.farmos import production_models as _farmos_production_models  # noqa: F401
+from app.farmos import responsibility_models as _farmos_responsibility_models  # noqa: F401
 from app.farmos import visits_models as _farmos_visits_models  # noqa: F401
 from app.tenant_api import models as _tenant_api_models  # noqa: F401
 
