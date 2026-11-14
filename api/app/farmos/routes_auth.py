@@ -24,7 +24,7 @@ from app.tenants.models import TenantMembership
 router = APIRouter()
 
 
-def _profile_of(user: UserIdentity, membership: TenantMembership) -> UserProfileOut:
+def profile_of(user: UserIdentity, membership: TenantMembership) -> UserProfileOut:
     """The profile shape both /auth/login and /auth/me return.
 
     One function because the tablet app takes its profile from whichever
@@ -93,7 +93,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_control_db)) -> Login
 
     settings = get_settings()
     token = issue_access_token(settings, user_id=user.id, tenant_id=membership.tenant_id, email=user.email)
-    return LoginResponse(access_token=token, user=_profile_of(user, membership))
+    return LoginResponse(access_token=token, user=profile_of(user, membership))
 
 
 def _record_device(db: Session, payload: LoginRequest, membership: TenantMembership) -> None:
@@ -165,7 +165,7 @@ def me(
     assert membership is not None  # get_access_context already verified this membership exists
     user = db.get(UserIdentity, access.user_id)
     assert user is not None  # likewise — the context was built from this user
-    return _profile_of(user, membership)
+    return profile_of(user, membership)
 
 
 class ChangeMyPasswordRequest(BaseModel):

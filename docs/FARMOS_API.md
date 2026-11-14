@@ -223,7 +223,7 @@ the routing map — which router module owns which path.
 | Group | Router module | Representative endpoints |
 |---|---|---|
 | Auth | `routes_auth.py` | `POST /auth/login`, `GET /auth/me` |
-| Employees (self) | `routes_employees.py` | `GET /me/access`, `GET /modules/catalog` |
+| Employees (self) | `routes_employees.py` | `GET /me/access`, `GET /modules/catalog`, `GET /users` (the staff roster in the login profile shape, for the task picker) |
 | Employees (admin) | `routes_employees_admin.py` | `GET/POST/PATCH/DELETE /employees`, `PUT /employees/{id}/permissions` |
 | Employees (responsibilities) | `routes_responsibilities.py` (shapes in `responsibility_schemas.py`, rules in `responsibility_service.py`) | `GET/POST /employees/{id}/responsibilities`, `POST …/responsibilities/{id}/end`, `GET /me/responsibilities` — a scope (animal, group, species, field) with duties; assigning grants the modules the duties need as ordinary permission rows |
 | Farm | `routes_farms.py` | `GET/PATCH /farms/me` — the farm record plus its settings (`dry_off_days_before_birth`, `milk_peak_start_days`, `milk_peak_end_days`, `breeding_wait_days`, `heat_cycle_days`; `PATCH` needs Settings · configure and is audited with the old values) |

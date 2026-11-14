@@ -1300,3 +1300,17 @@ def test_a_weight_taken_twice_the_same_day_is_asked(client, control_db):
     assert confirmed.status_code == 201, confirmed.text
     events = _confirmed(control_db, f.tenant.id)
     assert len(events) == 1 and events[0].metadata_json["record"] == f"weight:{confirmed.json()['id']}"
+
+
+def test_the_staff_roster_is_the_login_profile_shape(client, control_db):
+    """`GET /users`: the task picker's roster, one profile shape with
+    `/auth/login`, the caller's own farm only, active members only."""
+    f = Farm(client, control_db, "S11-USERS")
+    other = Farm(client, control_db, "S11-USERS2")
+    roster = f.get("/users", h=f.worker_h)
+    assert [u["name"] for u in roster] == ["Karim", "Rami"]
+    me = client.get(f"{API}/auth/me", headers=f.worker_h).json()
+    karim = next(u for u in roster if u["name"] == "Karim")
+    assert karim == me and karim["farm_id"] == f.farm_id and karim["role"] == "worker"
+    assert {u["farm_id"] for u in other.get("/users")} == {other.farm_id}
+    assert client.get(f"{API}/users").status_code == 401

@@ -10,11 +10,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.models import UserIdentity
 from app.common.db import get_control_db
+from app.common.enums import MembershipStatus
 from app.farmos.deps import AccessContext, get_access_context
 from app.farmos.permissions import MODULE_CODES, full_access_grid
-from app.farmos.schemas import ModuleCatalogEntry, MyAccessOut
+from app.farmos.routes_auth import profile_of
+from app.farmos.schemas import ModuleCatalogEntry, MyAccessOut, UserProfileOut
 from app.plans.models import ModuleCatalog
+from app.tenants.models import TenantMembership
 
 router = APIRouter()
 
@@ -64,3 +68,26 @@ def module_catalog(
         )
         for row in rows
     ]
+
+
+@router.get("/users", response_model=list[UserProfileOut])
+def list_users(
+    access: AccessContext = Depends(get_access_context), db: Session = Depends(get_control_db)
+) -> list[UserProfileOut]:
+    """The farm's staff roster in the one profile shape the tablet parses
+    (the same as `/auth/login` and `/auth/me`) — the task-assignment picker
+    and the visit staff roster read it. Always the caller's own farm, active
+    members only, by name; any signed-in member may read it, as on the
+    reference backend. The richer employee record (permissions, employment)
+    is `GET /employees`, which needs Employees · view.
+    """
+    rows = db.execute(
+        select(TenantMembership, UserIdentity)
+        .join(UserIdentity, UserIdentity.id == TenantMembership.user_id)
+        .where(
+            TenantMembership.tenant_id == access.tenant_id,
+            TenantMembership.status == MembershipStatus.ACTIVE,
+        )
+        .order_by(UserIdentity.display_name)
+    ).all()
+    return [profile_of(user, membership) for membership, user in rows]
