@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session
 from app.auth.models import UserIdentity
 from app.common.db import get_control_db
 from app.common.enums import MembershipStatus
-from app.farmos.deps import AccessContext, check_farm_id, get_access_context, get_farmos_tenant_db
+from app.farmos.deps import (
+    AccessContext,
+    check_farm_id,
+    get_farmos_tenant_db,
+    require_any_permission,
+    require_permission,
+)
 from app.farmos.finance_models import Expense, Sale
 from app.farmos.production_models import EggRecord, MilkRecord
 from app.farmos.recommendations import FEED_COST_SHARE_THRESHOLD
@@ -34,11 +40,16 @@ router = APIRouter()
 _OPEN_TASK_STATUSES = ("open", "in_progress")
 _MANAGER_ROLE_RANK = {"owner": 0, "manager": 1}
 
+_MORNING_VIEW = require_permission("morning_operations", "view")
+# The daily summary is sales and expense totals: the tablet's Sales &
+# Finance screen loads it for whoever holds Finance.
+_SUMMARY_VIEW = require_any_permission(("reports", "view"), ("finance", "view"))
+
 
 @router.get("/morning-briefing", response_model=MorningBriefingOut)
 def morning_briefing(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(get_access_context),
+    access: AccessContext = Depends(_MORNING_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> MorningBriefingOut:
@@ -47,13 +58,17 @@ def morning_briefing(
     tenant = control_db.get(Tenant, access.tenant_id)
     assert tenant is not None  # AccessContext already resolved this same tenant
 
-    managers = control_db.execute(
-        select(TenantMembership).where(
-            TenantMembership.tenant_id == access.tenant_id,
-            TenantMembership.status == MembershipStatus.ACTIVE,
-            TenantMembership.role.in_(("owner", "manager")),
+    managers = (
+        control_db.execute(
+            select(TenantMembership).where(
+                TenantMembership.tenant_id == access.tenant_id,
+                TenantMembership.status == MembershipStatus.ACTIVE,
+                TenantMembership.role.in_(("owner", "manager")),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     manager_name = None
     if managers:
         best = min(managers, key=lambda m: _MANAGER_ROLE_RANK.get(m.role, 99))
@@ -63,14 +78,10 @@ def morning_briefing(
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     animal_count = db.execute(
-        select(func.count()).select_from(Animal).where(
-            Animal.deleted_at.is_(None), Animal.active.is_(True)
-        )
+        select(func.count()).select_from(Animal).where(Animal.deleted_at.is_(None), Animal.active.is_(True))
     ).scalar_one()
     active_fields = db.execute(
-        select(func.count()).select_from(Field).where(
-            Field.deleted_at.is_(None), Field.status == "active"
-        )
+        select(func.count()).select_from(Field).where(Field.deleted_at.is_(None), Field.status == "active")
     ).scalar_one()
     milk_today_l = db.execute(
         select(func.coalesce(func.sum(MilkRecord.liters), 0)).where(
@@ -122,19 +133,21 @@ def morning_briefing(
 @router.get("/reports/daily-summary", response_model=DailySummaryOut)
 def daily_summary(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(get_access_context),
+    access: AccessContext = Depends(_SUMMARY_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> DailySummaryOut:
     check_farm_id(farm_id, access)
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    sales = db.execute(
-        select(Sale).where(Sale.deleted_at.is_(None), Sale.sold_at >= today_start)
-    ).scalars().all()
-    expenses = db.execute(
-        select(Expense).where(Expense.deleted_at.is_(None), Expense.incurred_at >= today_start)
-    ).scalars().all()
+    sales = (
+        db.execute(select(Sale).where(Sale.deleted_at.is_(None), Sale.sold_at >= today_start)).scalars().all()
+    )
+    expenses = (
+        db.execute(select(Expense).where(Expense.deleted_at.is_(None), Expense.incurred_at >= today_start))
+        .scalars()
+        .all()
+    )
 
     revenue_today = sum(float(s.amount) for s in sales)
     expenses_today = sum(float(e.amount) for e in expenses)
@@ -170,12 +183,8 @@ def daily_summary(
         gross_margin=revenue_today - expenses_today,
         cash_collected=cash_collected,
         pending_payments=pending_payments,
-        sales_breakdown=[
-            AmountByProductType(product_type=k, amount=v) for k, v in by_product_type.items()
-        ],
+        sales_breakdown=[AmountByProductType(product_type=k, amount=v) for k, v in by_product_type.items()],
         expense_breakdown=[AmountByCategory(category=k, amount=v) for k, v in by_category.items()],
-        top_selling_products=[
-            AmountByProductLabel(product_label=k, amount=v) for k, v in top_products
-        ],
+        top_selling_products=[AmountByProductLabel(product_label=k, amount=v) for k, v in top_products],
         business_insights=business_insights,
     )

@@ -13,10 +13,12 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.farmos.deps import AccessContext, get_farmos_tenant_db, require_permission
+from app.common.db import get_control_db
+from app.farmos import duplicates
+from app.farmos.deps import AccessContext, ensure_stock_override, get_farmos_tenant_db, require_permission
 from app.farmos.mouneh_models import (
     BatchInputConsumption,
     CostComponent,
@@ -57,6 +59,9 @@ from app.farmos.schemas import (
 
 router = APIRouter()
 
+# A repeated sale is looked for over this short window (see record_mouneh_sale).
+_SALE_WINDOW = timedelta(minutes=5)
+
 
 # --- Raw materials -----------------------------------------------------
 
@@ -83,9 +88,11 @@ def list_raw_materials(
     _access: AccessContext = Depends(require_permission("mouneh_inventory", "view")),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[RawMaterialOut]:
-    rows = db.execute(
-        select(RawMaterial).where(RawMaterial.deleted_at.is_(None)).order_by(RawMaterial.name)
-    ).scalars().all()
+    rows = (
+        db.execute(select(RawMaterial).where(RawMaterial.deleted_at.is_(None)).order_by(RawMaterial.name))
+        .scalars()
+        .all()
+    )
     return [_to_material_out(row) for row in rows]
 
 
@@ -95,6 +102,15 @@ def create_raw_material(
     access: AccessContext = Depends(require_permission("mouneh_inventory", "create")),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> RawMaterialOut:
+    # One material, one name: a second "Olive oil" would split its stock.
+    clash = db.scalar(
+        select(RawMaterial).where(
+            RawMaterial.deleted_at.is_(None),
+            func.lower(RawMaterial.name) == payload.name.strip().lower(),
+        )
+    )
+    if clash is not None:
+        raise HTTPException(status_code=409, detail=f"A raw material named {clash.name} already exists.")
     material = RawMaterial(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
@@ -154,9 +170,13 @@ def _to_cost_component_out(c: CostComponent) -> CostComponentOut:
 
 def _to_recipe_out(db: Session, r: Recipe) -> RecipeOut:
     items = db.execute(select(RecipeItem).where(RecipeItem.recipe_id == r.id)).scalars().all()
-    components = db.execute(
-        select(CostComponent).where(CostComponent.recipe_id == r.id, CostComponent.batch_id.is_(None))
-    ).scalars().all()
+    components = (
+        db.execute(
+            select(CostComponent).where(CostComponent.recipe_id == r.id, CostComponent.batch_id.is_(None))
+        )
+        .scalars()
+        .all()
+    )
     return RecipeOut(
         id=str(r.id),
         product_id=str(r.product_id),
@@ -198,9 +218,13 @@ def list_products(
     _access: AccessContext = Depends(require_permission("mouneh_production", "view")),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[MounehProductOut]:
-    rows = db.execute(
-        select(MounehProduct).where(MounehProduct.deleted_at.is_(None)).order_by(MounehProduct.name)
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(MounehProduct).where(MounehProduct.deleted_at.is_(None)).order_by(MounehProduct.name)
+        )
+        .scalars()
+        .all()
+    )
     return [_to_product_out(row) for row in rows]
 
 
@@ -249,9 +273,11 @@ def create_recipe(
     if previous is not None:
         previous.active = False
 
-    max_version = db.execute(
-        select(Recipe).where(Recipe.product_id == product.id).order_by(Recipe.version.desc())
-    ).scalars().first()
+    max_version = (
+        db.execute(select(Recipe).where(Recipe.product_id == product.id).order_by(Recipe.version.desc()))
+        .scalars()
+        .first()
+    )
     next_version = (max_version.version + 1) if max_version else 1
 
     recipe = Recipe(
@@ -315,9 +341,11 @@ def _to_consumption_out(c: BatchInputConsumption) -> BatchInputConsumptionOut:
 
 
 def _to_batch_out(db: Session, b: ProductionBatch) -> ProductionBatchOut:
-    consumptions = db.execute(
-        select(BatchInputConsumption).where(BatchInputConsumption.batch_id == b.id)
-    ).scalars().all()
+    consumptions = (
+        db.execute(select(BatchInputConsumption).where(BatchInputConsumption.batch_id == b.id))
+        .scalars()
+        .all()
+    )
     return ProductionBatchOut(
         id=str(b.id),
         farm_id=str(b.tenant_id),
@@ -483,6 +511,9 @@ def consume_batch_inputs(
     take a stock-tracked material negative.
     """
     batch = _load_batch_or_404(db, batch_id)
+    # Taking stock below the ledger is an approved exception (Mouneh
+    # Inventory / Production or Inventory approval), never a recorder's tick.
+    ensure_stock_override(access, payload.allow_negative, "mouneh_inventory", "mouneh_production")
 
     for line in payload.lines:
         if not payload.allow_negative:
@@ -602,19 +633,27 @@ def record_mouneh_sale(
     payload: MounehSaleCreate,
     access: AccessContext = Depends(require_permission("mouneh_production", "create")),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> MounehSaleOut:
+    product = db.get(MounehProduct, uuid.UUID(payload.product_id))
+    if product is None or product.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Mouneh product not found.")
     if payload.finished_goods_stock_id:
         stock = db.get(FinishedGoodsStock, uuid.UUID(payload.finished_goods_stock_id))
     else:
-        stock = db.execute(
-            select(FinishedGoodsStock)
-            .where(
-                FinishedGoodsStock.product_id == uuid.UUID(payload.product_id),
-                FinishedGoodsStock.deleted_at.is_(None),
-                FinishedGoodsStock.quantity_available > 0,
+        stock = (
+            db.execute(
+                select(FinishedGoodsStock)
+                .where(
+                    FinishedGoodsStock.product_id == uuid.UUID(payload.product_id),
+                    FinishedGoodsStock.deleted_at.is_(None),
+                    FinishedGoodsStock.quantity_available > 0,
+                )
+                .order_by(FinishedGoodsStock.created_at)
             )
-            .order_by(FinishedGoodsStock.created_at)
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     if stock is None or stock.deleted_at is not None:
         raise HTTPException(status_code=422, detail="No finished-goods stock available to sell.")
     if float(stock.quantity_available) < payload.quantity:
@@ -625,6 +664,28 @@ def record_mouneh_sale(
                 f"can't sell {payload.quantity}."
             ),
         )
+
+    # The same sale typed in twice (a second tablet, a repeated tap after the
+    # first one went through). Two customers buying the same jar minutes
+    # apart is real — so it is asked, not refused outright.
+    lo, hi = duplicates.near(None, _SALE_WINDOW)
+    customer = MounehSale.customer_id
+    customer_pk = uuid.UUID(payload.customer_id) if payload.customer_id else None
+    twin = db.scalars(
+        select(MounehSale).where(
+            MounehSale.deleted_at.is_(None),
+            MounehSale.product_id == product.id,
+            MounehSale.quantity == payload.quantity,
+            MounehSale.unit_price == payload.unit_price,
+            customer.is_(None) if customer_pk is None else customer == customer_pk,
+            MounehSale.sold_at.between(lo, hi),
+        )
+    ).first()
+    duplicates.guard(
+        twin,
+        f"{payload.quantity:g} × {product.name} at {payload.unit_price:g} was sold a few minutes ago.",
+        confirm=payload.confirm_duplicate,
+    )
 
     revenue = payload.quantity * payload.unit_price - payload.discount
     cost_per_unit = float(stock.unit_cost)
@@ -654,4 +715,13 @@ def record_mouneh_sale(
     stock.last_modified_by = access.membership_id
 
     db.flush()
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="mouneh_sale",
+        entity_id=str(sale.id),
+        match_id=twin.id if twin else None,
+        what="sale",
+        module_code="mouneh_production",
+    )
     return _to_sale_out(sale)

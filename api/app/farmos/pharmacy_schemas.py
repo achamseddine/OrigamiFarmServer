@@ -210,6 +210,10 @@ class MedicationAdministrationIn(BaseModel):
     # The reservation this dose draws on, and where it was issued from.
     reservation_id: str | None = None
     location_id: str | None = None
+    # A dose of the same medicine to the same subject within 12 hours is
+    # refused as a possible double dose unless confirmed (a twice-daily
+    # course is confirmed each time; app/farmos/duplicates.py).
+    confirm_duplicate: bool = False
 
 
 class AdministrationReverse(BaseModel):

@@ -14,11 +14,22 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
+from app.farmos.deps import (
+    AccessContext,
+    check_farm_id,
+    get_farmos_tenant_db,
+    require_any_permission,
+    require_permission,
+)
 from app.farmos.finance_models import Expense, Sale
 from app.farmos.schemas import ExpenseCreate, ExpenseOut, SaleCreate, SaleOut
 
 router = APIRouter()
+
+# Finance is the tablet's Sales & Finance screen, which shows all of these;
+# Sales and Expenses are the narrower responsibilities a manager can grant.
+_SALES_VIEW = require_any_permission(("sales", "view"), ("finance", "view"))
+_EXPENSES_VIEW = require_any_permission(("expenses", "view"), ("finance", "view"))
 
 
 def _to_expense_out(e: Expense, tenant_id: uuid.UUID) -> ExpenseOut:
@@ -38,13 +49,15 @@ def _to_expense_out(e: Expense, tenant_id: uuid.UUID) -> ExpenseOut:
 @router.get("/expenses", response_model=list[ExpenseOut])
 def list_expenses(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(require_permission("finance", "view")),
+    access: AccessContext = Depends(_EXPENSES_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[ExpenseOut]:
     check_farm_id(farm_id, access)
-    rows = db.execute(
-        select(Expense).where(Expense.deleted_at.is_(None)).order_by(Expense.incurred_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(select(Expense).where(Expense.deleted_at.is_(None)).order_by(Expense.incurred_at.desc()))
+        .scalars()
+        .all()
+    )
     return [_to_expense_out(row, access.tenant_id) for row in rows]
 
 
@@ -89,13 +102,15 @@ def to_sale_out(s: Sale, tenant_id: uuid.UUID) -> SaleOut:
 @router.get("/sales", response_model=list[SaleOut])
 def list_sales(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(require_permission("sales", "view")),
+    access: AccessContext = Depends(_SALES_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[SaleOut]:
     check_farm_id(farm_id, access)
-    rows = db.execute(
-        select(Sale).where(Sale.deleted_at.is_(None)).order_by(Sale.sold_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(select(Sale).where(Sale.deleted_at.is_(None)).order_by(Sale.sold_at.desc()))
+        .scalars()
+        .all()
+    )
     return [to_sale_out(row, access.tenant_id) for row in rows]
 
 

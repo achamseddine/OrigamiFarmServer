@@ -84,8 +84,12 @@ def decide_recommendation(
 
     new_status = _DECISION_TO_STATUS.get(payload.decision)
     if new_status is None:
+        raise HTTPException(status_code=422, detail="Decision must be one of: accept, reject, postpone.")
+    # Every decision is logged against the person who made it (knowledge
+    # lifecycle §7), so the record names the caller, not a body field.
+    if payload.decided_by != str(access.user_id):
         raise HTTPException(
-            status_code=422, detail="Decision must be one of: accept, reject, postpone."
+            status_code=403, detail="A decision is recorded in the name of the person who makes it."
         )
 
     recommendation.status = new_status
