@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -784,6 +784,53 @@ def event_to_dict(e: fm.FeedingEvent) -> dict:
             for c in e.components
         ],
     }
+
+
+def find_duplicate_feeding(
+    db: Session,
+    subject_type: str,
+    subject_id: uuid.UUID,
+    *,
+    event_type: str,
+    components: list[dict],
+    at: datetime | None = None,
+) -> fm.FeedingEvent | None:
+    """A recorded feeding of the same subject, of the same kind, with the
+    same feeds in the same quantities, within half an hour of [at] — the
+    same round entered twice (app/farmos/duplicates.py)."""
+    from app.farmos import duplicates
+
+    wanted: dict[uuid.UUID, float] = {}
+    for c in components:
+        pk = inv.parse_uuid(c["feed_product_id"])
+        product = db.get(fm.FeedProduct, pk) if pk else None
+        if product is None:
+            return None
+        qty = catalog.convert(
+            float(c.get("quantity_offered") or 0),
+            catalog.normalise(c.get("unit") or product.unit),
+            product.unit,
+        )
+        wanted[product.id] = round(wanted.get(product.id, 0.0) + qty, 2)
+    lo, hi = duplicates.near(at)
+    for e in db.scalars(
+        select(fm.FeedingEvent).where(
+            fm.FeedingEvent.subject_type == subject_type,
+            fm.FeedingEvent.subject_id == subject_id,
+            fm.FeedingEvent.event_type == event_type,
+            fm.FeedingEvent.status == "recorded",
+            fm.FeedingEvent.occurred_at >= lo,
+            fm.FeedingEvent.occurred_at <= hi,
+        )
+    ):
+        got: dict[uuid.UUID, float] = {}
+        for part in e.components:
+            got[part.feed_product_id] = round(
+                got.get(part.feed_product_id, 0.0) + (part.quantity_offered or 0), 2
+            )
+        if got == wanted:
+            return e
+    return None
 
 
 def record_feeding(
