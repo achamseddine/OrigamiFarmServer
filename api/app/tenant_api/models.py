@@ -76,6 +76,20 @@ class Animal(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase)
     current_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(nullable=True)
     active: Mapped[bool] = mapped_column(default=True)
+    # Lifecycle (LIVESTOCK-SCHEMA §14): active | archived | sold | dead |
+    # culled | slaughtered | transferred. `active` above stays the quick
+    # "still on the farm" flag; both are written through
+    # app/farmos/livestock_state_service.py, history row first.
+    lifecycle_status: Mapped[str] = mapped_column(String(20), default="active")
+    exited_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The reproduction / lactation projection — with `pregnant`,
+    # `pregnancy_days`, `lactating` and `lactation_cycle` above, refreshed
+    # from the episodes by app/farmos/reproduction_service.py and never
+    # edited directly.
+    pregnancy_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    expected_due_date: Mapped[datetime | None] = mapped_column(nullable=True)
+    lactation_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    dried_off_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class Field(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase):

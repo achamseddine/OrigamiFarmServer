@@ -171,6 +171,8 @@ def _species(
     male: tuple[str, str],
     sort: int,
     profiles: tuple[str, ...] = (),
+    gestation: int | None = None,
+    incubation: int | None = None,
 ) -> dict[str, Any]:
     return {
         "code": code,
@@ -196,6 +198,11 @@ def _species(
         },
         "active": True,
         "sort_order": sort,
+        # Typical length of a pregnancy / an incubation, in days — what an
+        # expected due or hatch date is computed from when the check or the
+        # setter does not give one (REPRODUCTION-SCHEMA).
+        "gestation_days": gestation,
+        "incubation_days": incubation,
     }
 
 
@@ -214,6 +221,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Bull", "ثور"),
         sort=1,
         profiles=("dairy", "meat", "breeding", "dual_purpose"),
+        gestation=283,
     ),
     _species(
         "sheep",
@@ -229,6 +237,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Ram", "كبش"),
         sort=2,
         profiles=("dairy", "meat", "wool", "breeding", "dual_purpose"),
+        gestation=147,
     ),
     _species(
         "goat",
@@ -244,6 +253,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Buck", "تيس"),
         sort=3,
         profiles=("dairy", "meat", "breeding", "dual_purpose"),
+        gestation=150,
     ),
     _species(
         "horse",
@@ -259,6 +269,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Stallion", "حصان"),
         sort=4,
         profiles=("breeding", "work", "companion"),
+        gestation=340,
     ),
     _species(
         "layer_hen",
@@ -274,6 +285,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Rooster", "ديك"),
         sort=5,
         profiles=("layer", "broiler", "breeding"),
+        incubation=21,
     ),
     _species(
         "duck",
@@ -289,6 +301,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Drake", "ذكر البط"),
         sort=6,
         profiles=("layer", "broiler", "breeding"),
+        incubation=28,
     ),
     _species(
         "turkey",
@@ -304,6 +317,7 @@ SPECIES: tuple[dict[str, Any], ...] = (
         male=("Tom", "ذكر"),
         sort=7,
         profiles=("layer", "broiler", "breeding"),
+        incubation=28,
     ),
     _species(
         "other",
@@ -321,6 +335,24 @@ SPECIES: tuple[dict[str, Any], ...] = (
     ),
 )
 SPECIES_BY_CODE: dict[str, dict[str, Any]] = {s["code"]: s for s in SPECIES}
+
+# Group types (LIVESTOCK-SCHEMA §8): (code, label_en, label_ar, exclusive,
+# allows individual members). A herd, flock, pen or batch is physical —
+# an animal is in one at a time, and joining another moves it. A cohort
+# is analytical ("spring 2026 calves") and overlaps freely. Code-defined
+# like the rest of the catalog; `GET /animal-group-types` serves it.
+GROUP_TYPES: tuple[tuple[str, str, str, bool, bool], ...] = (
+    ("herd", "Herd", "قطيع", True, True),
+    ("flock", "Flock", "سرب", True, True),
+    ("pen", "Pen", "حظيرة", True, True),
+    ("batch", "Batch", "دفعة", True, True),
+    ("cohort", "Cohort", "مجموعة متابعة", False, True),
+)
+
+# How a group's head count is kept (LIVESTOCK-SCHEMA §6): the number of
+# its current members, the running total of its quantity ledger, or both
+# (a counted flock with a few registered individuals).
+TRACKING_MODES = ("MEMBERSHIP_DERIVED", "QUANTITY_MANAGED", "HYBRID")
 
 # A fixed namespace so the catalog's breeds and rules carry the same ids on
 # every server and across restarts — the tablet caches them.
@@ -462,10 +494,12 @@ def _with_ids(rules: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
     return tuple(out)
 
 
-RULES: tuple[dict[str, Any], ...] = _with_ids(
+_BASE_RULES: list[dict[str, Any]] = (
     # ---- cattle: dairy females milk; everyone else does not
     _mammal_base("cow", hoof=True)
     + [
+        # A herd is worked in groups (milking cows, pregnant, dry, heifers).
+        _r("cow", Cap.GROUP_TRACKING),
         _r("cow", Cap.MILK_PRODUCTION, sex=FEMALE, stage="adult", profile="dairy"),
         _r("cow", Cap.LACTATION, sex=FEMALE, stage="adult", profile="dairy"),
         _r("cow", Cap.MILK_PRODUCTION, sex=FEMALE, stage="adult", profile="dual_purpose"),
@@ -523,6 +557,15 @@ RULES: tuple[dict[str, Any], ...] = _with_ids(
         _r("other", Cap.MORTALITY),
     ]
 )
+# A senior animal keeps what it had as an adult: an old cow still calves and
+# is milked, an old mare still foals, an old hen still lays a little. Every
+# adult-only rule therefore also holds for the senior stage — written out as
+# rules rather than inferred by the resolver, so a farm can still switch one
+# off for its older animals.
+RULES: tuple[dict[str, Any], ...] = _with_ids(
+    _BASE_RULES + [{**r, "life_stage": "senior"} for r in _BASE_RULES if r["life_stage"] == "adult"]
+)
+SENIOR_RULES: tuple[dict[str, Any], ...] = tuple(r for r in RULES if r["life_stage"] == "senior")
 RULES_BY_SPECIES: dict[str, list[dict[str, Any]]] = {}
 for _rule in RULES:
     RULES_BY_SPECIES.setdefault(_rule["species_code"], []).append(_rule)
