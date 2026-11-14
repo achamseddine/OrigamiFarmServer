@@ -26,7 +26,7 @@ from app.common.db import get_control_db
 from app.common.enums import MembershipStatus, TenantStatus
 from app.common.tenant_router import TenantDataRouter
 from app.config import get_settings
-from app.farmos.permissions import permissions_grid
+from app.farmos.permissions import MODULE_LABELS, permissions_grid
 from app.farmos.security import decode_access_token
 from app.tenants.models import Tenant, TenantMembership
 
@@ -143,6 +143,39 @@ def require_any_permission(*checks: tuple[str, str]) -> Callable:
         )
 
     return _dependency
+
+
+def ensure_any_permission(access: AccessContext, *checks: tuple[str, str]) -> None:
+    """In-body form of `require_any_permission`, for a check that depends on
+    the request: an observation on a field needs Agriculture, one on an
+    animal needs Animals or Animal Health."""
+    if any(access.has(module_code, action) for module_code, action in checks):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="You don't have permission to do that. Ask your farm owner or manager for access.",
+    )
+
+
+def ensure_stock_override(access: AccessContext, allow_negative: bool, *modules: str) -> None:
+    """Taking stock below what is on record is an approved exception
+    (architecture INVENTORY-SCHEMA: "Reservations cannot exceed eligible
+    available stock unless explicit approved override policy exists"): the
+    override needs *approve* on one of [modules] (Inventory always counts),
+    never a tick any recorder can give."""
+    if not allow_negative:
+        return
+    codes = (*modules, "inventory")
+    if any(access.has(code, "approve") for code in codes):
+        return
+    names = " or ".join(dict.fromkeys(MODULE_LABELS.get(code, code) for code in codes))
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"Recording more than the stock on record needs {names} approval. "
+            "Record the delivery first, or ask a manager to record it."
+        ),
+    )
 
 
 def require_owner_or_manager(access: AccessContext = Depends(get_access_context)) -> AccessContext:

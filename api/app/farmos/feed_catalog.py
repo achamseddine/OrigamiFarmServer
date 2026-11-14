@@ -71,6 +71,31 @@ ADJUSTMENT_REASONS = ("adjustment", "waste", "return", "reconciliation_adjustmen
 # item ledger and never become feed products or lots.
 NOT_FEED_CATEGORIES = frozenset({"medicine", "medication", "vet", "veterinary", "produce"})
 
+# The three feeds a worker records at the animal by default
+# (docs/QR-ANIMAL-QUICK-ENTRY.md): the feeding form opens one row for each,
+# every row optional. Each is an ordinary farm feed product backed by an
+# inventory item — no special stock. A farm that already has a matching feed
+# (by code, by a keyword in its name, or a concentrate by category) keeps it
+# and no second one is created.
+#   (slot, code, name_en, name_ar, category, unit, name keywords)
+STANDARD_FEEDS: tuple[tuple[str, str, str, str, str, str, tuple[str, ...]], ...] = (
+    (
+        "concentrate", "CONCENTRATE", "Concentrate", "علف مركّز", "concentrate", "kg",
+        ("concentrate", "مركز", "مركّز"),
+    ),
+    ("corn_silage", "CORN-SILAGE", "Corn silage", "سيلاج الذرة", "forage", "kg", ("silage", "سيلاج")),
+    ("wheat_straw", "WHEAT-STRAW", "Wheat straw", "تبن القمح", "forage", "kg", ("straw", "تبن")),
+)  # fmt: skip
+STANDARD_FEED_SLOTS = tuple(row[0] for row in STANDARD_FEEDS)
+# The farm mixes its own concentrate from grain (a numbered mix, §20), so the
+# standard concentrate is a farm-produced feed — a formula can produce it.
+# Bought-in concentrate is still received into it as purchased lots.
+STANDARD_FEED_SOURCE = {"concentrate": "farm_produced"}
+
+# The grade a farm gives a delivery at receipt (FEED-SCHEMA §26). A rejected
+# share is recorded as rejected quantity; a grade is what was accepted.
+LOT_QUALITY_GRADES = ("good", "fair", "poor")
+
 
 # ------------------------------------------------------------------- units
 # The units-of-measure catalogue (FOUNDATION-SCHEMA uom). Units of one

@@ -145,6 +145,7 @@ _TENANT_TABLES = [
     "animal_group_membership",
     "animal_state_history",
     "farm_settings",
+    "work_responsibility",
     "feed_performance_alert",
     "feed_performance_assessment",
     "feed_exposure_window",

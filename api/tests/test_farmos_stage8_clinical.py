@@ -962,14 +962,22 @@ def test_a_dose_consumes_the_exact_lot_and_applies_the_withdrawal(client, contro
     r = client.post(f"{API}/pharmacy/administrations", json={**oxy, "dose_quantity": 150}, headers=f.h)
     assert r.status_code == 422 and "eligible 100" in r.json()["detail"]
     assert f.post("/pharmacy/administrations", {**oxy, "dose_quantity": 30})["lot_code"] == "OXY-2605"
+    # A second dose of the same medicine within 12 hours is asked about first
+    # (app/farmos/duplicates.py); confirmed, the route rule still applies.
     r = client.post(
         f"{API}/pharmacy/administrations", json={**oxy, "dose_quantity": 1, "route_code": "PO"}, headers=f.h
+    )
+    assert r.status_code == 409 and r.json()["detail"].startswith("Possible duplicate:"), r.text
+    r = client.post(
+        f"{API}/pharmacy/administrations",
+        json={**oxy, "dose_quantity": 1, "route_code": "PO", "confirm_duplicate": True},
+        headers=f.h,
     )
     assert r.status_code == 422 and "authorised for IM, IV" in r.json()["detail"]
     # The prescription names the product: a dose of another medicine under it is refused.
     r = client.post(
         f"{API}/pharmacy/administrations",
-        json={**oxy, "inventory_item_id": f.flunixin, "dose_quantity": 1},
+        json={**oxy, "inventory_item_id": f.flunixin, "dose_quantity": 1, "confirm_duplicate": True},
         headers=f.h,
     )
     assert r.status_code == 422 and "prescribes" in r.json()["detail"]
@@ -1189,7 +1197,9 @@ def test_triage_matches_or_escalates_with_an_explanation(client, control_db):
     assert any(
         "confidence threshold" in x and "BOVINE-FEVER-SUPPORT" in x for x in hooked[0]["escalation_reasons"]
     )
-    f.observe("animal", f.clover["id"], "fever", severity="severe", h=f.worker_h)
+    # The same observation again is a possible duplicate (409) unless the
+    # worker confirms it; confirmed, it still does not start a second triage.
+    f.observe("animal", f.clover["id"], "fever", severity="severe", h=f.worker_h, confirm_duplicate=True)
     assert (
         len(
             [

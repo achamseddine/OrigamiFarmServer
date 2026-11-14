@@ -103,6 +103,11 @@ class FeedLot(UUIDPrimaryKeyMixin, SyncedEntityMixin, TimestampMixin, TenantBase
     # active | quarantined | blocked | recalled | expired | depleted
     status: Mapped[str] = mapped_column(String(20), default="active")
     reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Quality at receipt (§26): the grade the farm gave the delivery, the
+    # moisture measured, and what was seen (mould, dust, foreign matter).
+    quality_grade: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    moisture_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_notes: Mapped[str | None] = mapped_column(nullable=True)
     notes: Mapped[str | None] = mapped_column(nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
 

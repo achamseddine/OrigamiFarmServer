@@ -46,16 +46,52 @@ MODULE_CODES: tuple[str, ...] = (
     "tasks",
 )
 
+# The module names the tablet shows, for the sentences a refusal is written
+# in ("needs Feed & Nutrition or Inventory approval"). The control-plane
+# module_catalog carries the same labels for display; this copy is what the
+# API can reach without a query.
+MODULE_LABELS: dict[str, str] = {
+    "agriculture": "Agriculture",
+    "ai_intelligence": "AI Intelligence",
+    "animal_health": "Animal Health",
+    "animals": "Animals",
+    "egg_production": "Egg Production",
+    "employees": "Employees",
+    "expenses": "Expenses",
+    "farm_visits": "Farm Visits",
+    "feed_nutrition": "Feed & Nutrition",
+    "finance": "Finance",
+    "inventory": "Inventory",
+    "milk_production": "Milk Production",
+    "morning_operations": "Morning Operations",
+    "mouneh_inventory": "Mouneh Inventory",
+    "mouneh_production": "Mouneh Production",
+    "produce_harvest": "Produce & Harvest",
+    "reports": "Reports",
+    "sales": "Sales",
+    "settings": "Settings",
+    "tasks": "Tasks",
+}
+
+# What a work responsibility grants on a module the employee does not hold
+# yet (reference backend DEFAULT_RESPONSIBILITY_GRANT): the day-to-day work
+# — record, correct a mistake — never delete, approve or reconfigure.
+DEFAULT_RESPONSIBILITY_GRANT: tuple[str, ...] = ("view", "create", "edit")
+
 
 def permissions_grid(db: Session, membership_id: uuid.UUID) -> dict[str, dict[str, bool]]:
     """One key per module the membership has at least one permission row
     for — a module with zero rows is simply absent, not present-and-false.
     """
-    rows = db.execute(
-        select(MembershipModulePermission).where(
-            MembershipModulePermission.membership_id == membership_id
+    rows = (
+        db.execute(
+            select(MembershipModulePermission).where(
+                MembershipModulePermission.membership_id == membership_id
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     grid: dict[str, dict[str, bool]] = {}
     for row in rows:
         grid.setdefault(row.module_code, dict.fromkeys(ACTIONS, False))

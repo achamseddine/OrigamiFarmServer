@@ -195,6 +195,9 @@ class HealthCaseIn(BaseModel):
     responsible_user_id: str | None = None
     notes: str | None = None
     opened_at: datetime | None = None
+    # An open case for the same subject and problem is refused (409
+    # "Possible duplicate:") unless the person confirms a second case.
+    confirm_duplicate: bool = False
 
 
 class HealthCasePatch(BaseModel):

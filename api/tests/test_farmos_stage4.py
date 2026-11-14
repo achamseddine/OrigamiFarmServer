@@ -290,9 +290,18 @@ def test_feed_cost_recommendation_fires_above_threshold_and_can_be_decided(clien
     )
     assert len([r for r in again.json() if r["rule_id"] == "RULE-FEED-COST-INSIGHT"]) == 1
 
-    decided = client.patch(
+    # A decision is recorded in the name of the person who makes it — a body
+    # field naming somebody else is refused.
+    me = client.get("/api/v1/auth/me", headers=farmos_headers(token)).json()["id"]
+    in_anothers_name = client.patch(
         f"/api/v1/recommendations/{feed_rec['id']}/decision",
         json={"decision": "accept", "decided_by": str(uuid.uuid4()), "note": "Switching suppliers"},
+        headers=farmos_headers(token),
+    )
+    assert in_anothers_name.status_code == 403, in_anothers_name.text
+    decided = client.patch(
+        f"/api/v1/recommendations/{feed_rec['id']}/decision",
+        json={"decision": "accept", "decided_by": me, "note": "Switching suppliers"},
         headers=farmos_headers(token),
     )
     assert decided.status_code == 200, decided.text

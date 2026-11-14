@@ -22,7 +22,13 @@ from sqlalchemy.orm import Session
 from app.farmos import feed_inventory_service as inv
 from app.farmos import feed_models as fm
 from app.farmos import feeding_program_service as programs
-from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
+from app.farmos.deps import (
+    AccessContext,
+    check_farm_id,
+    ensure_stock_override,
+    get_farmos_tenant_db,
+    require_any_permission,
+)
 from app.farmos.schemas import (
     FeedTransactionCreate,
     InventoryItemCreate,
@@ -32,6 +38,11 @@ from app.farmos.schemas import (
 from app.tenant_api.models import InventoryItem, InventoryMovement
 
 router = APIRouter()
+
+# The Feed & Inventory screen, and the record sheet's feed action, are
+# offered to whoever holds either module.
+_STOCK_VIEW = require_any_permission(("feed_nutrition", "view"), ("inventory", "view"))
+_STOCK_CREATE = require_any_permission(("feed_nutrition", "create"), ("inventory", "create"))
 
 
 def _to_movement_out(m: InventoryMovement, product_ids: dict[uuid.UUID, uuid.UUID]) -> InventoryMovementOut:
@@ -70,7 +81,7 @@ def _to_item_out(item: InventoryItem, tenant_id: uuid.UUID) -> InventoryItemOut:
 @router.get("/feed/items", response_model=list[InventoryItemOut])
 def list_inventory_items(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(require_permission("feed_nutrition", "view")),
+    access: AccessContext = Depends(_STOCK_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[InventoryItemOut]:
     check_farm_id(farm_id, access)
@@ -87,7 +98,7 @@ def list_inventory_items(
 @router.post("/feed/items", response_model=InventoryItemOut, status_code=201)
 def create_inventory_item(
     payload: InventoryItemCreate,
-    access: AccessContext = Depends(require_permission("feed_nutrition", "create")),
+    access: AccessContext = Depends(_STOCK_CREATE),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> InventoryItemOut:
     """Register a new feed/inventory item — a farm's catalog has to start
@@ -150,7 +161,7 @@ def list_feed_transactions(
     farm_id: str = Query(...),
     item_id: str | None = Query(default=None),
     days: int = Query(default=90),
-    access: AccessContext = Depends(require_permission("feed_nutrition", "view")),
+    access: AccessContext = Depends(_STOCK_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[InventoryMovementOut]:
     """The movement history behind the feed screen's "recent movements":
@@ -176,9 +187,13 @@ def list_feed_transactions(
 @router.post("/feed/transactions", response_model=InventoryItemOut, status_code=201)
 def create_feed_transaction(
     payload: FeedTransactionCreate,
-    access: AccessContext = Depends(require_permission("feed_nutrition", "create")),
+    access: AccessContext = Depends(_STOCK_CREATE),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> InventoryItemOut:
+    """Validation rule (tech spec §14): "Inventory should not go negative
+    without explicit override." The override itself is an approved
+    exception: Feed or Inventory *approve*, never a tick any recorder can
+    give (`ensure_stock_override`)."""
     try:
         item_id = uuid.UUID(payload.item_id)
     except ValueError as exc:
@@ -186,6 +201,7 @@ def create_feed_transaction(
     item = db.get(InventoryItem, item_id)
     if item is None or item.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Inventory item not found.")
+    ensure_stock_override(access, payload.allow_negative, "feed_nutrition")
 
     if inv.is_feed_item(item):
         product = inv.ensure_product_for_item(db, item, actor=access.membership_id)

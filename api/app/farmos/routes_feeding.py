@@ -17,13 +17,14 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType, MembershipStatus
 from app.farmos import asset_service as assets
+from app.farmos import duplicates, livestock_service
 from app.farmos import feed_batch_service as batches
 from app.farmos import feed_catalog as catalog
 from app.farmos import feed_forecast_service as forecast
@@ -32,8 +33,12 @@ from app.farmos import feed_models as fm
 from app.farmos import feed_performance_service as perf
 from app.farmos import feed_policy_service as policy
 from app.farmos import feeding_program_service as programs
-from app.farmos import livestock_service
-from app.farmos.deps import AccessContext, get_farmos_tenant_db, require_permission
+from app.farmos.deps import (
+    AccessContext,
+    ensure_stock_override,
+    get_farmos_tenant_db,
+    require_permission,
+)
 from app.farmos.feed_catalog import FeedError
 from app.farmos.feed_schemas import (
     AdjustmentCreate,
@@ -74,12 +79,14 @@ from app.farmos.feed_schemas import (
     ProgramResolveRequest,
     ProgramVersionCreate,
     ProgramVersionOut,
+    QuickMixIn,
     ReconciliationClose,
     ReconciliationCreate,
     ReconciliationOut,
     ReorderAcknowledge,
     ReorderPolicyOut,
     ReorderPolicyUpsert,
+    StandardFeedSlotOut,
 )
 from app.farmos.livestock_service import now_utc
 from app.tenant_api.models import InventoryItem
@@ -92,6 +99,19 @@ _create = require_permission("feed_nutrition", "create")
 _edit = require_permission("feed_nutrition", "edit")
 _approve = require_permission("feed_nutrition", "approve")
 _configure = require_permission("feed_nutrition", "configure")
+
+
+def _can_approve(access: AccessContext) -> bool:
+    """Feed approval: activating a formula or program version, releasing a
+    held lot, overriding stock (handbook/03-Behavioral-Model.md §5)."""
+    return access.has("feed_nutrition", "approve")
+
+
+def _require_override(access: AccessContext, allow_negative: bool) -> None:
+    """Issuing more than the stock on record is an approved exception
+    (INVENTORY-SCHEMA: "unless explicit approved override policy exists"):
+    Feed or Inventory approval, never a tick any recorder can give."""
+    ensure_stock_override(access, allow_negative, "feed_nutrition")
 
 
 # ------------------------------------------------------------------ helpers
@@ -173,6 +193,9 @@ def _lot_out(lot: fm.FeedLot) -> dict:
         "unit_cost": lot.unit_cost,
         "status": lot.status,
         "reference": lot.reference,
+        "quality_grade": lot.quality_grade,
+        "moisture_pct": lot.moisture_pct,
+        "quality_notes": lot.quality_notes,
         "notes": lot.notes,
     }
 
@@ -549,6 +572,59 @@ def list_feed_products(
     return [_product_out(db, p) for p in rows]
 
 
+def _slots_out(slots: dict[str, fm.FeedProduct | None]) -> list[dict]:
+    out = []
+    for slot, code, name_en, name_ar, _category, unit, _kw in catalog.STANDARD_FEEDS:
+        product = slots.get(slot)
+        out.append(
+            {
+                "slot": slot,
+                "code": code,
+                "label_en": name_en,
+                "label_ar": name_ar,
+                "unit": product.unit if product else unit,
+                "feed_product_id": str(product.id) if product else None,
+                "feed_product_name": product.name if product else None,
+            }
+        )
+    return out
+
+
+@router.get("/feed-products/standard-slots", response_model=list[StandardFeedSlotOut])
+def standard_feed_slots(
+    _access: AccessContext = Depends(_view), db: Session = Depends(get_farmos_tenant_db)
+) -> list[dict]:
+    """The default rows of the animal feeding form — concentrate, corn
+    silage, wheat straw — and which of the farm's feeds fills each."""
+    return _slots_out(inv.standard_feed_slots(db))
+
+
+@router.post("/feed-products/standard", response_model=list[StandardFeedSlotOut])
+def ensure_standard_feeds(
+    access: AccessContext = Depends(_create),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> list[dict]:
+    """Creates whichever standard feed the farm lacks (idempotent): an
+    ordinary feed product with an empty ledger, never invented stock."""
+    before = {str(p.id) for p in inv.standard_feed_slots(db).values() if p is not None}
+    slots = inv.ensure_standard_feeds(
+        db, access.tenant_id, actor=access.membership_id, actor_user=access.user_id
+    )
+    db.flush()
+    for product in slots.values():
+        if product is not None and str(product.id) not in before:
+            _audit(
+                control_db,
+                access,
+                action="feed_product.created",
+                entity_type="feed_product",
+                entity_id=str(product.id),
+                summary=f"Created standard feed {product.name} ({product.code})",
+            )
+    return _slots_out(slots)
+
+
 @router.post("/feed-products", response_model=FeedProductOut, status_code=201)
 def create_feed_product(
     payload: FeedProductCreate,
@@ -556,6 +632,16 @@ def create_feed_product(
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
+    # One feed, one name: a second "Corn grain" would split its stock.
+    clash = db.scalar(
+        select(fm.FeedProduct).where(
+            fm.FeedProduct.status == "active",
+            fm.FeedProduct.deleted_at.is_(None),
+            func.lower(fm.FeedProduct.name) == payload.name.strip().lower(),
+        )
+    )
+    if clash is not None:
+        raise FeedError(f"A feed named {clash.name} already exists; record the delivery against it.", 409)
     product = inv.create_product(
         db, access.tenant_id, **payload.model_dump(), actor=access.membership_id, actor_user=access.user_id
     )
@@ -719,12 +805,40 @@ def receive_lot(
     control_db: Session = Depends(get_control_db),
 ) -> dict:
     product = inv.get_product(db, payload.feed_product_id)
+    if payload.lot_code and db.scalar(
+        select(fm.FeedLot.id).where(
+            fm.FeedLot.lot_code == payload.lot_code.strip(), fm.FeedLot.deleted_at.is_(None)
+        )
+    ):
+        raise FeedError(
+            f"Lot {payload.lot_code.strip()} is already recorded; a delivery is received once.", 409
+        )
+    match = duplicates.guard(
+        _duplicate_receipt(db, product, payload),
+        _receipt_message(product, payload),
+        confirm=payload.confirm_duplicate,
+    )
     lot = inv.receive(
         db,
         product,
-        **payload.model_dump(exclude={"feed_product_id"}),
+        **payload.model_dump(exclude={"feed_product_id", "confirm_duplicate"}),
         actor=access.membership_id,
         actor_user=access.user_id,
+    )
+    held = False
+    if payload.quality_grade == "poor" and lot.status == "active":
+        # Possession is not permission to use (FEED-SCHEMA §2): a poor
+        # delivery waits for someone with Feed approval to release it.
+        inv.set_lot_status(db, lot, "quarantined", actor=access.membership_id)
+        held = True
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="feed_product",
+        entity_id=str(product.id),
+        match_id=match.id if match else None,
+        what=f"lot:{lot.id}",
+        module_code="feed_nutrition",
     )
     # §12 supplier receipt: supplier rows and the cost picture refresh;
     # the reorder signals on the bell follow the new stock.
@@ -736,9 +850,57 @@ def receive_lot(
         action="feed_lot.received",
         entity_type="feed_lot",
         entity_id=str(lot.id),
-        summary=f"Received {lot.accepted_quantity:g} {lot.unit} of {product.name} as lot {lot.lot_code}",
+        summary=f"Received {lot.accepted_quantity:g} {lot.unit} of {product.name} as lot {lot.lot_code}"
+        + (" — graded poor at receipt, held in quarantine until inspected" if held else ""),
     )
     return _lot_out(lot)
+
+
+def _duplicate_receipt(db: Session, product: fm.FeedProduct, payload: LotReceive) -> fm.FeedLot | None:
+    """The same delivery note from the same supplier for this feed, or the
+    same quantity from the same supplier within half an hour."""
+    supplier = (payload.supplier_label or "").strip() or None
+    same_supplier = (
+        fm.FeedLot.supplier_label.is_(None) if supplier is None else fm.FeedLot.supplier_label == supplier
+    )
+    if payload.reference and payload.reference.strip():
+        same_note = db.scalar(
+            select(fm.FeedLot).where(
+                fm.FeedLot.feed_product_id == product.id,
+                fm.FeedLot.reference == payload.reference.strip(),
+                fm.FeedLot.deleted_at.is_(None),
+                same_supplier,
+            )
+        )
+        if same_note is not None:
+            return same_note
+    lo, hi = duplicates.near(payload.received_at)
+    qty = catalog.convert(payload.quantity, payload.unit or product.unit, product.unit)
+    return db.scalar(
+        select(fm.FeedLot).where(
+            fm.FeedLot.feed_product_id == product.id,
+            fm.FeedLot.received_quantity == qty,
+            fm.FeedLot.source_type == "purchased",
+            fm.FeedLot.deleted_at.is_(None),
+            same_supplier,
+            fm.FeedLot.received_at >= lo,
+            fm.FeedLot.received_at <= hi,
+        )
+    )
+
+
+def _receipt_message(product: fm.FeedProduct, payload: LotReceive) -> str:
+    who = (
+        f" from {payload.supplier_label.strip()}"
+        if payload.supplier_label and payload.supplier_label.strip()
+        else ""
+    )
+    if payload.reference and payload.reference.strip():
+        return f"Delivery note {payload.reference.strip()}{who} is already recorded for {product.name}."
+    return (
+        f"{payload.quantity:g} {payload.unit or product.unit} of {product.name}{who} "
+        "was already received within half an hour."
+    )
 
 
 @router.patch("/feed-lots/{lot_id}/status", response_model=FeedLotOut)
@@ -839,8 +1001,10 @@ def create_formula(
         batch_size=payload.batch_size,
         unit=payload.unit,
         components=[c.model_dump() for c in payload.components],
+        # Draft → review/approval → activate (behavioural model §5): without
+        # Feed approval the formula is saved as a draft for a manager.
         notes=payload.notes,
-        activate=payload.activate,
+        activate=payload.activate and _can_approve(access),
     )
     _audit(
         control_db,
@@ -893,7 +1057,7 @@ def add_formula_version(
         unit=payload.unit,
         components=[c.model_dump() for c in payload.components],
         notes=payload.notes,
-        activate=payload.activate,
+        activate=payload.activate and _can_approve(access),
     )
     _audit(
         control_db,
@@ -1035,6 +1199,54 @@ def start_batch(
     return _batch_out(db, control_db, batch)
 
 
+@router.post("/feed-mixes", response_model=BatchOut, status_code=201)
+def record_mix(
+    payload: QuickMixIn,
+    access: AccessContext = Depends(_create),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """A mix recorded in one step (date, ingredients as weighed, output):
+    a numbered mix from the output feed's formula — created from this mix
+    when the feed has none — with its ingredient lots drawn and its output
+    lot received."""
+    _require_override(access, payload.allow_negative)
+    batch, match = batches.quick_mix(
+        db,
+        access,
+        feed_product_id=payload.feed_product_id,
+        new_product_name=payload.new_product_name,
+        components=[c.model_dump() for c in payload.components],
+        output_quantity=payload.output_quantity,
+        unit=payload.unit,
+        produced_at=payload.produced_at,
+        intended_species_code=payload.intended_species_code,
+        notes=payload.notes,
+        allow_negative=payload.allow_negative,
+        can_approve=_can_approve(access),
+        confirm_duplicate=payload.confirm_duplicate,
+    )
+    perf.on_batch_completed(db, access, batch)
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="feed_batch",
+        entity_id=str(batch.id),
+        match_id=match.id if match else None,
+        what=f"mix:{batch.mix_code}",
+        module_code="feed_nutrition",
+    )
+    _audit(
+        control_db,
+        access,
+        action="feed_batch.completed",
+        entity_type="feed_batch",
+        entity_id=str(batch.id),
+        summary=f"Recorded mix {batch.mix_code}: {batch.actual_quantity:g} {batch.unit}",
+    )
+    return _batch_out(db, control_db, batch)
+
+
 @router.get("/feed-mix-settings", response_model=MixSettingsOut)
 def get_mix_settings(
     access: AccessContext = Depends(_view), db: Session = Depends(get_farmos_tenant_db)
@@ -1123,6 +1335,7 @@ def complete_batch(
 ) -> dict:
     batch = _batch_or_404(db, batch_id)
     _check_operator(control_db, access, payload.operator_id)
+    _require_override(access, payload.allow_negative)
     batches.complete_batch(
         db,
         access,
@@ -1250,7 +1463,7 @@ def create_program(
         components=[c.model_dump() for c in payload.components],
         rules=[r.model_dump() for r in payload.rules],
         notes=payload.notes,
-        activate=payload.activate,
+        activate=payload.activate and _can_approve(access),
     )
     _audit(
         control_db,
@@ -1340,7 +1553,7 @@ def add_program_version(
         components=[c.model_dump() for c in payload.components],
         rules=[r.model_dump() for r in payload.rules],
         notes=payload.notes,
-        activate=payload.activate,
+        activate=payload.activate and _can_approve(access),
     )
     _audit(
         control_db,
@@ -1492,17 +1705,42 @@ def record_feeding_event(
     control_db: Session = Depends(get_control_db),
 ) -> dict:
     subject = programs.load_subject(db, payload.subject_type, payload.subject_id)
+    _require_override(access, payload.allow_negative)
+    components = [c.model_dump() for c in payload.components]
+    earlier = programs.find_duplicate_feeding(
+        db,
+        payload.subject_type,
+        subject.id,
+        event_type=payload.event_type,
+        components=components,
+        at=payload.occurred_at,
+    )
+    match = duplicates.guard(
+        earlier,
+        f"The same feeding of {getattr(subject, 'name', 'this subject')} was already recorded "
+        "within half an hour.",
+        confirm=payload.confirm_duplicate,
+    )
     event = programs.record_feeding(
         db,
         access,
         subject_type=payload.subject_type,
         subject=subject,
-        components=[c.model_dump() for c in payload.components],
+        components=components,
         event_type=payload.event_type,
         occurred_at=payload.occurred_at,
         head_count=payload.head_count,
         notes=payload.notes,
         allow_negative=payload.allow_negative,
+    )
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type=payload.subject_type,
+        entity_id=str(subject.id),
+        match_id=match.id if match else None,
+        what=f"feeding:{event.id}",
+        module_code="feed_nutrition",
     )
     perf.on_feeding_recorded(db, access, payload.subject_type, subject)
     _audit(

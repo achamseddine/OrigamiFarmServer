@@ -432,6 +432,9 @@ class MounehSaleCreate(BaseModel):
     discount: float = 0
     customer_id: str | None = None
     channel: str = "retail"
+    # The same sale entered twice in a few minutes is refused (409 "Possible
+    # duplicate:") unless the person confirms it is a second sale.
+    confirm_duplicate: bool = False
 
 
 # --- Livestock: species configuration, capability resolver, identifiers,
@@ -963,6 +966,9 @@ class TaskCreate(BaseModel):
     priority: str = "medium"
     source_type: str | None = None
     source_id: str | None = None
+    # An open task with the same title is refused as a possible duplicate
+    # (409 "Possible duplicate:") unless the person confirms a second one.
+    confirm_duplicate: bool = False
 
 
 class TaskUpdate(BaseModel):
@@ -1107,6 +1113,9 @@ class TreatmentCreate(BaseModel):
     medicine_product_id: str | None = None
     health_case_id: str | None = None
     treatment_plan_id: str | None = None
+    # The same medication prescribed for the same subject within 12 hours
+    # is refused as a possible duplicate unless confirmed.
+    confirm_duplicate: bool = False
 
 
 class ObservationOut(BaseModel):
@@ -1139,6 +1148,9 @@ class ObservationCreate(BaseModel):
     observed_at: datetime | None = None
     observer_id: str
     notes: str | None = None
+    # The same observation of the same subject within half an hour is
+    # refused as a possible duplicate unless confirmed.
+    confirm_duplicate: bool = False
 
 
 # --- Feed & inventory ------------------------------------------------------
@@ -1219,6 +1231,7 @@ class EggRecordCreate(BaseModel):
     hatched: int = 0
     wasted: int = 0
     recorded_at: datetime | None = None
+    confirm_duplicate: bool = False
 
 
 class FieldOut(BaseModel):
@@ -1285,6 +1298,7 @@ class HarvestRecordCreate(BaseModel):
     waste_qty: float = 0
     destination: str | None = None
     recorded_at: datetime | None = None
+    confirm_duplicate: bool = False
 
 
 class MilkRecordOut(BaseModel):
@@ -1483,6 +1497,9 @@ class DailyHarvestCreate(BaseModel):
     waste_quantity: float = 0
     unit: str = "kg"
     destination: str | None = None
+    # The same pick entered twice within half an hour is refused as a
+    # possible duplicate unless confirmed (app/farmos/duplicates.py).
+    confirm_duplicate: bool = False
     recorded_at: datetime | None = None
 
 

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
+from app.farmos import duplicates
 from app.farmos import pharmacy_catalog as pc
 from app.farmos import pharmacy_service as ph
 from app.farmos import procurement_service as procurement
@@ -656,8 +657,40 @@ def record_administration(
 ) -> dict:
     """The dose actually given, bound to the exact lot (§11): validates
     the treatment context and the lot, posts the consumption, applies the
-    product's authorised withdrawal and re-evaluates the thresholds."""
-    adm = ph.administer(db, access, **payload.model_dump())
+    product's authorised withdrawal and re-evaluates the thresholds. The
+    same medicine to the same subject within 12 hours is checked as a
+    possible double dose first (app/farmos/duplicates.py)."""
+    lo, hi = duplicates.near(payload.administered_at, duplicates.DOSE_WINDOW)
+    subject_pk, item_pk = ph.parse_uuid(payload.subject_id), ph.parse_uuid(payload.inventory_item_id)
+    earlier = (
+        db.scalar(
+            select(MedicationAdministration).where(
+                MedicationAdministration.subject_id == subject_pk,
+                MedicationAdministration.inventory_item_id == item_pk,
+                MedicationAdministration.status != "reversed",
+                MedicationAdministration.deleted_at.is_(None),
+                MedicationAdministration.administered_at >= lo,
+                MedicationAdministration.administered_at <= hi,
+            )
+        )
+        if subject_pk and item_pk
+        else None
+    )
+    match = duplicates.guard(
+        earlier,
+        "This medicine was already given to this subject within 12 hours — check it is not a double dose.",
+        confirm=payload.confirm_duplicate,
+    )
+    adm = ph.administer(db, access, **payload.model_dump(exclude={"confirm_duplicate"}))
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type=payload.subject_type,
+        entity_id=payload.subject_id,
+        match_id=match.id if match else None,
+        what=f"administration:{adm.id}",
+        module_code="animal_health",
+    )
     out = ph.administration_dict(db, adm, NameCache())
     _audit(
         control_db,

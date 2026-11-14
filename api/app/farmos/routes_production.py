@@ -18,7 +18,13 @@ from app.common.enums import ActorType
 from app.farmos import capability_service, duplicates, livestock_service, livestock_state_service
 from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
-from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
+from app.farmos.deps import (
+    AccessContext,
+    check_farm_id,
+    get_farmos_tenant_db,
+    require_any_permission,
+    require_permission,
+)
 from app.farmos.livestock_catalog import Cap
 from app.farmos.livestock_models import AnimalGroup
 from app.farmos.production_models import EggRecord, HarvestRecord, MilkRecord
@@ -35,6 +41,15 @@ from app.farmos.schemas import (
 from app.tenant_api.models import Field
 
 router = APIRouter()
+
+# Reads: the record's own module, plus Produce & Harvest — the tablet's
+# ProductionProvider loads fields, eggs and harvest in one batch for
+# whoever holds it, and the egg screen reads from that provider.
+_FIELDS_VIEW = require_any_permission(("agriculture", "view"), ("produce_harvest", "view"))
+_EGGS_VIEW = require_any_permission(("egg_production", "view"), ("produce_harvest", "view"))
+_HARVEST_VIEW = require_any_permission(("produce_harvest", "view"), ("agriculture", "view"))
+# Writes: the same modules the tablet's record sheet offers each action to.
+_HARVEST_CREATE = require_any_permission(("produce_harvest", "create"), ("agriculture", "create"))
 
 
 # --- Eggs --------------------------------------------------------------
@@ -58,7 +73,7 @@ def _to_egg_out(e: EggRecord) -> EggRecordOut:
 def list_egg_records(
     farm_id: str = Query(...),
     days: int = Query(default=30),
-    access: AccessContext = Depends(require_permission("egg_production", "view")),
+    access: AccessContext = Depends(_EGGS_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[EggRecordOut]:
     check_farm_id(farm_id, access)
@@ -80,6 +95,7 @@ def record_eggs(
     payload: EggRecordCreate,
     access: AccessContext = Depends(require_permission("egg_production", "create")),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> EggRecordOut:
     accounted = (
         payload.sellable_eggs + payload.broken_eggs + payload.consumed + payload.hatched + payload.wasted
@@ -107,6 +123,24 @@ def record_eggs(
         livestock_service.check_production_capability(
             cap_set, Cap.EGG_PRODUCTION, group.name, configured=True
         )
+    # The same count from the same flock within half an hour is asked about first.
+    at = payload.recorded_at or datetime.now(timezone.utc)
+    lo, hi = duplicates.near(at)
+    earlier = db.scalar(
+        select(EggRecord).where(
+            EggRecord.deleted_at.is_(None),
+            EggRecord.flock_id == payload.flock_id,
+            EggRecord.total_eggs == payload.total_eggs,
+            EggRecord.recorded_at >= lo,
+            EggRecord.recorded_at <= hi,
+        )
+    )
+    flock_name = group.name if group is not None and group.deleted_at is None else payload.flock_id
+    match = duplicates.guard(
+        earlier,
+        f"{payload.total_eggs} eggs from {flock_name} were already recorded within half an hour.",
+        confirm=payload.confirm_duplicate,
+    )
     record = EggRecord(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
@@ -117,10 +151,19 @@ def record_eggs(
         consumed=payload.consumed,
         hatched=payload.hatched,
         wasted=payload.wasted,
-        recorded_at=payload.recorded_at or datetime.now(timezone.utc),
+        recorded_at=at,
     )
     db.add(record)
     db.flush()
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="flock",
+        entity_id=payload.flock_id,
+        match_id=match.id if match else None,
+        what=f"eggs:{record.id}",
+        module_code="egg_production",
+    )
     # §12 ProductionRecorded: the flock's feed-performance monitors read again.
     if group is not None and group.deleted_at is None:
         perf.on_production_recorded(db, access, "group", group)
@@ -133,7 +176,7 @@ def record_eggs(
 @router.get("/production/fields", response_model=list[FieldOut])
 def list_production_fields(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(require_permission("agriculture", "view")),
+    access: AccessContext = Depends(_FIELDS_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[FieldOut]:
     check_farm_id(farm_id, access)
@@ -161,7 +204,7 @@ def _to_harvest_out(h: HarvestRecord) -> HarvestRecordOut:
 def list_harvest_records(
     farm_id: str = Query(...),
     days: int = Query(default=90),
-    access: AccessContext = Depends(require_permission("produce_harvest", "view")),
+    access: AccessContext = Depends(_HARVEST_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[HarvestRecordOut]:
     check_farm_id(farm_id, access)
@@ -181,22 +224,56 @@ def list_harvest_records(
 @router.post("/production/harvest", response_model=HarvestRecordOut, status_code=201)
 def record_harvest(
     payload: HarvestRecordCreate,
-    access: AccessContext = Depends(require_permission("produce_harvest", "create")),
+    access: AccessContext = Depends(_HARVEST_CREATE),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> HarvestRecordOut:
+    try:
+        field = db.get(Field, uuid.UUID(payload.field_id))
+    except ValueError:
+        field = None
+    if field is None or field.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Field not found.")
+    at = payload.recorded_at or datetime.now(timezone.utc)
+    lo, hi = duplicates.near(at)
+    earlier = db.scalar(
+        select(HarvestRecord).where(
+            HarvestRecord.deleted_at.is_(None),
+            HarvestRecord.field_id == field.id,
+            HarvestRecord.product_name == payload.product_name,
+            HarvestRecord.quantity == payload.quantity,
+            HarvestRecord.recorded_at >= lo,
+            HarvestRecord.recorded_at <= hi,
+        )
+    )
+    match = duplicates.guard(
+        earlier,
+        f"{payload.quantity:g} {payload.unit} of {payload.product_name} from {field.name} "
+        "was already recorded within half an hour.",
+        confirm=payload.confirm_duplicate,
+    )
     record = HarvestRecord(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
-        field_id=uuid.UUID(payload.field_id),
+        field_id=field.id,
         product_name=payload.product_name,
         quantity=payload.quantity,
         unit=payload.unit,
         waste_qty=payload.waste_qty,
         destination=payload.destination,
-        recorded_at=payload.recorded_at or datetime.now(timezone.utc),
+        recorded_at=at,
     )
     db.add(record)
     db.flush()
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="field",
+        entity_id=str(field.id),
+        match_id=match.id if match else None,
+        what=f"harvest:{record.id}",
+        module_code="produce_harvest",
+    )
     return _to_harvest_out(record)
 
 

@@ -11,17 +11,19 @@ to; an administration under it must then be of that product
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
+from app.farmos import duplicates
 from app.farmos import health_case_service as cases
 from app.farmos.deps import (
     AccessContext,
     check_farm_id,
     get_farmos_tenant_db,
+    require_any_permission,
     require_diagnostic_role,
     require_permission,
 )
@@ -29,6 +31,10 @@ from app.farmos.production_models import Treatment
 from app.farmos.schemas import TreatmentCreate, TreatmentOut
 
 router = APIRouter()
+
+# The tablet's AnimalsProvider loads animals and treatments together for
+# whoever holds Animals; the treatment history is part of the animal's twin.
+_TREATMENTS_VIEW = require_any_permission(("animal_health", "view"), ("animals", "view"))
 
 
 def _to_treatment_out(t: Treatment) -> TreatmentOut:
@@ -57,7 +63,7 @@ def _to_treatment_out(t: Treatment) -> TreatmentOut:
 @router.get("/health/treatments", response_model=list[TreatmentOut])
 def list_treatments(
     farm_id: str = Query(...),
-    access: AccessContext = Depends(require_permission("animal_health", "view")),
+    access: AccessContext = Depends(_TREATMENTS_VIEW),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> list[TreatmentOut]:
     check_farm_id(farm_id, access)
@@ -79,7 +85,34 @@ def record_treatment(
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> TreatmentOut:
-    treatment = cases.record_treatment(db, access, **payload.model_dump())
+    # The same medication for the same subject within 12 hours is the same
+    # prescription typed twice — unless the person says it is a second one.
+    lo, hi = duplicates.near(payload.start_at, duplicates.DOSE_WINDOW)
+    earlier = db.scalar(
+        select(Treatment).where(
+            Treatment.deleted_at.is_(None),
+            Treatment.entity_type == payload.entity_type,
+            Treatment.entity_id == payload.entity_id,
+            func.lower(Treatment.medication) == payload.medication.strip().lower(),
+            Treatment.start_at >= lo,
+            Treatment.start_at <= hi,
+        )
+    )
+    match = duplicates.guard(
+        earlier,
+        f"{payload.medication} was already prescribed for this animal within 12 hours.",
+        confirm=payload.confirm_duplicate,
+    )
+    treatment = cases.record_treatment(db, access, **payload.model_dump(exclude={"confirm_duplicate"}))
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id,
+        match_id=match.id if match else None,
+        what=f"treatment:{treatment.id}",
+        module_code="animal_health",
+    )
 
     record_audit_event(
         control_db,

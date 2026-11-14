@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
+from app.farmos import duplicates
 from app.farmos import health_case_service as cases
 from app.farmos.deps import AccessContext, get_farmos_tenant_db, require_diagnostic_role, require_permission
 from app.farmos.emergency_schemas import (
@@ -93,7 +94,42 @@ def open_case(
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
-    c = cases.open_case(db, access, source_type="manual", **payload.model_dump())
+    # One open case per problem: a second worker reporting the same lame cow
+    # adds to the case already open rather than starting another.
+    subject = HealthCase.animal_id if payload.subject_type == "animal" else HealthCase.animal_group_id
+    problem = HealthCase.primary_problem_code
+    subject_pk = parse_uuid(payload.subject_id)
+    open_twin = (
+        db.scalars(
+            select(HealthCase).where(
+                HealthCase.deleted_at.is_(None),
+                subject == subject_pk,
+                HealthCase.closed_at.is_(None),
+                HealthCase.status.notin_(("closed", "resolved", "cancelled")),
+                problem.is_(None)
+                if payload.primary_problem_code is None
+                else problem == payload.primary_problem_code,
+            )
+        ).first()
+        if subject_pk
+        else None
+    )
+    duplicates.guard(
+        open_twin,
+        f"case {open_twin.case_code if open_twin else ''} is already open for this"
+        f"{' problem' if payload.primary_problem_code else ''}. Add to that case instead.",
+        confirm=payload.confirm_duplicate,
+    )
+    c = cases.open_case(db, access, source_type="manual", **payload.model_dump(exclude={"confirm_duplicate"}))
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="health_case",
+        entity_id=str(c.id),
+        match_id=open_twin.id if open_twin else None,
+        what="health case",
+        module_code="animal_health",
+    )
     out = cases.case_dict(db, c, NameCache())
     _audit(
         control_db,

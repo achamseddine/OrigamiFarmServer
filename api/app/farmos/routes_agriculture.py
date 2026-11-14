@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.farmos.deps import AccessContext, get_farmos_tenant_db, require_permission
+from app.common.db import get_control_db
+from app.farmos import duplicates
+from app.farmos.deps import AccessContext, get_farmos_tenant_db, require_any_permission, require_permission
 from app.farmos.production_models import Crop, CropPlanting, DailyHarvest
 from app.farmos.schemas import (
     CropCreate,
@@ -68,6 +70,14 @@ def create_field(
     access: AccessContext = Depends(require_permission("agriculture", "create")),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> FieldOut:
+    # A field name is the field: a second "North terrace" can never be right.
+    clash = db.scalar(
+        select(Field).where(
+            Field.deleted_at.is_(None), func.lower(Field.name) == payload.name.strip().lower()
+        )
+    )
+    if clash is not None:
+        raise HTTPException(status_code=409, detail=f"A field named {clash.name} already exists.")
     field = Field(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
@@ -254,9 +264,15 @@ def _resolve_product_name(db: Session, payload: DailyHarvestCreate) -> str:
 @router.post("/harvest", response_model=DailyHarvestOut, status_code=201)
 def record_daily_harvest(
     payload: DailyHarvestCreate,
-    access: AccessContext = Depends(require_permission("produce_harvest", "create")),
+    access: AccessContext = Depends(
+        require_any_permission(("produce_harvest", "create"), ("agriculture", "create"))
+    ),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> DailyHarvestOut:
+    field = db.get(Field, _parse_uuid(payload.field_id, what="field id"))
+    if field is None or field.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Field not found.")
     product_name = _resolve_product_name(db, payload)
     sellable_quantity = (
         payload.sellable_quantity
@@ -264,11 +280,29 @@ def record_daily_harvest(
         else payload.total_quantity - payload.waste_quantity
     )
     recorded_at = payload.recorded_at or datetime.now(timezone.utc)
+    # The same pick entered twice within half an hour is asked about first.
+    lo, hi = duplicates.near(recorded_at)
+    earlier = db.scalar(
+        select(DailyHarvest).where(
+            DailyHarvest.deleted_at.is_(None),
+            DailyHarvest.field_id == field.id,
+            DailyHarvest.product_name == product_name,
+            DailyHarvest.total_quantity == payload.total_quantity,
+            DailyHarvest.recorded_at >= lo,
+            DailyHarvest.recorded_at <= hi,
+        )
+    )
+    match = duplicates.guard(
+        earlier,
+        f"{payload.total_quantity:g} {payload.unit} of {product_name} from {field.name} "
+        "was already recorded within half an hour.",
+        confirm=payload.confirm_duplicate,
+    )
 
     harvest = DailyHarvest(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
-        field_id=_parse_uuid(payload.field_id, what="field id"),
+        field_id=field.id,
         product_name=product_name,
         total_quantity=payload.total_quantity,
         sellable_quantity=sellable_quantity,
@@ -316,6 +350,15 @@ def record_daily_harvest(
 
     harvest.inventory_item_id = item.id
     db.flush()
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="field",
+        entity_id=str(field.id),
+        match_id=match.id if match else None,
+        what=f"harvest:{harvest.id}",
+        module_code="produce_harvest",
+    )
 
     return DailyHarvestOut(
         id=str(harvest.id),
