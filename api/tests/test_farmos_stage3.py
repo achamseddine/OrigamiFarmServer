@@ -340,7 +340,7 @@ def test_egg_record_validates_accounting_rule(client, control_db):
     assert ok.json()["total_eggs"] == 420
 
 
-def test_milk_record_hard_blocks_sale_under_withdrawal_but_allows_storage(client, control_db):
+def test_milk_record_under_withdrawal_is_withheld_or_refused(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-MILK", "milkowner@origami-demo.com")
     animal_id = _create_animal(client, token, tenant)
 
@@ -358,21 +358,26 @@ def test_milk_record_hard_blocks_sale_under_withdrawal_but_allows_storage(client
         headers=farmos_headers(token),
     )
 
-    blocked = client.post(
-        "/api/v1/production/milk",
-        json={"animal_id": animal_id, "session": "morning", "liters": 12.5, "destination": "sale"},
-        headers=farmos_headers(token),
-    )
-    assert blocked.status_code == 422
-    assert "withdrawal" in blocked.json()["detail"].lower()
+    # RULE-WITHDRAWAL: while under withdrawal the milk must not enter stored,
+    # sold, processed or consumed stock — only `withheld` is accepted.
+    for destination in ("sale", "stored"):
+        blocked = client.post(
+            "/api/v1/production/milk",
+            json={"animal_id": animal_id, "session": "morning", "liters": 12.5, "destination": destination},
+            headers=farmos_headers(token),
+        )
+        assert blocked.status_code == 422, blocked.text
+        assert "withdrawal" in blocked.json()["detail"].lower()
+        assert "withheld" in blocked.json()["detail"]
 
-    stored = client.post(
+    withheld = client.post(
         "/api/v1/production/milk",
-        json={"animal_id": animal_id, "session": "morning", "liters": 12.5, "destination": "stored"},
+        json={"animal_id": animal_id, "session": "morning", "liters": 12.5, "destination": "withheld"},
         headers=farmos_headers(token),
     )
-    assert stored.status_code == 201, stored.text
-    assert stored.json()["under_withdrawal_warning"] is True
+    assert withheld.status_code == 201, withheld.text
+    assert withheld.json()["under_withdrawal_warning"] is True
+    assert withheld.json()["destination"] == "withheld"
 
 
 def test_production_harvest_simple_ledger(client, control_db):

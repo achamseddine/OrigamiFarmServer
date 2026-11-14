@@ -730,8 +730,9 @@ def test_resolver_inheritance_exceptions_and_review(client, control_db):
     alfalfa_total = next(t for t in today["totals"] if t["feed_product_id"] == farm["alfalfa"]["id"])
     assert alfalfa_total["fed_today"] == 6
 
-    # Drying Luna off raises a review and changes nothing by itself.
-    r = client.put(f"{API}/animals/{luna['id']}", json={"lactating": False}, headers=h)
+    # Drying Luna off (a recorded dry-off — lactation is a record, not a
+    # field an edit flips) raises a review and changes nothing by itself.
+    r = client.post(f"{API}/animals/{luna['id']}/dry-off", json={}, headers=h)
     assert r.status_code == 200, r.text
     tasks = [
         t
@@ -742,7 +743,10 @@ def test_resolver_inheritance_exceptions_and_review(client, control_db):
     plan = _get(client, h, f"/livestock-subjects/{luna['id']}/feeding-plan")
     assert plan["program"]["program_code"] == "DAIRY-DOE" and plan["program"]["source"] == "inherited"
     assert plan["review"]["required"] is True and plan["review"]["recommended"]["program_code"] == "DRY-DOE"
-    client.put(f"{API}/animals/{luna['id']}", json={"pregnant": True}, headers=h)
+    checked = client.post(
+        f"{API}/animals/{luna['id']}/pregnancy-checks", json={"result_code": "POSITIVE"}, headers=h
+    )
+    assert checked.status_code == 201, checked.text
     assert (
         len(
             [

@@ -82,7 +82,9 @@ def test_resolver_applies_configuration_then_biology(client, control_db):
     assert {"MILK_PRODUCTION", "LACTATION", "PREGNANCY", "EAR_TAG"} <= dairy_codes
     assert dairy_cow["sex"] == "F" and dairy_cow["life_stage"] == "adult"
     assert dairy_cow["required_identifier_types"] == ["EAR_TAG"]
-    assert dairy_cow["subject_kind"] == "individual"
+    # Cattle are tracked individually and worked in groups (milking herd,
+    # pregnant, dry, heifers) — so either kind of subject.
+    assert dairy_cow["subject_kind"] == "either"
     assert "EGG_PRODUCTION" in dairy_cow["suppressed"]
 
     # A meat cow is configured not to milk; a bull cannot, whatever the profile.
@@ -114,10 +116,15 @@ def test_resolver_applies_configuration_then_biology(client, control_db):
 def test_registration_enforces_required_and_allowed_identifiers(client, control_db):
     _tenant, token = _owner(client, control_db, "FARM-ID", "id-owner@origami-demo.com")
 
-    # A horse must carry a microchip; a bare tag is not one.
-    missing = _post_animal(client, token, name="Shadow", species="horse", sex="F", tag="H-1")
-    assert missing.status_code == 422, missing.text
-    assert "microchip" in missing.json()["detail"].lower()
+    # A horse should carry a microchip, but registering does not wait for
+    # it: the farm registers first and chips later, and every animal gets a
+    # generated farm number meanwhile. A bare tag on a horse is a farm number.
+    unchipped = _post_animal(client, token, name="Shadow", species="horse", sex="F", tag="H-1")
+    assert unchipped.status_code == 201, unchipped.text
+    assert [(i["identifier_type"], i["identifier_value"]) for i in unchipped.json()["identifiers"]] == [
+        ("FARM_NUMBER", "H-1")
+    ]
+    assert "MICROCHIP" in unchipped.json()["capabilities"]["required_identifier_types"]
 
     # An ear tag is not used on a horse.
     wrong_type = _post_animal(
@@ -138,6 +145,7 @@ def test_registration_enforces_required_and_allowed_identifiers(client, control_
         species="horse",
         sex="F",
         management_profile="work",
+        confirm_duplicate=True,
         identifiers=[
             {
                 "identifier_type": "MICROCHIP",
@@ -152,7 +160,12 @@ def test_registration_enforces_required_and_allowed_identifiers(client, control_
     # The primary identifier's value is mirrored into `tag`.
     assert body["tag"] == "LB-2024-77"
     assert body["management_profile"] == "work"
-    assert sorted(i["identifier_type"] for i in body["identifiers"]) == ["MICROCHIP", "PASSPORT"]
+    # …plus the farm number every animal gets at registration.
+    assert sorted(i["identifier_type"] for i in body["identifiers"]) == [
+        "FARM_NUMBER",
+        "MICROCHIP",
+        "PASSPORT",
+    ]
     assert [i["identifier_type"] for i in body["identifiers"] if i["is_primary"]] == ["PASSPORT"]
     assert {c["code"] for c in body["capabilities"]["capabilities"]} >= {
         "MICROCHIP",
@@ -194,12 +207,13 @@ def test_legacy_tag_becomes_primary_identifier_and_is_unique_per_farm(client, co
     other_farm = _post_animal(client, token_b, name="Daisy", tag="COW-7")
     assert other_farm.status_code == 201, other_farm.text
 
-    # Listing carries each animal's active identifiers.
+    # Listing carries each animal's active identifiers — the ear tag and the
+    # farm number generated at registration.
     listing = client.get(
         "/api/v1/animals", params={"farm_id": str(tenant_a.id)}, headers=farmos_headers(token_a)
     )
     assert listing.status_code == 200
-    assert [i["identifier_value"] for a in listing.json() for i in a["identifiers"]] == ["COW-7"]
+    assert [i["identifier_value"] for a in listing.json() for i in a["identifiers"]] == ["COW-7", "0001"]
 
 
 def test_seeded_animal_with_only_a_tag_is_materialised_on_first_read(client, control_db):
@@ -288,7 +302,7 @@ def test_editing_tag_retires_the_old_primary(client, control_db):
     assert updated.status_code == 200, updated.text
     assert updated.json()["tag"] == "NEW-1"
     statuses = {(i["identifier_value"], i["status"]) for i in updated.json()["identifiers"]}
-    assert statuses == {("OLD-1", "retired"), ("NEW-1", "active")}
+    assert statuses == {("OLD-1", "retired"), ("NEW-1", "active"), ("0001", "active")}
 
     # The retired tag is still findable, so a treatment that names it resolves.
     found = client.get(
@@ -328,10 +342,18 @@ def test_state_flags_follow_capabilities(client, control_db):
     )
     assert meat.status_code == 422
     assert "lactation" in meat.json()["detail"].lower()
-    ok = client.put(
+    # Lactation is a record, not a field an edit flips: the dry-off is
+    # recorded first, then the profile can change.
+    flipped = client.put(
         f"/api/v1/animals/{animal_id}",
         json={"management_profile": "meat", "lactating": False},
         headers=farmos_headers(token),
+    )
+    assert flipped.status_code == 422 and "dry-off" in flipped.json()["detail"]
+    dried = client.post(f"/api/v1/animals/{animal_id}/dry-off", json={}, headers=farmos_headers(token))
+    assert dried.status_code == 200, dried.text
+    ok = client.put(
+        f"/api/v1/animals/{animal_id}", json={"management_profile": "meat"}, headers=farmos_headers(token)
     )
     assert ok.status_code == 200, ok.text
     assert ok.json()["management_profile"] == "meat" and ok.json()["lactating"] is False

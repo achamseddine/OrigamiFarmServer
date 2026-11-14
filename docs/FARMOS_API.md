@@ -204,8 +204,9 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 7 | Feed architecture: products & lots, formulas & numbered mixes, nutrient profiles, feeding programs/assignments/events, usage policy, allocations, days of cover/forecast/reorder, reconciliation, costs | The tablet's feed workspace, the mixing screen, the animal's feeding section and the feed-room daily plan |
 | 8 | Farm pharmacy (medicines, lots, reservations, transfers, policies, alerts, administrations), health cases (diagnoses, plans), purchase requisitions, emergency protocols (authoring & veterinary approval, triage, runs, reassessment, offline package & offline runs) | The pharmacy dashboard, the emergency flow at the animal — online and offline — and the clinical half of the animal's digital twin |
 | 9 | Platform masters (units of measure as references, farm assets named by mixes, notification routes, the scheduled cycles with their run log) and feed-performance intelligence (monitors, exposure windows with lineage, explained assessments, mix and supplier scores, deduplicated alerts, the feed signals on the bell) | The feed workspace's Performance tab and the mix score card, Settings → Units / Assets / Notifications, and a farm that is evaluated daily even on a quiet day |
+| 10 | Livestock records and reproduction: effective-dated animal state history (status, stage, profile, location), first-class group membership with type policies and the head-count ledger, rule groups (pregnant / open / in milk / dry), the animal's exit and restore, parentage, breeding → pregnancy check → pregnancy → birth → offspring, lactations and dry-off, incubation and hatch, the farm's calendar settings (`farm_settings`), generated farm numbers at registration, and the duplicate guards on milk, breedings and registrations | The herd screens that move an animal between pens and keep "who was in it last spring", the reproduction card and calendar on the digital twin, the breeding / calving / hatch flows, Settings → Farm calendar, and a registration that never waits for a scanned tag |
 
-Each stage's tests live in `api/tests/test_farmos_stage{1..9}[_suffix].py` and run against real
+Each stage's tests live in `api/tests/test_farmos_stage{1..10}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
 Stages 6 to 9 are the staged port of the reference backend's newer contract (288 operations in its
@@ -223,9 +224,10 @@ the routing map — which router module owns which path.
 | Auth | `routes_auth.py` | `POST /auth/login`, `GET /auth/me` |
 | Employees (self) | `routes_employees.py` | `GET /me/access`, `GET /modules/catalog` |
 | Employees (admin) | `routes_employees_admin.py` | `GET/POST/PATCH/DELETE /employees`, `PUT /employees/{id}/permissions` |
-| Farm | `routes_farms.py` | `GET /farms/me` |
-| Animals | `routes_animals.py` | `GET/POST /animals`, `GET/PATCH/PUT /animals/{id}` |
-| Livestock (generic animal model) | `routes_livestock.py` | `GET /species`, `GET /species/{code}/configuration`, `GET /capabilities`, `POST /animal-capabilities/resolve`, `GET /animals/{id}/capabilities`, `GET/POST /animals/{id}/identifiers`, `DELETE /animals/{id}/identifiers/{id}`, `GET/POST /animal-groups`, `GET/PATCH /animal-groups/{id}`, `GET /animal-groups/{id}/capabilities`, `GET/POST /animals/{id}/conditions`, `DELETE /animals/{id}/conditions/{id}`, `GET/POST /animals/{id}/weights` |
+| Farm | `routes_farms.py` | `GET/PATCH /farms/me` — the farm record plus its settings (`dry_off_days_before_birth`, `milk_peak_start_days`, `milk_peak_end_days`, `breeding_wait_days`, `heat_cycle_days`; `PATCH` needs Settings · configure and is audited with the old values) |
+| Animals | `routes_animals.py` | `GET/POST /animals` (`include_exited`, `search` across every identifier, `confirm_duplicate` for a same-name animal), `GET /animals/lookup?value=`, `GET/PATCH/PUT /animals/{id}` — a stage, profile or location change is written to the state history first; `pregnant`/`lactating` are records, not fields; `active: false` is an exit (archived) |
+| Livestock (generic animal model) | `routes_livestock.py` | `GET /species`, `GET /species/{code}/configuration`, `GET /capabilities`, `POST /animal-capabilities/resolve`, `GET /animals/{id}/capabilities`, `GET/POST /animals/{id}/identifiers`, `DELETE /animals/{id}/identifiers/{id}`, `GET /animal-group-types`, `GET/POST /animal-groups`, `GET/PATCH /animal-groups/{id}`, `GET /animal-groups/{id}/capabilities`, `GET/POST /animal-groups/{id}/members`, `POST /animal-groups/{id}/members/{animal_id}/end`, `GET/POST /animal-groups/{id}/quantity-events`, `GET /animals/{id}/history`, `GET /animals/{id}/groups`, `POST /animals/{id}/exit`, `POST /animals/{id}/restore`, `GET /animals/{id}/relationships`, `POST /animals/{id}/parents`, `GET/POST /animals/{id}/conditions`, `DELETE /animals/{id}/conditions/{id}`, `GET/POST /animals/{id}/weights` |
+| Reproduction | `routes_reproduction.py` (shapes in `reproduction_schemas.py`, rules in `reproduction_service.py`) | `GET /animals/{id}/reproduction`, `GET /reproduction/overview`, `POST /animals/{id}/breedings`, `POST …/breedings/{id}/void`, `POST /animals/{id}/pregnancy-checks`, `POST /animals/{id}/pregnancy-loss`, `POST /animals/{id}/births`, `POST /births/{id}/offspring/{n}/register`, `POST /animals/{id}/lactations`, `PATCH /animals/{id}/lactation`, `POST /animals/{id}/dry-off`, `GET/POST /incubations`, `POST /incubations/{id}/hatch`, `POST /incubations/{id}/cancel` |
 | Animal health | `routes_health.py` | `GET/POST /health/treatments` — a treatment may name the stocked medicine (`medicine_product_id`), its health case and treatment plan |
 | Health cases | `routes_health_cases.py` (shapes in `emergency_schemas.py`) | `GET/POST /health/cases`, `GET/PATCH /health/cases/{id}`, `POST …/close`, `POST …/diagnoses`, `POST …/plans` |
 | Observations | `routes_observations.py` | `GET/POST /observations` — a new observation joins the subject's open case; a severe one starts emergency triage |
@@ -254,8 +256,40 @@ The reference spec cites several rules by ID in endpoint descriptions; each is i
 where cited, not as a generic framework:
 
 - **RULE-WITHDRAWAL** — an animal's `withdrawal_until` (set by `POST /health/treatments` when it
-  includes one) hard-blocks `POST /production/milk` from destination `"sale"` while active; other
-  destinations succeed with `under_withdrawal_warning: true` (`app/farmos/routes_production.py`).
+  includes one) hard-blocks `POST /production/milk` from every destination but `"withheld"` while
+  active (422 naming the date; the milk must not enter stored, sold, processed or consumed stock);
+  a `withheld` record succeeds with `under_withdrawal_warning: true` and an audit entry
+  (`app/farmos/routes_production.py`). The same cow, session and farm day is a possible duplicate
+  (409 "Possible duplicate: …") unless `confirm_duplicate` is sent.
+- **RULE-LIVESTOCK-HISTORY** — `animal.lifecycle_status`, `life_stage`, `management_profile` and
+  `location_label` are never changed on the animal alone: `livestock_state_service.record` closes
+  the open `animal_state_history` range and opens the next in the same transaction (a change dated
+  before the open range is refused); registration writes the opening rows
+  (`GET /animals/{id}/history`).
+- **RULE-LIVESTOCK-EXIT** — an exit (sold, dead, culled, slaughtered, transferred; `archived` through
+  `PUT active: false`) closes every group membership (a counted flock records the loss in its
+  ledger), the active pregnancy and lactation (`ANIMAL_EXITED`) and the active feeding assignments,
+  and blocks milk, breeding and group moves afterwards (409 "… is no longer on the farm"). A death
+  needs Animals · edit, the others Animals · approve; only an archived animal is restored
+  (Animals · delete).
+- **RULE-GROUP-LEDGER** — a group's `count` is a projection: the number of current members for a
+  `MEMBERSHIP_DERIVED` group, the running total of `animal_group_quantity_event` for a
+  `QUANTITY_MANAGED` or `HYBRID` one. `PATCH count` becomes a `COUNT_ADJUSTMENT` row (422 on a
+  member-counted group); a registered individual joining a counted flock makes it `HYBRID` without
+  changing its total; membership in an exclusive type (herd, flock, pen, batch) is a move that
+  closes the previous exclusive membership, a cohort overlaps; `animal.group_name` mirrors the
+  current exclusive group and must name an existing group of the species (422 lists the names).
+  Rule groups (`membership_rule` PREGNANT / NOT_PREGNANT / IN_MILK / DRY) are cohorts the
+  reproduction services keep in step with the records.
+- **RULE-REPRODUCTION-PROJECTION** — `pregnant`, `pregnancy_days`, `expected_due_date`,
+  `lactating`, `lactation_cycle`, `lactation_started_at` and `dried_off_at` are re-derived from
+  `pregnancy_episode` / `lactation_episode` by `reproduction_service.refresh_projection` and never
+  edited (422 from `PUT /animals/{id}`); pregnancy is never inferred from a mating — only a
+  positive check opens an episode, dated from the examiner's gestation or the likely service; a
+  birth ends it, registers newborns through the normal registration path (any refusal refuses the
+  whole birth), links parentage and starts the dam's next lactation where she has `LACTATION`.
+  Every action is checked against the resolved capabilities (a hen is never pregnancy-checked, a
+  stallion never gives birth).
 - **RULE-MOU-005** — `POST /mouneh/batches/{id}/complete` auto-fills any recipe material never
   explicitly `/consume`'d at its planned (recipe) quantity, so a manager who skips the granular step
   still gets correct stock and cost (`app/farmos/mouneh_service.py`).
@@ -288,7 +322,10 @@ where cited, not as a generic framework:
 - **Identifiers are rows, not a column.** `animal_identifier` holds every ear tag, RFID,
   microchip, leg band, passport, farm number or name an animal carries; `animal.tag` only mirrors
   the primary one's value for lists and search. The resolver decides which types a species may
-  carry and which it must (a horse must have a microchip, cattle an ear tag); uniqueness is per
+  carry and which it must (a horse must have a microchip, cattle an ear tag) — a missing required
+  identifier no longer blocks registration: every animal gets the farm's next `FARM_NUMBER` (one
+  sequence per farm, never reused) and the missing type stays listed in
+  `capabilities.required_identifier_types` until it is added; uniqueness is per
   farm + type + issuing authority (409 names the other animal). Retiring keeps the row with
   `status: retired` so a record naming the old tag still resolves; the last required identifier
   cannot be retired (422); editing `tag` through `PUT /animals/{id}` retires the old primary and
@@ -297,7 +334,7 @@ where cited, not as a generic framework:
   its record is read — inside the tenant-scoped request, because under `FORCE ROW LEVEL SECURITY`
   a migration cannot see any tenant's rows to backfill them.
 - **Species cannot change once history exists.** `PUT /animals/{id}` with a different `species`
-  is 409 once the animal has a milk, treatment or observation record.
+  is 409 once the animal has a milk, treatment, observation, breeding or birth record.
 - **Production writes respect capabilities.** `POST /production/milk` is 422 for an animal whose
   resolved set suppresses `MILK_PRODUCTION` by biology (a bull, a hen) and, for an animal that
   carries a management profile, when the profile does not grant it (a meat cow); an animal with no
