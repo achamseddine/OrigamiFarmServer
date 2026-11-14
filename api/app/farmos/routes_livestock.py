@@ -9,15 +9,24 @@ particular animal can do — then draws exactly that.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
-from app.farmos import capability_service, identifier_service, livestock_service
+from app.farmos import (
+    capability_service,
+    group_service,
+    identifier_service,
+    livestock_service,
+    livestock_state_service,
+    reproduction_service,
+)
 from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
 from app.farmos import livestock_catalog as catalog
@@ -25,10 +34,19 @@ from app.farmos.deps import (
     AccessContext,
     get_access_context,
     get_farmos_tenant_db,
+    require_any_permission,
     require_diagnostic_role,
     require_permission,
 )
 from app.farmos.livestock_models import AnimalGroup, AnimalHealthCondition
+from app.farmos.reproduction_schemas import (
+    AnimalExitIn,
+    AnimalRestoreIn,
+    MembershipEndIn,
+    MembershipIn,
+    ParentIn,
+    QuantityEventIn,
+)
 from app.farmos.schemas import (
     AnimalGroupCreate,
     AnimalGroupOut,
@@ -51,6 +69,18 @@ from app.farmos.schemas import (
 )
 
 router = APIRouter()
+
+# Herd records are read wherever an animal or a group is worked with.
+_HERD_VIEW = require_any_permission(
+    ("animals", "view"),
+    ("animal_health", "view"),
+    ("milk_production", "view"),
+    ("feed_nutrition", "view"),
+    ("egg_production", "view"),
+)
+_HERD_EDIT = require_permission("animals", "edit")
+# A flock's mortality and additions are recorded by whoever keeps it.
+_HEADCOUNT_CREATE = require_any_permission(("animals", "create"), ("egg_production", "create"))
 
 
 def _audit(control_db: Session, access: AccessContext, **kwargs: object) -> None:
@@ -253,20 +283,63 @@ def create_group(
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> AnimalGroupOut:
-    livestock_service.species_or_422(payload.species)
-    group = AnimalGroup(
-        tenant_id=access.tenant_id, last_modified_by=access.membership_id, **payload.model_dump()
+    """A new herd, flock, pen, batch or cohort (LIVESTOCK-SCHEMA §6–§8).
+    A group either counts heads or counts its registered members; a rule
+    group (pregnant, open, in milk, dry) is a cohort that fills itself."""
+    species = livestock_service.species_or_422(payload.species)
+    # One name per group of a species: two "Pregnant cows" would split the herd's records.
+    clash = db.scalar(
+        select(AnimalGroup).where(
+            AnimalGroup.species == payload.species,
+            func.lower(AnimalGroup.name) == payload.name.strip().lower(),
+            AnimalGroup.status.notin_(("closed", "archived")),
+            AnimalGroup.deleted_at.is_(None),
+        )
     )
+    if clash is not None:
+        raise HTTPException(
+            status_code=409, detail=f"A group named {clash.name} already exists for this species."
+        )
+    data = payload.model_dump()
+    if data.get("membership_rule"):
+        # A rule group (pregnant, open, in milk, dry) overlaps the herd and
+        # the pen the animal is in — it is a cohort counting its members.
+        if group_service.policy(data.get("group_type")).exclusive_membership:
+            data["group_type"] = "cohort"
+        data["tracking_mode"] = group_service.MEMBERSHIP_DERIVED
+        data["count"] = 0
+    # LIVESTOCK-SCHEMA §6: a group either counts heads or counts its
+    # registered members. Unstated: a head count given means a counted
+    # group; otherwise a species kept individually counts members.
+    if not data.get("tracking_mode"):
+        individual = species["default_management"] == "individual"
+        data["tracking_mode"] = (
+            group_service.MEMBERSHIP_DERIVED
+            if individual and not data.get("count")
+            else group_service.QUANTITY_MANAGED
+        )
+    group = AnimalGroup(tenant_id=access.tenant_id, last_modified_by=access.membership_id, **data)
     cap_set = capability_service.resolve_for_group(group)
-    if not cap_set.has(catalog.Cap.GROUP_TRACKING):
+    # A counted flock needs the species to be manageable as a group; a herd
+    # of registered cows only needs its members to be individuals.
+    needed = (
+        catalog.Cap.INDIVIDUAL_TRACKING
+        if group.tracking_mode == group_service.MEMBERSHIP_DERIVED
+        else catalog.Cap.GROUP_TRACKING
+    )
+    if not cap_set.has(needed):
         word = cap_set.terminology.get("group_en", "Group")
         raise HTTPException(
             status_code=422,
             detail=(
                 f"{word} management is not configured for this species; register the animals individually."
+                if needed == catalog.Cap.GROUP_TRACKING
+                else f"{species['name_en']} are not tracked individually; keep them as a counted group."
             ),
         )
     db.add(group)
+    db.flush()
+    group_service.open_group(db, access, group)
     db.flush()
     _audit(
         control_db,
@@ -277,6 +350,8 @@ def create_group(
         module_code="animals",
         summary=f"Created {group.name} ({group.count} {group.species.replace('_', ' ')})",
     )
+    if group.membership_rule:
+        group_service.fill_rule_group(db, access, group)
     return livestock_service.to_group_out(group)
 
 
@@ -300,7 +375,23 @@ def update_group(
     group = livestock_service.load_group_or_404(db, group_id)
     changes = payload.model_dump(exclude_unset=True)
     audit_changes: dict[str, dict[str, object]] = {}
+    # A head count is never typed over (LIVESTOCK-SCHEMA §9): a new count
+    # becomes a COUNT_ADJUSTMENT in the group's ledger, and a group that
+    # counts its members takes its count from them.
+    if "count" in changes:
+        new_count = changes.pop("count")
+        if new_count is not None and new_count != group.count:
+            if group.tracking_mode == group_service.MEMBERSHIP_DERIVED:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{group.name} counts its registered members; add or remove animals instead.",
+                )
+            audit_changes["count"] = {"from": group.count, "to": new_count}
+            group_service.set_count(db, access, group, new_count)
+            changes["count"] = new_count
     for field, value in changes.items():
+        if field == "count":
+            continue
         before = getattr(group, field)
         if before != value:
             audit_changes[field] = {"from": before, "to": value}
@@ -309,9 +400,11 @@ def update_group(
     group.last_modified_by = access.membership_id
     db.flush()
     # A group that grew, changed stage or changed profile may fit a different
-    # feeding program — a review, never a silent reassignment (feed §10).
+    # feeding program — a review, never a silent reassignment (feed §10); a
+    # group change is a feed-performance confounder (§12).
     if {"count", "life_stage", "management_profile", "sex_composition"} & changes.keys():
         programs.review_feeding(db, access, "group", group, trigger="group_changed")
+        perf.on_context_changed(db, access, "group", group, trigger="group_changed")
     if audit_changes:
         _audit(
             control_db,
@@ -335,6 +428,272 @@ def group_capabilities(
     group = livestock_service.load_group_or_404(db, group_id)
     livestock_service.species_or_422(group.species)
     return CapabilitySetOut(**capability_service.resolve_for_group(group).to_dict())
+
+
+# ------------------------------------------------------------ group membership (LIVESTOCK-SCHEMA §7–§9)
+@router.get("/animal-group-types")
+def list_group_types(_access: AccessContext = Depends(get_access_context)) -> list[dict[str, Any]]:
+    return [p.to_dict() for p in sorted(group_service.POLICIES.values(), key=lambda p: p.group_type)]
+
+
+@router.get("/animal-groups/{group_id}/members")
+def list_members(
+    group_id: str,
+    include_past: bool = Query(default=False),
+    _access: AccessContext = Depends(_HERD_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[dict[str, Any]]:
+    """Who is in the group now — or, with `include_past`, everyone who ever
+    was, with the dates (membership is closed, never deleted)."""
+    group = livestock_service.load_group_or_404(db, group_id)
+    rows = (
+        group_service.member_history(db, group) if include_past else group_service.current_members(db, group)
+    )
+    return [group_service.membership_dict(db, m, animal=a, group=group) for m, a in rows]
+
+
+@router.post("/animal-groups/{group_id}/members", status_code=201)
+def add_member(
+    group_id: str,
+    payload: MembershipIn,
+    access: AccessContext = Depends(_HERD_EDIT),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict[str, Any]:
+    """Puts an animal in the group. In an exclusive group (a herd, a pen)
+    this is a move: the animal's previous exclusive membership closes."""
+    group = livestock_service.load_group_or_404(db, group_id)
+    animal = livestock_service.load_animal_or_404(db, payload.animal_id)
+    membership = group_service.add_member(
+        db, access, group, animal, at=payload.valid_from, reason=payload.reason
+    )
+    _audit(
+        control_db,
+        access,
+        action="animal_group.member_added",
+        entity_type="animal_group",
+        entity_id=str(group.id),
+        module_code="animals",
+        summary=f"Added {animal.name} to {group.name}",
+    )
+    return group_service.membership_dict(db, membership, animal=animal, group=group)
+
+
+@router.post("/animal-groups/{group_id}/members/{animal_id}/end")
+def end_member(
+    group_id: str,
+    animal_id: str,
+    payload: MembershipEndIn,
+    access: AccessContext = Depends(_HERD_EDIT),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict[str, Any]:
+    group = livestock_service.load_group_or_404(db, group_id)
+    animal = livestock_service.load_animal_or_404(db, animal_id)
+    membership = group_service.remove_member(
+        db, access, group, animal, at=payload.valid_to, reason=payload.reason
+    )
+    _audit(
+        control_db,
+        access,
+        action="animal_group.member_removed",
+        entity_type="animal_group",
+        entity_id=str(group.id),
+        module_code="animals",
+        summary=f"Took {animal.name} out of {group.name}",
+    )
+    return group_service.membership_dict(db, membership, animal=animal, group=group)
+
+
+@router.get("/animal-groups/{group_id}/quantity-events")
+def list_quantity_events(
+    group_id: str,
+    _access: AccessContext = Depends(_HERD_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[dict[str, Any]]:
+    group = livestock_service.load_group_or_404(db, group_id)
+    return [group_service.quantity_dict(e) for e in group_service.quantity_history(db, group)]
+
+
+@router.post("/animal-groups/{group_id}/quantity-events", status_code=201)
+def record_quantity_event(
+    group_id: str,
+    payload: QuantityEventIn,
+    access: AccessContext = Depends(_HEADCOUNT_CREATE),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict[str, Any]:
+    """A flock's deaths, sales, purchases, transfers or a recount — one row
+    of its head-count ledger; `count` follows."""
+    group = livestock_service.load_group_or_404(db, group_id)
+    event = group_service.record_quantity(
+        db,
+        access,
+        group,
+        payload.event_type,
+        payload.quantity_delta,
+        at=payload.occurred_at,
+        reason=payload.reason,
+        source_type="manual",
+    )
+    _audit(
+        control_db,
+        access,
+        action="animal_group.quantity_changed",
+        entity_type="animal_group",
+        entity_id=str(group.id),
+        module_code="animals",
+        summary=(
+            f"Recorded {payload.event_type.lower().replace('_', ' ')} "
+            f"{payload.quantity_delta:+d} on {group.name}"
+        ),
+        changes={"count": {"to": group.count}},
+    )
+    return group_service.quantity_dict(event)
+
+
+# ------------------------------- animal history, exit, parentage (LIVESTOCK-SCHEMA §5, §10, §14)
+@router.get("/animals/{animal_id}/history")
+def animal_history(
+    animal_id: str,
+    state_type: str | None = None,
+    _access: AccessContext = Depends(_HERD_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[dict[str, Any]]:
+    """The animal's effective-dated status, stage, profile and location."""
+    animal = livestock_service.load_animal_or_404(db, animal_id)
+    if state_type and state_type.upper() not in livestock_state_service.STATE_TYPES:
+        raise HTTPException(
+            status_code=422, detail=f"state_type must be one of {list(livestock_state_service.STATE_TYPES)}"
+        )
+    rows = livestock_state_service.history(db, animal.id, state_type.upper() if state_type else None)
+    return [livestock_state_service.history_dict(h) for h in rows]
+
+
+@router.get("/animals/{animal_id}/groups")
+def animal_groups(
+    animal_id: str,
+    _access: AccessContext = Depends(_HERD_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[dict[str, Any]]:
+    animal = livestock_service.load_animal_or_404(db, animal_id)
+    return [
+        group_service.membership_dict(db, m, animal=animal)
+        for m in group_service.memberships_of_animal(db, animal.id)
+    ]
+
+
+@router.post("/animals/{animal_id}/exit")
+def exit_animal(
+    animal_id: str,
+    payload: AnimalExitIn,
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict[str, Any]:
+    """The animal left the farm: sold, dead, culled, slaughtered or
+    transferred. Its groups, lactation, pregnancy and feeding close; its
+    record stays. A death is recorded by whoever looks after the animal
+    (Animals · edit); the others are a manager's call (Animals · approve)."""
+    animal = livestock_service.load_animal_or_404(db, animal_id)
+    action = "edit" if payload.exit_type in livestock_state_service.FACT_EXITS else "approve"
+    if not access.has("animals", action):
+        raise HTTPException(
+            status_code=403,
+            detail=f"You do not have permission to {action} in Animals. Ask a farm manager to grant it.",
+        )
+    livestock_state_service.exit_animal(
+        db, access, animal, payload.exit_type, at=payload.occurred_at, reason=payload.reason
+    )
+    _audit(
+        control_db,
+        access,
+        action="animal.exited",
+        entity_type="animal",
+        entity_id=str(animal.id),
+        module_code="animals",
+        summary=f"Recorded {animal.name} as {payload.exit_type}"
+        + (f": {payload.reason}" if payload.reason else ""),
+        changes={"lifecycle_status": {"from": livestock_state_service.ACTIVE, "to": payload.exit_type}},
+        metadata={"notes": payload.notes} if payload.notes else None,
+    )
+    return {
+        "id": str(animal.id),
+        "lifecycle_status": animal.lifecycle_status,
+        "exited_at": animal.exited_at,
+        "active": animal.active,
+    }
+
+
+@router.post("/animals/{animal_id}/restore")
+def restore_animal(
+    animal_id: str,
+    payload: AnimalRestoreIn,
+    access: AccessContext = Depends(require_permission("animals", "delete")),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict[str, Any]:
+    """Brings back an animal archived by mistake. A sale or a death is not
+    undone this way."""
+    animal = livestock_service.load_animal_or_404(db, animal_id)
+    was_active = animal.active
+    livestock_state_service.reactivate(db, access, animal, reason=payload.reason)
+    if not was_active:
+        _audit(
+            control_db,
+            access,
+            action="animal.restored",
+            entity_type="animal",
+            entity_id=str(animal.id),
+            module_code="animals",
+            summary=f"Restored {animal.name}" + (f": {payload.reason}" if payload.reason else ""),
+            changes={
+                "lifecycle_status": {"from": livestock_state_service.ARCHIVED, "to": animal.lifecycle_status}
+            },
+        )
+    return {"id": str(animal.id), "lifecycle_status": animal.lifecycle_status, "active": animal.active}
+
+
+@router.get("/animals/{animal_id}/relationships")
+def animal_relationships(
+    animal_id: str,
+    _access: AccessContext = Depends(_HERD_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> dict[str, Any]:
+    return reproduction_service.relationships(db, livestock_service.load_animal_or_404(db, animal_id))
+
+
+@router.post("/animals/{animal_id}/parents", status_code=201)
+def record_parent(
+    animal_id: str,
+    payload: ParentIn,
+    access: AccessContext = Depends(_HERD_EDIT),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict[str, Any]:
+    """Parentage for an animal that arrived with known parents on this
+    farm. A birth recorded here links its own parentage."""
+    child = livestock_service.load_animal_or_404(db, animal_id)
+    try:
+        parent = livestock_service.load_animal_or_404(db, payload.parent_animal_id)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Parent not found.") from None
+    reproduction_service.record_parent(
+        db, access, child, parent, payload.relationship_type, evidence=payload.evidence
+    )
+    _audit(
+        control_db,
+        access,
+        action="animal.parent_recorded",
+        entity_type="animal",
+        entity_id=str(child.id),
+        module_code="animals",
+        summary=(
+            f"Recorded {parent.name} as {payload.relationship_type.replace('_OF', '').lower()} "
+            f"of {child.name}"
+        ),
+    )
+    return reproduction_service.relationships(db, child)
 
 
 # --------------------------------------------------------------- conditions

@@ -134,6 +134,9 @@ def to_group_out(group: AnimalGroup) -> AnimalGroupOut:
         management_profile=group.management_profile,
         status=group.status,
         location_label=group.location_label,
+        tracking_mode=group.tracking_mode,
+        membership_rule=group.membership_rule,
+        created_at=group.created_at,
     )
 
 

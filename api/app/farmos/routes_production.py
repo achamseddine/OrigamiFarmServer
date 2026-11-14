@@ -12,7 +12,10 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.farmos import capability_service, livestock_service
+from app.audit.service import record_audit_event
+from app.common.db import get_control_db
+from app.common.enums import ActorType
+from app.farmos import capability_service, duplicates, livestock_service, livestock_state_service
 from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
 from app.farmos.deps import AccessContext, check_farm_id, get_farmos_tenant_db, require_permission
@@ -29,7 +32,7 @@ from app.farmos.schemas import (
     MilkRecordCreate,
     MilkRecordOut,
 )
-from app.tenant_api.models import Animal, Field
+from app.tenant_api.models import Field
 
 router = APIRouter()
 
@@ -240,51 +243,109 @@ def record_milk(
     payload: MilkRecordCreate,
     access: AccessContext = Depends(require_permission("milk_production", "create")),
     db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
 ) -> MilkRecordOut:
-    animal = db.get(Animal, uuid.UUID(payload.animal_id))
+    """Validation rule (tech spec §14): "Milk from an animal under
+    withdrawal must show a hard warning or be blocked from sale
+    destination." This endpoint hard-blocks it, matching RULE-WITHDRAWAL
+    in the recommendation engine: while the animal is under withdrawal its
+    milk is recorded as `withheld` or not at all.
+    """
+    animal = livestock_service.load_animal_or_404(db, payload.animal_id)
     now = datetime.now(timezone.utc)
-    if animal is not None:
-        # Milk is a capability (generic animal model §12): a bull, a hen or
-        # a mare cannot have a milk record; a cow registered with a meat
-        # profile cannot either. An animal with no profile on record is
-        # held to biology only.
-        livestock_service.check_production_capability(
-            livestock_service.capabilities_for_animal(animal),
-            Cap.MILK_PRODUCTION,
-            animal.name,
-            configured=animal.management_profile is not None,
-        )
-    withdrawal_until = animal.withdrawal_until if animal is not None else None
+    livestock_state_service.ensure_on_farm(animal, "milk")
+    # Milk is a capability (generic animal model §12): a bull, a hen or
+    # a mare cannot have a milk record; a cow registered with a meat
+    # profile cannot either. An animal with no profile on record is
+    # held to biology only.
+    livestock_service.check_production_capability(
+        livestock_service.capabilities_for_animal(animal),
+        Cap.MILK_PRODUCTION,
+        animal.name,
+        configured=animal.management_profile is not None,
+    )
+    withdrawal_until = livestock_service.ensure_utc(animal.withdrawal_until)
     under_withdrawal = withdrawal_until is not None and withdrawal_until > now
 
     # RULE-WITHDRAWAL (tech spec §14): milk from an animal under withdrawal
-    # must be hard-blocked from a sale destination, not just warned about.
-    if under_withdrawal and payload.destination == "sale":
+    # must not enter stored, sold, processed or consumed stock — a
+    # server-side safety gate, including when an offline tablet is stale.
+    if under_withdrawal and payload.destination != "withheld":
+        assert withdrawal_until is not None
         raise HTTPException(
             status_code=422,
             detail=(
-                "This animal is under a treatment withdrawal period until "
-                f"{withdrawal_until:%Y-%m-%d}. Its milk can't be marked for sale."
+                f"{animal.name} is under withdrawal until {withdrawal_until.isoformat()}. "
+                "Record this milk as withheld; it must not enter stored, sold, processed or consumed stock."
             ),
         )
+
+    # The same cow, the same session, the same farm day: two people (or one
+    # person twice) recording one milking. A second milking is confirmed.
+    at = livestock_service.ensure_utc(payload.recorded_at) or now
+    tz = duplicates.tenant_timezone(control_db, access.tenant_id)
+    day_start, day_end = duplicates.farm_day(tz, at)
+    earlier = db.scalar(
+        select(MilkRecord)
+        .where(
+            MilkRecord.animal_id == animal.id,
+            MilkRecord.session == payload.session,
+            MilkRecord.recorded_at >= day_start,
+            MilkRecord.recorded_at < day_end,
+            MilkRecord.deleted_at.is_(None),
+        )
+        .order_by(MilkRecord.recorded_at)
+        .limit(1)
+    )
+    match = duplicates.guard(
+        earlier,
+        (
+            f"{animal.name}'s {payload.session} milk is already recorded for this day "
+            f"({float(earlier.liters):g} L)."
+        )
+        if earlier
+        else "",
+        confirm=payload.confirm_duplicate,
+    )
 
     record = MilkRecord(
         tenant_id=access.tenant_id,
         last_modified_by=access.membership_id,
-        animal_id=uuid.UUID(payload.animal_id),
+        animal_id=animal.id,
         session=payload.session,
         liters=payload.liters,
         quality_status=payload.quality_status,
         destination=payload.destination,
-        recorded_at=payload.recorded_at or now,
+        recorded_at=at,
         recorded_by=uuid.UUID(payload.recorded_by) if payload.recorded_by else access.user_id,
     )
     db.add(record)
     db.flush()
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="animal",
+        entity_id=str(animal.id),
+        match_id=match.id if match else None,
+        what=f"milk:{record.id}",
+        module_code="milk_production",
+    )
+    if under_withdrawal:
+        record_audit_event(
+            control_db,
+            actor_id=access.user_id,
+            actor_type=ActorType.TENANT_USER,
+            actor_role=access.role,
+            tenant_id=access.tenant_id,
+            action="milk.withheld",
+            entity_type="animal",
+            entity_id=str(animal.id),
+            module_code="milk_production",
+            summary=f"Recorded {payload.liters:g} L of {animal.name}'s milk as withheld (under withdrawal)",
+        )
     # A yield that crosses a production band asks for a feeding review
     # (feed architecture §11) — a task, never an automatic ration change.
-    if animal is not None:
-        programs.review_after_milk(db, access, animal)
-        # §12 ProductionRecorded: the animal's and its herd's monitors read again.
-        perf.on_production_recorded(db, access, "animal", animal)
+    programs.review_after_milk(db, access, animal)
+    # §12 ProductionRecorded: the animal's and its herd's monitors read again.
+    perf.on_production_recorded(db, access, "animal", animal)
     return _to_milk_out(record, under_withdrawal_warning=under_withdrawal)

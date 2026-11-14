@@ -5,9 +5,9 @@ free-form internal API design.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.farmos import livestock_catalog as _catalog
 
@@ -155,6 +155,26 @@ class FarmOut(BaseModel):
     timezone: str
     default_currency: str
     created_at: datetime
+    # The farm's own settings (app/farmos/farm_settings_service.py): days
+    # before an expected birth that a lactating animal is dried off, and the
+    # calendar after a birth — milk peak window, voluntary waiting period
+    # before the next insemination, heat cycle length.
+    dry_off_days_before_birth: int = 60
+    milk_peak_start_days: int = 40
+    milk_peak_end_days: int = 70
+    breeding_wait_days: int = 50
+    heat_cycle_days: int = 21
+
+
+class FarmSettingsUpdate(BaseModel):
+    """The farm-level settings a manager changes from the tablet. Only the
+    fields sent are changed."""
+
+    dry_off_days_before_birth: int | None = Field(None, ge=0, le=200)
+    milk_peak_start_days: int | None = Field(None, ge=0, le=365)
+    milk_peak_end_days: int | None = Field(None, ge=0, le=365)
+    breeding_wait_days: int | None = Field(None, ge=0, le=365)
+    heat_cycle_days: int | None = Field(None, ge=10, le=60)
 
 
 class ModuleLicenseOut(BaseModel):
@@ -429,6 +449,10 @@ class SpeciesOut(BaseModel):
     profiles_json: list[str] = []
     active: bool
     sort_order: int
+    # Configuration for the dates the tablet shows before the server is
+    # asked (expected birth from an insemination, expected hatch).
+    gestation_days: int | None = None
+    incubation_days: int | None = None
 
 
 class BreedOut(BaseModel):
@@ -564,10 +588,17 @@ class AnimalGroupCreate(BaseModel):
     species: str
     group_type: str = "flock"
     count: int = Field(0, ge=0)
+    # MEMBERSHIP_DERIVED | QUANTITY_MANAGED | HYBRID (LIVESTOCK-SCHEMA §6).
+    # Unset: a species kept individually (cattle, horses) counts its
+    # members; a flock species counts heads.
+    tracking_mode: str | None = None
     sex_composition: str | None = None
     life_stage: str | None = None
     management_profile: str | None = None
     location_label: str | None = None
+    # PREGNANT | NOT_PREGNANT | IN_MILK | DRY: members follow the herd
+    # records. Such a group is a cohort — an animal stays in its herd/pen.
+    membership_rule: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -575,6 +606,21 @@ class AnimalGroupCreate(BaseModel):
         if not v.strip():
             raise ValueError("name cannot be empty")
         return v.strip()
+
+    @field_validator("tracking_mode")
+    @classmethod
+    def mode_upper(cls, v: str | None) -> str | None:
+        return v.strip().upper() if v is not None and v.strip() else None
+
+    @field_validator("membership_rule")
+    @classmethod
+    def known_rule(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        code = v.strip().upper()
+        if code not in ("PREGNANT", "NOT_PREGNANT", "IN_MILK", "DRY"):
+            raise ValueError("membership_rule must be PREGNANT, NOT_PREGNANT, IN_MILK or DRY")
+        return code
 
 
 class AnimalGroupUpdate(BaseModel):
@@ -600,6 +646,9 @@ class AnimalGroupOut(BaseModel):
     management_profile: str | None = None
     status: str
     location_label: str | None = None
+    tracking_mode: str = "QUANTITY_MANAGED"
+    membership_rule: str | None = None
+    created_at: datetime | None = None
 
 
 class ConditionIn(BaseModel):
@@ -694,8 +743,30 @@ class AnimalOut(BaseModel):
     current_value: float | None
     notes: str | None
     active: bool
+    # Lifecycle and the reproduction / lactation projection (read-only:
+    # written by the exit, pregnancy-check, birth and dry-off workflows).
+    lifecycle_status: str = "active"
+    exited_at: datetime | None = None
+    pregnancy_started_at: datetime | None = None
+    expected_due_date: datetime | None = None
+    lactation_started_at: datetime | None = None
+    dried_off_at: datetime | None = None
     # Every identifier the animal carries (generic animal model §4).
     identifiers: list[IdentifierOut] = []
+
+    @model_validator(mode="after")
+    def _days_pregnant_today(self) -> AnimalOut:
+        """Days pregnant as of now, from the estimated conception — a stored
+        count would be a day stale by tomorrow."""
+        if self.pregnant and self.pregnancy_started_at is not None:
+            started = self.pregnancy_started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            today = datetime.now(timezone.utc).date()
+            self.pregnancy_days = max(0, (today - started.astimezone(timezone.utc).date()).days)
+        elif not self.pregnant:
+            self.pregnancy_days = None
+        return self
 
 
 class AnimalDetailOut(AnimalOut):
@@ -714,6 +785,15 @@ class AnimalDetailOut(AnimalOut):
     latest_weight: dict | None = None
     open_health_case: dict | None = None
     emergency: dict | None = None
+    # The livestock record (LIVESTOCK-SCHEMA, REPRODUCTION-SCHEMA): the
+    # reproduction card (state, due date, last service and check, the
+    # lactation in progress, which actions apply), the groups the animal is
+    # in now, its recorded parents and offspring, and its recent state
+    # history (status, stage, profile, location).
+    reproduction: dict | None = None
+    groups: list[dict] = []
+    relationships: dict = {}
+    recent_history: list[dict] = []
 
 
 class AnimalCreate(BaseModel):
@@ -747,8 +827,20 @@ class AnimalCreate(BaseModel):
     health_score: int = 100
     pregnant: bool = False
     pregnancy_days: int | None = None
+    # The insemination / mating she was served at, if known: recorded as a
+    # breeding event, and — when she is registered pregnant — the date the
+    # pregnancy and its expected birth are reckoned from.
+    service_date: datetime | None = None
+    service_type: str = "ARTIFICIAL_INSEMINATION"
     lactating: bool = False
+    # The calving (kidding, lambing…) that started the current lactation,
+    # when known: days in milk, the milk peak and the breeding wait count
+    # from it. Defaults to the registration date.
+    lactation_started_at: datetime | None = None
     lactation_cycle: int | None = None
+    # An animal of the same species with the same name already on the farm
+    # is refused as a possible duplicate unless confirmed.
+    confirm_duplicate: bool = False
     purchase_cost: float | None = None
     current_value: float | None = None
     notes: str | None = None
@@ -759,6 +851,11 @@ class AnimalCreate(BaseModel):
         if not v.strip():
             raise ValueError("value cannot be empty")
         return v.strip()
+
+    @field_validator("service_type")
+    @classmethod
+    def service_type_upper(cls, v: str) -> str:
+        return v.strip().upper() if v and v.strip() else "ARTIFICIAL_INSEMINATION"
 
     @field_validator("tag")
     @classmethod
@@ -1210,6 +1307,9 @@ class MilkRecordCreate(BaseModel):
     quality_status: str = "normal"
     recorded_at: datetime | None = None
     recorded_by: str | None = None
+    # The same cow, the same session, the same farm day is refused as a
+    # possible duplicate unless confirmed (a second milking).
+    confirm_duplicate: bool = False
 
 
 # --- Agriculture ---------------------------------------------------------
