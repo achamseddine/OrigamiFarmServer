@@ -266,7 +266,7 @@ def _audit_animal(
     )
 
 
-def _identifier_match(like: str):  # type: ignore[no-untyped-def]
+def _identifier_match(like: str) -> Any:
     return Animal.id.in_(
         select(AnimalIdentifier.animal_id).where(func.lower(AnimalIdentifier.identifier_value).like(like))
     )

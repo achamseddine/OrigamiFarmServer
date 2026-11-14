@@ -627,7 +627,6 @@ def record_assessment(
             + (f" (about {gestation} days)." if gestation else ".")
         )
     episode = active_pregnancy(db, animal.id)
-    transition = None
     if result_code == "POSITIVE":
         breeding = _likely_breeding(db, animal, at)
         if estimated_gestation_days is not None:
@@ -648,7 +647,6 @@ def record_assessment(
             )
             db.add(episode)
             db.flush()
-            transition = "pregnancy_confirmed"
         else:
             if estimated_gestation_days is not None or episode.estimated_conception_at is None:
                 episode.estimated_conception_at = conceived or episode.estimated_conception_at
@@ -659,7 +657,6 @@ def record_assessment(
             episode.version += 1
     elif result_code == "NEGATIVE" and episode is not None:
         _end_episode(episode, at, "NOT_PREGNANT")
-        transition = "pregnancy_ended"
     if episode is not None and result_code == "POSITIVE":
         recorded_due = episode.expected_due_date
     else:
@@ -683,7 +680,6 @@ def record_assessment(
     db.flush()
     changed = refresh_projection(db, animal)
     _touch(animal, access)
-    _ = transition
     _hooks(db, access, animal, changed & {"pregnant"}, trigger="lifecycle_changed")
     return assessment, (episode if episode is not None and episode.status == "active" else None)
 

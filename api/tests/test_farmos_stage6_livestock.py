@@ -133,6 +133,7 @@ def test_registration_enforces_required_and_allowed_identifiers(client, control_
         name="Shadow",
         species="horse",
         sex="F",
+        confirm_duplicate=True,
         identifiers=[{"identifier_type": "EAR_TAG", "identifier_value": "E-1"}],
     )
     assert wrong_type.status_code == 422

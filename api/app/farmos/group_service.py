@@ -183,7 +183,7 @@ def fill_rule_group(db: Session, access: AccessContext, group: AnimalGroup) -> i
 
 
 # -------------------------------------------------------------- reads
-def _active_at(at: datetime | None = None):  # type: ignore[no-untyped-def]
+def _active_at(at: datetime | None = None) -> Any:
     at = at or now_utc()
     return (AnimalGroupMembership.valid_from <= at) & (
         AnimalGroupMembership.valid_to.is_(None) | (AnimalGroupMembership.valid_to > at)
