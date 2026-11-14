@@ -41,13 +41,18 @@ def collect(
     legacy_tag: str | None,
     cap_set: CapabilitySet,
     *,
-    check_required: bool = True,
+    check_required: bool = False,
 ) -> list[IdentifierIn]:
     """Merges the identifier list with a legacy `tag`, checks every type is
-    permitted for this animal and — at registration — that every required
-    type is present, and settles which one is primary. Adding one more
-    identifier to an animal that already has its ear tag passes
-    `check_required=False`; the retire endpoint guards the other direction."""
+    permitted for this animal, and settles which one is primary.
+
+    A required identifier (a cow's ear tag, a horse's microchip) does not
+    block registration: the farm registers the animal first and tags it
+    later, and every animal gets a generated farm number in the meantime
+    ([with_farm_number]). A missing required identifier is shown on the
+    animal until it is added (`required_identifier_types` vs the active
+    identifiers). `check_required=True` keeps the strict check for a caller
+    that needs it; the retire endpoint guards removing one."""
     identifiers = list(payload_identifiers)
     if legacy_tag:
         identifiers.append(
@@ -80,6 +85,34 @@ def collect(
         keep = primaries[0]
         identifiers = [i if i is keep else i.model_copy(update={"is_primary": False}) for i in identifiers]
     return identifiers
+
+
+FARM_NUMBER_WIDTH = 4
+
+
+def next_farm_number(db: Session) -> str:
+    """The farm's next animal number: one farm-level sequence for every
+    species, never reused — retired and departed animals keep theirs. The
+    session is tenant-scoped (RLS), so "this farm" needs no filter."""
+    values = db.scalars(
+        select(AnimalIdentifier.identifier_value).where(AnimalIdentifier.identifier_type == "FARM_NUMBER")
+    ).all()
+    highest = max((int(v) for v in values if v and v.strip().isdigit()), default=0)
+    return str(highest + 1).zfill(FARM_NUMBER_WIDTH)
+
+
+def with_farm_number(db: Session, identifiers: list[IdentifierIn]) -> list[IdentifierIn]:
+    """Adds a generated FARM_NUMBER unless one was given. It is the primary
+    identifier only when the animal has no other."""
+    if any(i.identifier_type == "FARM_NUMBER" for i in identifiers):
+        return identifiers
+    generated = IdentifierIn(
+        identifier_type="FARM_NUMBER",
+        identifier_value=next_farm_number(db),
+        is_primary=not identifiers,
+        notes="Generated at registration",
+    )
+    return [*identifiers, generated]
 
 
 def find_clash(
