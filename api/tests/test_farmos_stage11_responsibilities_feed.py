@@ -125,6 +125,7 @@ class Farm:
 # ------------------------------------------------------------ feed: purchase, mix, feed
 def test_grain_purchase_with_quality_then_a_mix_then_feeding(client, control_db):
     f = Farm(client, control_db, "S11-MIX")
+    f.post("/animal-groups", {"name": "Dairy Herd", "species": "cow", "group_type": "herd"})
     bella = f.animal("Bella", group_name="Dairy Herd")
     barley = f.product("Barley", unit_cost=0.36, opening_quantity=1000, is_feedable=True)
     corn = f.product("Corn grain", unit="kg", is_ingredient=True, is_feedable=False, category="concentrate")
@@ -860,12 +861,14 @@ def test_a_worker_is_made_responsible_for_a_herd_with_duties(client, control_db)
     # A dairy goat herd: goats are kept in groups, and the animals that name
     # the herd as their group are the ones the responsibility covers.
     goat = {"species": "goat", "sex": "F", "management_profile": "dairy"}
+    # Stage 10: a group is registered before an animal can name it (membership).
+    herd = f.post("/animal-groups", {"name": "Dairy Herd", "species": "goat", "group_type": "herd"})
+    f.post("/animal-groups", {"name": "Kids", "species": "goat", "group_type": "pen"})
     bella = f.post("/animals", {"name": "Bella", "tag": _tag(), "group_name": "Dairy Herd", **goat})
     f.post("/animals", {"name": "Luna", "tag": _tag(), "group_name": "Dairy Herd", **goat})
     f.post("/animals", {"name": "Clover", "tag": _tag(), "group_name": "Kids", **goat})
     bess = f.post("/animals", {"name": "Old Bess", "tag": _tag(), "group_name": "Dairy Herd", **goat})
     assert client.put(f"{API}/animals/{bess['id']}", json={"active": False}, headers=f.h).status_code == 200
-    herd = f.post("/animal-groups", {"name": "Dairy Herd", "species": "goat", "group_type": "herd"})
     worker_id = str(f.worker.id)
     assert "milk_production" not in f.get("/me/access", h=f.worker_h)["modules"]
 
@@ -1249,3 +1252,51 @@ def test_tasks_stay_with_their_assignee_and_their_farm(client, control_db):
     )
     # A decision on a recommendation is made in the caller's own name only.
     assert client.get(f"{API}/tasks", params={"farm_id": f.farm_id}, headers=stranger.h).status_code == 404
+
+
+# ------------------------------------------------------------ stage 10 × stage 11
+
+
+def test_an_animal_that_left_the_farm_is_not_fed(client, control_db):
+    """Behavioural model §14: a sale closes the animal's feeding — the record
+    sheet's feed action is refused with the exit named, not queued."""
+    f = Farm(client, control_db, "S12-EXITFEED")
+    daisy = f.animal("Daisy")
+    hay = f.product("Meadow Hay", opening_quantity=500, is_feedable=True)
+    body = {
+        "subject_type": "animal",
+        "subject_id": daisy["id"],
+        "event_type": "offered",
+        "components": [{"feed_product_id": hay["id"], "quantity_offered": 6}],
+    }
+    assert client.post(f"{API}/feeding-events", json=body, headers=f.h).status_code == 201
+    f.post(f"/animals/{daisy['id']}/exit", {"exit_type": "sold", "reason": "Sold"}, expect=200)
+    refused = client.post(f"{API}/feeding-events", json=body, headers=f.h)
+    assert refused.status_code == 409, refused.text
+    assert "Daisy" in refused.json()["detail"] and "sold" in refused.json()["detail"]
+    assert f.availability(hay["id"])["on_hand"] == 494
+
+
+def test_a_weight_taken_twice_the_same_day_is_asked(client, control_db):
+    f = Farm(client, control_db, "S12-WEIGHT")
+    daisy = f.animal("Daisy")
+    assert (
+        client.post(f"{API}/animals/{daisy['id']}/weights", json={"weight_kg": 540}, headers=f.h).status_code
+        == 201
+    )
+    again = client.post(f"{API}/animals/{daisy['id']}/weights", json={"weight_kg": 541}, headers=f.h)
+    assert _is_possible_duplicate(again), again.text
+    assert "Daisy" in again.json()["detail"] and "540" in again.json()["detail"]
+    # A weight from last week is a different weighing.
+    older = client.post(
+        f"{API}/animals/{daisy['id']}/weights", json={"weight_kg": 530, "measured_at": _iso(7)}, headers=f.h
+    )
+    assert older.status_code == 201, older.text
+    confirmed = client.post(
+        f"{API}/animals/{daisy['id']}/weights",
+        json={"weight_kg": 541, "confirm_duplicate": True},
+        headers=f.h,
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    events = _confirmed(control_db, f.tenant.id)
+    assert len(events) == 1 and events[0].metadata_json["record"] == f"weight:{confirmed.json()['id']}"

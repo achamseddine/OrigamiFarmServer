@@ -210,8 +210,8 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 Each stage's tests live in `api/tests/test_farmos_stage{1..11}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
-Stages 6 to 9 are the staged port of the reference backend's newer contract (288 operations in its
-OpenAPI document), complete with stage 9. What the port deliberately leaves out is listed under
+Stages 6 to 11 are the staged port of the reference backend's newer contract (its OpenAPI document
+at `b5d8c94`), complete with stage 11. What the port deliberately leaves out is listed under
 "Known, deliberate gaps".
 
 ## Endpoint inventory by group
@@ -266,7 +266,8 @@ where cited, not as a generic framework:
   a treatment or a medicine dose of the same subject within 12 hours, an open health case for the
   same subject and problem, the same observation within half an hour, the same egg count or harvest
   from the same flock or field within half an hour, a Mouneh sale of the same quantity and price
-  within five minutes, an open task with the same title (`app/farmos/duplicates.py`).
+  within five minutes, an open task with the same title, a weight of the same animal on the same
+  farm day, a same-name animal of the same species (`app/farmos/duplicates.py`).
 - **RULE-DUP-NEVER** — a repeat that can never be right is a plain 409 with no override: a feed
   product, a field or a raw material of the same name (case-insensitive), a feed lot code already
   used.
@@ -563,11 +564,12 @@ where cited, not as a generic framework:
   escalation names; the bell entries themselves (`GET /notifications`) are one per farm, visible to
   everyone with the module, as the rest of this contract's notifications are. The reference
   backend addresses a copy of each entry to every routed recipient.
-- **Context the animal record does not carry is reported as missing, not inferred.** Days in milk,
-  calving and dry-off dates are not on the server's `Animal`; a lactation-adjusted or
-  production-curve baseline falls back to the rolling subject baseline and says so, and the
-  confidence drops for the missing context. A monitor may state `configuration.lactation_started_at`
-  to supply days in milk until the record carries it. Group and location moves are counted from the
+- **Context the animal record does not carry is reported as missing, not inferred.** Days in milk
+  come from the animal's lactation record (stage 10: `lactation_started_at`, the projection of the
+  current lactation episode); an animal in milk with no recorded start makes a lactation-adjusted
+  or production-curve baseline fall back to the rolling subject baseline, which says so, and the
+  confidence drops for the missing context. A monitor may still state
+  `configuration.lactation_started_at` for such animals. Group and location moves are counted from the
   audit trail (`animal.updated` with `group_name` / `location_label`), feeding-program changes from
   the assignments.
 - **Pharmacy reference data is code-defined.** Medicine categories and the built-in

@@ -608,9 +608,17 @@ def test_weights_are_dated_records_and_the_animal_carries_the_latest(client, con
     )
     assert denied.status_code == 403
 
-    recorded = client.post(
+    # Weighed again the same day as the registration weight: asked first
+    # (stage 11 duplicate guard), then recorded once the person confirms.
+    asked = client.post(
         f"/api/v1/animals/{animal_id}/weights",
         json={"weight_kg": 520, "method": "tape", "notes": "monthly"},
+        headers=farmos_headers(token),
+    )
+    assert asked.status_code == 409 and "already weighed" in asked.json()["detail"], asked.text
+    recorded = client.post(
+        f"/api/v1/animals/{animal_id}/weights",
+        json={"weight_kg": 520, "method": "tape", "notes": "monthly", "confirm_duplicate": True},
         headers=farmos_headers(token),
     )
     assert recorded.status_code == 201, recorded.text

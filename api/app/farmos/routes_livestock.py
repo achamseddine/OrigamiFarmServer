@@ -21,6 +21,7 @@ from app.common.db import get_control_db
 from app.common.enums import ActorType
 from app.farmos import (
     capability_service,
+    duplicates,
     group_service,
     identifier_service,
     livestock_service,
@@ -38,7 +39,7 @@ from app.farmos.deps import (
     require_diagnostic_role,
     require_permission,
 )
-from app.farmos.livestock_models import AnimalGroup, AnimalHealthCondition
+from app.farmos.livestock_models import AnimalGroup, AnimalHealthCondition, AnimalWeightRecord
 from app.farmos.reproduction_schemas import (
     AnimalExitIn,
     AnimalRestoreIn,
@@ -841,6 +842,28 @@ def record_weight(
     """A dated weight with its method; the animal's `weight_kg` becomes
     the latest of them."""
     animal = livestock_service.load_animal_or_404(db, animal_id)
+    livestock_service.validate_weight_input(payload.weight_kg, payload.method, payload.measured_at)
+    # Weighed twice the same day: the second entry is a possible duplicate
+    # until the person says it is a real second weighing.
+    day_start, day_end = duplicates.farm_day(
+        duplicates.tenant_timezone(control_db, access.tenant_id), payload.measured_at
+    )
+    same_day = db.scalar(
+        select(AnimalWeightRecord)
+        .where(
+            AnimalWeightRecord.animal_id == animal.id,
+            AnimalWeightRecord.deleted_at.is_(None),
+            AnimalWeightRecord.measured_at >= day_start,
+            AnimalWeightRecord.measured_at < day_end,
+        )
+        .order_by(AnimalWeightRecord.measured_at.desc())
+        .limit(1)
+    )
+    match = duplicates.guard(
+        same_day,
+        f"{animal.name} was already weighed that day ({float(same_day.weight_kg):g} kg)." if same_day else "",
+        confirm=payload.confirm_duplicate,
+    )
     row = livestock_service.record_weight(
         db,
         animal,
@@ -850,6 +873,15 @@ def record_weight(
         method=payload.method,
         source_type="manual",
         notes=payload.notes,
+    )
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="animal",
+        entity_id=str(animal.id),
+        match_id=match.id if match else None,
+        what=f"weight:{row.id}",
+        module_code="animals",
     )
     animal.version += 1
     animal.last_modified_by = access.membership_id

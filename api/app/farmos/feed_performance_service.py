@@ -308,7 +308,11 @@ def ensure_default_monitors(db: Session, access: AccessContext) -> list[FeedPerf
     members have milk records, eggs for flocks with egg records. Explicit
     per-animal and growth monitors are the farm's to add."""
     created = []
-    for group in db.scalars(select(AnimalGroup).where(AnimalGroup.deleted_at.is_(None))):
+    # A rule group (pregnant, in milk, dry) is a cohort over the herd, not a
+    # fed unit: its members are already monitored through their herd or pen.
+    for group in db.scalars(
+        select(AnimalGroup).where(AnimalGroup.deleted_at.is_(None), AnimalGroup.membership_rule.is_(None))
+    ):
         members = programs.animals_in_group(db, group)
         has_milk = bool(members) and bool(
             db.scalar(
@@ -662,10 +666,19 @@ def _peers(db: Session, monitor: FeedPerformanceMonitor, subject):
 
 
 def _days_in_milk(monitor: FeedPerformanceMonitor, animals: list[Animal], at: datetime) -> float | None:
-    """The animal record carries no calving date yet, so days in milk is
-    known only when the monitor's configuration states it
-    (`configuration.days_in_milk_at` = an ISO date the lactation started);
-    otherwise it is missing context, and recorded as such."""
+    """Days in milk from the animals' own lactation records (stage 10:
+    `animal.lactation_started_at`, the projection of the current lactation
+    episode), averaged over the lactating animals of the subject. A monitor
+    may still state `configuration.lactation_started_at` for animals whose
+    record carries no date; otherwise days in milk is missing context, and
+    recorded as such."""
+    dims = [
+        (at - start).total_seconds() / 86400
+        for a in animals
+        if a.lactating and (start := ensure_utc(a.lactation_started_at)) is not None
+    ]
+    if dims:
+        return round(max(sum(dims) / len(dims), 0.0), 1)
     started = (monitor.configuration_json or {}).get("lactation_started_at")
     if not started:
         return None

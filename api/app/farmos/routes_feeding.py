@@ -24,7 +24,7 @@ from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType, MembershipStatus
 from app.farmos import asset_service as assets
-from app.farmos import duplicates, livestock_service
+from app.farmos import duplicates, livestock_service, livestock_state_service
 from app.farmos import feed_batch_service as batches
 from app.farmos import feed_catalog as catalog
 from app.farmos import feed_forecast_service as forecast
@@ -1705,6 +1705,9 @@ def record_feeding_event(
     control_db: Session = Depends(get_control_db),
 ) -> dict:
     subject = programs.load_subject(db, payload.subject_type, payload.subject_id)
+    if payload.subject_type == "animal":
+        # Behavioural model §14: an animal that left the farm is not fed.
+        livestock_state_service.ensure_on_farm(subject, "feeding")
     _require_override(access, payload.allow_negative)
     components = [c.model_dump() for c in payload.components]
     earlier = programs.find_duplicate_feeding(

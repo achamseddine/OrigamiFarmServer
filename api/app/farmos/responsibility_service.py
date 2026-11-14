@@ -32,8 +32,7 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_audit_event
 from app.auth.models import UserIdentity
 from app.common.enums import ActorType, MembershipStatus
-from app.farmos import feeding_program_service as programs
-from app.farmos import livestock_catalog
+from app.farmos import group_service, livestock_catalog
 from app.farmos.deps import AccessContext, is_full_access_role
 from app.farmos.feed_catalog import FeedError
 from app.farmos.livestock_models import AnimalGroup
@@ -105,9 +104,8 @@ def animals_in_scope(db: Session, r: WorkResponsibility) -> list[Animal]:
     """The animals a responsibility covers today — the group's animals,
     every animal of the species, the one animal — on the farm.
 
-    A group's animals are the active animals that name it as their
-    `group_name` (the link the server's animal record carries today); the
-    membership-based reading arrives with the group memberships of stage 10.
+    A group's animals are its current members (stage 10 memberships,
+    LIVESTOCK-SCHEMA §7), on the farm.
     """
     if r.scope_type == "animal":
         pk = _parse(r.scope_id)
@@ -118,7 +116,10 @@ def animals_in_scope(db: Session, r: WorkResponsibility) -> list[Animal]:
         group = db.get(AnimalGroup, pk) if pk else None
         if group is None or group.deleted_at is not None:
             return []
-        return sorted(programs.animals_in_group(db, group), key=lambda a: a.name or "")
+        members = [
+            a for _m, a in group_service.current_members(db, group) if a.active and a.deleted_at is None
+        ]
+        return sorted(members, key=lambda a: a.name or "")
     if r.scope_type == "species":
         return list(
             db.scalars(

@@ -692,6 +692,9 @@ class WeightIn(BaseModel):
     measured_at: datetime | None = None
     method: str = "scale"
     notes: str | None = None
+    # A second weight of the same animal on the same farm day is refused as a
+    # possible duplicate unless the person confirms it (app/farmos/duplicates.py).
+    confirm_duplicate: bool = False
 
 
 class WeightOut(BaseModel):

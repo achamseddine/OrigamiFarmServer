@@ -217,6 +217,20 @@ def weight_history(db: Session, animal_id: uuid.UUID, *, limit: int = 50) -> lis
     )
 
 
+def validate_weight_input(weight_kg: float | None, method: str, measured_at: datetime | None) -> datetime:
+    """The checks a weight must pass before anything else is asked about it
+    (a duplicate question on an impossible weight would mislead). Returns
+    the measurement time, UTC, defaulting to now."""
+    if weight_kg is None or weight_kg <= 0:
+        raise HTTPException(status_code=422, detail="Weight must be greater than zero.")
+    if method not in catalog.WEIGHT_METHODS:
+        raise HTTPException(status_code=422, detail=f"method must be one of {list(catalog.WEIGHT_METHODS)}")
+    at = ensure_utc(measured_at) or now_utc()
+    if at > now_utc() + timedelta(minutes=5):
+        raise HTTPException(status_code=422, detail="A weight cannot be measured in the future.")
+    return at
+
+
 def record_weight(
     db: Session,
     animal: Animal,
@@ -231,13 +245,7 @@ def record_weight(
 ) -> AnimalWeightRecord:
     """A dated weight with its method; the animal's `weight_kg` becomes the
     latest of them (never an older back-dated one)."""
-    if weight_kg is None or weight_kg <= 0:
-        raise HTTPException(status_code=422, detail="Weight must be greater than zero.")
-    if method not in catalog.WEIGHT_METHODS:
-        raise HTTPException(status_code=422, detail=f"method must be one of {list(catalog.WEIGHT_METHODS)}")
-    at = ensure_utc(measured_at) or now_utc()
-    if at > now_utc() + timedelta(minutes=5):
-        raise HTTPException(status_code=422, detail="A weight cannot be measured in the future.")
+    at = validate_weight_input(weight_kg, method, measured_at)
     row = AnimalWeightRecord(
         tenant_id=animal.tenant_id,
         last_modified_by=access.membership_id,

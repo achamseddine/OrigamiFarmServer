@@ -593,7 +593,10 @@ def test_a_persistent_decline_after_a_feed_change_is_explained_alerted_acknowled
         0.45 <= a["confidence_score"] <= 0.7
     ), "confidence is lowered for every piece of context the farm does not record"
     missing = set(a["confounders"]["missing_context"])
-    assert {"environment", "milk_components", "weight_change", "group_membership", "days_in_milk"} <= missing
+    assert {"environment", "milk_components", "weight_change", "group_membership"} <= missing
+    # Stage 10: an animal registered in milk carries its lactation start, so
+    # days in milk is known context now, not missing.
+    assert "days_in_milk" not in missing
     assert a["confounders"]["health_events"] == 0 and a["confounders"]["refusal_events"] == 0
     change = a["evidence"]["feed_changes"][0]
     assert change["feed_product_id"] == farm.mix["id"] and change["days_of_exposure"] >= 2
