@@ -36,12 +36,29 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      # The farm app for the browser ships inside the image (served at /app/).
+      # Resolve the newest web release of the app repository here, as
+      # publish-image.yml does; left empty, the Dockerfile's fetch step looks
+      # it up itself, so this only makes the choice visible in the log.
+      - name: Find the newest web release of the app
+        id: webapp
+        run: |
+          tag=$(curl -fsS -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            'https://api.github.com/repos/achamseddine/OrigamiFarmOS/releases?per_page=30' \
+            | python3 -c 'import json,sys; rs=[r for r in json.load(sys.stdin) if r["tag_name"].startswith("web-") and any(a["name"]=="origami-farmos-web.zip" for a in r["assets"])]; rs.sort(key=lambda r: r["published_at"], reverse=True); print(rs[0]["tag_name"] if rs else "")' \
+            || true)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Web app release: ${tag:-none}"
+
       - name: Build and push image to ACR
         run: |
           az acr build \
             --registry "${{ secrets.ACR_NAME }}" \
             --image "origami-api:${{ inputs.image_tag }}" \
             --file api/Dockerfile \
+            --build-arg APP_VERSION="$(git rev-parse --short HEAD)" \
+            --build-arg APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg FARMOS_WEB_RELEASE_TAG='${{ steps.webapp.outputs.tag }}' \
             .
 
       - name: Point the Web App at the new image
