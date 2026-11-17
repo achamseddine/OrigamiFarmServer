@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # without a console — that is the normal state for a test run.
     admin_web_dir: str = "../admin-web/out"
 
+    # The farm app compiled for the browser (OrigamiFarmOS ADR-004), served
+    # by this app at /app/ beside the API (app/web_client.py). The image sets
+    # FARMOS_WEB_DIR to the web release it downloaded at build time; in
+    # development, an unzipped origami-farmos-web.zip in web_app/ next to
+    # api/. Absent, /app/ explains how to install it and the API is unaffected.
+    farmos_web_dir: str = "../web_app"
+
     # Outbound mail. Unset by default, and the product is honest about
     # that rather than silently dropping messages: an invitation whose
     # email cannot be sent is still shown to the admin as a link to pass

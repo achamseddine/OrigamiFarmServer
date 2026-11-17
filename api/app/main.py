@@ -222,6 +222,13 @@ app.include_router(platform_setup_router, prefix="/platform/v1", tags=["Platform
 app.include_router(support_router, prefix="/platform/v1", tags=["Platform Support"])
 app.include_router(backups_router, prefix="/platform/v1", tags=["Platform Backups"])
 
+# The farm app for the browser, at /app/ — before the console's catch-all
+# mount below, so the app's files are found here and never fall through to
+# the console's 404 page (app/web_client.py).
+from app.web_client import router as web_client_router  # noqa: E402
+
+app.include_router(web_client_router)
+
 # The admin console, mounted last so every API route above still wins the
 # match. Routes are tried in registration order, so this only ever sees
 # paths nothing else claimed. admin-web exports each page as

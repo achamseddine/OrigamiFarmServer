@@ -249,6 +249,7 @@ the routing map — which router module owns which path.
 | AI recommendations | `routes_recommendations.py` | `GET /recommendations`, `PATCH /recommendations/{id}/decision` |
 | Reports | `routes_reports.py` | `GET /morning-briefing`, `GET /reports/daily-summary` |
 | Module licensing | `routes_modules.py` | `GET /modules`, `POST /modules/{code}/activate` |
+| Web app | `app/web_client.py` (outside the API prefix, not in the OpenAPI document) | `GET /app/` — the farm app compiled for the browser, served beside the API from `FARMOS_WEB_DIR` (docs/AZURE_DEPLOYMENT.md §8) |
 | Mouneh production | `routes_mouneh.py` | raw materials, products, recipes, batches, finished goods, sales |
 | Farm visits | `routes_visits.py`, `routes_visit_bookings.py` | activities, packages, visitors, sessions, calendar, bookings, staff roster, incidents, feedback, retail sales |
 

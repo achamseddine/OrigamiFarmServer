@@ -85,6 +85,18 @@ COPY api/requirements.txt .
 RUN pip install --no-cache-dir --only-binary=:all: --progress-bar off -r requirements.txt
 
 
+# The farm app compiled for the browser (OrigamiFarmOS ADR-004): the
+# origami-farmos-web.zip of a web release of the app repository, unzipped so
+# app/web_client.py can serve it at /app/ beside the API. The tag is passed
+# by publish-image.yml as the newest web release at build time; an empty
+# tag (a plain `docker build`) or a failed download leaves the folder empty,
+# and /app/ then says the web app is not installed — the API is unaffected.
+FROM python:3.12-slim-bookworm AS webapp
+ARG FARMOS_WEB_REPO=achamseddine/OrigamiFarmOS
+ARG FARMOS_WEB_RELEASE_TAG=""
+COPY api/fetch_web_app.py /fetch_web_app.py
+RUN python /fetch_web_app.py "$FARMOS_WEB_REPO" "$FARMOS_WEB_RELEASE_TAG" /web
+
 FROM python:3.12-slim-bookworm AS final
 
 # `useradd` ships in the base image (passwd) — no package install needed.
@@ -98,7 +110,8 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    ADMIN_WEB_DIR=/app/admin-web
+    ADMIN_WEB_DIR=/app/admin-web \
+    FARMOS_WEB_DIR=/app/web_app
 
 WORKDIR /app
 COPY --chown=origami:origami api/ .
@@ -108,6 +121,9 @@ COPY --chown=origami:origami scripts/ ./scripts/
 # the API keeps its own paths and everything else falls through to here —
 # no Node runtime in this image, and one process serving both.
 COPY --from=console --chown=origami:origami /build/out ./admin-web
+
+# The farm app for the browser, served at /app/ (see the webapp stage).
+COPY --from=webapp --chown=origami:origami /web ./web_app
 
 # Plain COPY + chmod rather than `COPY --chmod=`: the latter needs
 # BuildKit, and this has to build on the classic builder too (the tell is
