@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,15 @@ from app.farmos.deps import AccessContext, get_access_context
 from app.farmos.schemas import LoginRequest, LoginResponse, UserProfileOut
 from app.farmos.security import issue_access_token
 from app.tenants.models import TenantMembership
+
+
+def normalise_email(value: str) -> str:
+    """One spelling for an address wherever it is written or typed:
+    trimmed and lower-cased. An email's local part is case-sensitive in
+    theory and never in practice; a sign-in refused because a tablet
+    keyboard capitalised the first letter is a lockout, not security."""
+    return value.strip().lower()
+
 
 router = APIRouter()
 
@@ -57,7 +66,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_control_db)) -> Login
     """
     generic_error = HTTPException(status_code=401, detail="Incorrect email or password.")
 
-    user = db.execute(select(UserIdentity).where(UserIdentity.email == payload.email)).scalar_one_or_none()
+    # The address as the person typed it, not as the keyboard capitalised
+    # it or the manager spelled it when creating the account: addresses are
+    # stored lower-cased (routes_employees_admin) and matched case-insensitively.
+    email = normalise_email(payload.email)
+    user = db.execute(
+        select(UserIdentity).where(func.lower(UserIdentity.email) == email)
+    ).scalar_one_or_none()
     if user is None or not user.password_hash or not verify_password(payload.password, user.password_hash):
         raise generic_error
 

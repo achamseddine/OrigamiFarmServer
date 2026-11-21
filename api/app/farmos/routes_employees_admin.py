@@ -11,7 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
@@ -21,6 +21,7 @@ from app.common.db import get_control_db
 from app.common.enums import ActorType, MembershipStatus, TenantRole
 from app.farmos.deps import AccessContext, is_full_access_role, require_permission
 from app.farmos.permissions import ACTIONS, full_access_grid, permissions_grid
+from app.farmos.routes_auth import normalise_email
 from app.farmos.schemas import (
     EmployeeCreate,
     EmployeeDetailOut,
@@ -66,9 +67,7 @@ def _to_employee_out(db: Session, user: UserIdentity, membership: TenantMembersh
 
 def _apply_permissions(db: Session, membership_id: uuid.UUID, permissions: list) -> None:
     db.execute(
-        delete(MembershipModulePermission).where(
-            MembershipModulePermission.membership_id == membership_id
-        )
+        delete(MembershipModulePermission).where(MembershipModulePermission.membership_id == membership_id)
     )
     for entry in permissions:
         for action in ACTIONS:
@@ -80,6 +79,17 @@ def _apply_permissions(db: Session, membership_id: uuid.UUID, permissions: list)
                         permission_code=action,
                     )
                 )
+
+
+def _refuse_taken_email(db: Session, email: str, *, except_user_id: uuid.UUID | None = None) -> None:
+    """One address, one person: a second account with the same email (in
+    any spelling) is refused with a sentence the manager can act on,
+    rather than a database error on the way out."""
+    stmt = select(UserIdentity.id).where(func.lower(UserIdentity.email) == email)
+    if except_user_id is not None:
+        stmt = stmt.where(UserIdentity.id != except_user_id)
+    if db.execute(stmt).first() is not None:
+        raise HTTPException(status_code=409, detail=f"An account already uses {email}.")
 
 
 @router.get("/employees", response_model=list[EmployeeDetailOut])
@@ -106,9 +116,12 @@ def create_employee(
     access: AccessContext = Depends(require_permission("employees", "create")),
     db: Session = Depends(get_control_db),
 ) -> EmployeeDetailOut:
+    email = normalise_email(payload.email) if payload.email else None
+    if email:
+        _refuse_taken_email(db, email)
     user = UserIdentity(
-        idp_subject=payload.email or f"farmos:{uuid.uuid4()}",
-        email=payload.email or f"{uuid.uuid4()}@no-email.origami.local",
+        idp_subject=email or f"farmos:{uuid.uuid4()}",
+        email=email or f"{uuid.uuid4()}@no-email.origami.local",
         display_name=payload.name,
         password_hash=hash_password(payload.password),
     )
@@ -195,9 +208,11 @@ def update_employee(
     if payload.name is not None and payload.name != user.display_name:
         changes["name"] = {"from": user.display_name, "to": payload.name}
         user.display_name = payload.name
-    if payload.email is not None and payload.email != user.email:
-        changes["email"] = {"from": user.email, "to": payload.email}
-        user.email = payload.email
+    if payload.email is not None and normalise_email(payload.email) != user.email:
+        email = normalise_email(payload.email)
+        _refuse_taken_email(db, email, except_user_id=user.id)
+        changes["email"] = {"from": user.email, "to": email}
+        user.email = email
     if payload.active is not None:
         new_status = MembershipStatus.ACTIVE if payload.active else MembershipStatus.INACTIVE
         if membership.status != new_status:

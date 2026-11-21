@@ -726,7 +726,9 @@ def invite_membership(
     identity: Identity = Depends(require_platform_role(*_STAFF)),
 ) -> MembershipOut:
     _get_tenant_or_404(db, tenant_id)
-    user = db.execute(select(UserIdentity).where(UserIdentity.email == payload.email)).scalar_one_or_none()
+    user = db.execute(
+        select(UserIdentity).where(func.lower(UserIdentity.email) == payload.email.strip().lower())
+    ).scalar_one_or_none()
     if user is None:
         user = UserIdentity(idp_subject=payload.email, email=payload.email, display_name=payload.display_name)
         db.add(user)
