@@ -142,9 +142,11 @@ def test_endpoints_added_after_stage_5_are_farm_scoped(client, control_db):
         json={"category": "feed", "amount": 1680},
         headers=farmos_headers(token_a),
     ).status_code == 201
+    # Stage 13: milk is sold from the tank (POST /production/milk-sales);
+    # the manual entry takes any other product.
     assert client.post(
         "/api/v1/sales",
-        json={"product_type": "milk", "amount": 4250},
+        json={"product_type": "eggs", "amount": 4250},
         headers=farmos_headers(token_a),
     ).status_code == 201
 
