@@ -206,13 +206,14 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 9 | Platform masters (units of measure as references, farm assets named by mixes, notification routes, the scheduled cycles with their run log) and feed-performance intelligence (monitors, exposure windows with lineage, explained assessments, mix and supplier scores, deduplicated alerts, the feed signals on the bell) | The feed workspace's Performance tab and the mix score card, Settings → Units / Assets / Notifications, and a farm that is evaluated daily even on a quiet day |
 | 10 | Livestock records and reproduction: effective-dated animal state history (status, stage, profile, location), first-class group membership with type policies and the head-count ledger, rule groups (pregnant / open / in milk / dry), the animal's exit and restore, parentage, breeding → pregnancy check → pregnancy → birth → offspring, lactations and dry-off, incubation and hatch, the farm's calendar settings (`farm_settings`), generated farm numbers at registration, and the duplicate guards on milk, breedings and registrations | The herd screens that move an animal between pens and keep "who was in it last spring", the reproduction card and calendar on the digital twin, the breeding / calving / hatch flows, Settings → Farm calendar, and a registration that never waits for a scanned tag |
 | 11 | Work responsibilities (what an employee looks after and the duties it means, granting the module access they need), the feed room's one-step mix (`POST /feed-mixes`) and standard feeds, lot quality at receipt, the duplicate-entry guards of every record workflow (`confirm_duplicate`), the approval behind stock overrides and recipe activation, and the module gates aligned with the tablet's screens | Settings → Employees → Responsibilities and the worker's own day, the animal feeding form's default rows, "possible duplicate" prompts on the record sheets, and a worker who cannot take stock below the ledger or activate a recipe without a manager |
+| 12 | Employees enter, the manager approves: approval requests (`approval_request` — an employee's numbered mix or a correction to a milk record or a feeding, checked when sent, applied as the manager on approval, rejected with a reason, withdrawn while pending, on the bell both ways), corrections in place (`POST /production/milk/{id}/correct`, `POST /feeding-events/{id}/correct`), the Feed module's rights split (*create* records milk and feedings and drafts recipes and programs; mixes, the feed list, rations, reservations, corrections and buying feed need *approve*), buying feed through purchase requests (`feed_product_id` lines, `submit`, a Feed approver decides a feed-only request, the delivery is recorded against it), and the record-consistency rules (nothing dated in the future, acquisition not before birth, milk only from an animal in milk within her lactation and at most 100 L, no records on an animal that left, a raw ingredient never fed directly, a mix drawing no lot received after its date, a non-negative delivery cost, waste not more than the harvest, a repeated flock head-count change asked as a duplicate, species locked once fed) | The approvals card on My Day, Feed and Milk (Approve / Reject for the manager, "your requests" with Withdraw for employees), *Send to the manager* on an employee's mix, *Ask to buy feed*, correcting milk and feedings from the animal's page, and a server that refuses tomorrow's milk from an offline tablet with a wrong clock |
 
-Each stage's tests live in `api/tests/test_farmos_stage{1..11}[_suffix].py` and run against real
+Each stage's tests live in `api/tests/test_farmos_stage{1..12}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
 Stages 6 to 11 are the staged port of the reference backend's newer contract (its OpenAPI document
-at `b5d8c94`), complete with stage 11. What the port deliberately leaves out is listed under
-"Known, deliberate gaps".
+at `b5d8c94`); stage 12 ports its PR 23 (approvals, corrections, buying feed) and the record-consistency
+review of commit `32356c2`. What the port deliberately leaves out is listed under "Known, deliberate gaps".
 
 ## Endpoint inventory by group
 
@@ -234,13 +235,14 @@ the routing map — which router module owns which path.
 | Health cases | `routes_health_cases.py` (shapes in `emergency_schemas.py`) | `GET/POST /health/cases`, `GET/PATCH /health/cases/{id}`, `POST …/close`, `POST …/diagnoses`, `POST …/plans` |
 | Observations | `routes_observations.py` | `GET/POST /observations` — a new observation joins the subject's open case; a severe one starts emergency triage |
 | Pharmacy | `routes_pharmacy.py` (shapes in `pharmacy_schemas.py`) | `GET /pharmacy/summary`, `POST /pharmacy/evaluate`, `GET /pharmacy/{categories,ingredients}`, `GET/POST /pharmacy/medicines`, `GET/PATCH /pharmacy/medicines/{id}`, `GET /pharmacy/lots`, `POST /pharmacy/lots/receive`, `PATCH /pharmacy/lots/{id}/{status,storage}`, `POST /pharmacy/lots/{id}/open`, `POST /pharmacy/{adjustments,transfers}`, `GET/POST /pharmacy/reservations`, `POST …/reservations/{id}/release`, `GET /pharmacy/policies`, `PUT /pharmacy/policies/{item_id}`, `GET /pharmacy/alerts`, `POST /pharmacy/alerts/{id}/{acknowledge,resolve,requisition}`, `GET/POST /pharmacy/administrations`, `POST …/administrations/{id}/reverse` |
-| Procurement | `routes_procurement.py` | `GET/POST /procurement/requisitions`, `GET /procurement/requisitions/{id}`, `POST …/{submit,approve,reject,cancel}` |
+| Procurement | `routes_procurement.py` | `GET/POST /procurement/requisitions` (Inventory *or* Feed & Nutrition; a line names an `inventory_item_id` or a `feed_product_id`; `submit: true` sends it to the manager at once and puts it on the bell), `GET /procurement/requisitions/{id}`, `POST …/{submit,approve,reject,cancel}` — a request that is for feed only may be decided by a Feed & Nutrition approver (authority `feed_nutrition.approve`); the person who asked hears the decision on the bell |
+| Approvals | `routes_approvals.py` (shapes in `approval_schemas.py`, rules in `approval_service.py`) | `GET /approval-requests` (`status`, `mine`; a manager sees every module they approve plus their own, anyone else only their own), `POST /approval-requests` (kinds `feed_mix`, `milk_correction`, `feeding_correction`; *create* on the kind's module; checked when sent, changes nothing), `GET /approval-requests/{id}`, `POST …/approve` (*approve* on the module — `feed_nutrition` for mixes and feedings, `milk_production` for milk; `allow_negative` / `confirm_duplicate` are the manager's), `POST …/reject` (a note is required), `POST …/cancel` (the person who asked, while pending) |
 | Emergency protocols | `routes_emergency.py` (shapes in `emergency_schemas.py`) | `GET /emergency/{summary,sign-codes,offline-package}`, `POST /emergency/offline-runs`, `POST /emergency/reassessments/check`, `GET/POST /emergency/protocols`, `GET /emergency/protocols/{id}`, `POST …/versions`, `POST …/versions/{v}/{approve,withdraw}`, `GET/POST /emergency/assessments`, `GET /emergency/assessments/{id}`, `POST …/{start,close}`, `GET /emergency/runs`, `GET /emergency/runs/{id}`, `POST …/steps/{s}/{prepare,confirm,skip}`, `POST …/{reassess,escalate,resolve}` |
 | Feed & inventory (item level) | `routes_feed.py` | `GET/POST /feed/items`, `GET/POST /feed/transactions` — feed items are lot-tracked behind the scenes; offered to Feed & Nutrition *or* Inventory, and `allow_negative` needs *approve* on either |
-| Feeding (generic feed architecture) | `routes_feeding.py` (shapes in `feed_schemas.py`) | `GET/POST /feed-products`, `GET/PATCH /feed-products/{id}`, `GET/PUT /feed-products/{id}/usage-policy`, `POST …/usage-policy/validate`, `GET /feed-lots`, `POST /feed-lots/receive`, `PATCH /feed-lots/{id}/status`, `GET /feed-lots/{id}/trace`, `POST /feed-inventory/adjustments`, `GET/POST /feed-formulas`, `GET /feed-formulas/{id}`, `POST …/versions`, `GET …/versions/{v}`, `POST …/versions/{v}/activate`, `GET …/versions/{v}/scale`, `GET …/versions/{v}/nutrients`, `GET/POST /feed-batches`, `GET /feed-batches/{id}`, `GET …/usage`, `POST …/complete`, `POST …/quarantine`, `GET/PUT /feed-mix-settings`, `POST /feed-mixes` (a numbered mix recorded in one step from the quantities weighed; the output feed's formula, created from the first mix by someone with Feed approval), `GET /feed-mixes/{n}`, `GET /feed-products/standard-slots`, `POST /feed-products/standard` (the feeding form's default rows — concentrate, corn silage, wheat straw — and the idempotent "create what the farm lacks"), `GET /feed-nutrients`, `GET/POST /feed-nutrient-profiles`, `GET/POST /feeding-programs`, `GET /feeding-programs/{id}`, `POST …/versions`, `POST …/versions/{v}/activate`, `POST /feeding-programs/resolve`, `GET /livestock-subjects/{id}/feeding-plan`, `GET/POST …/feeding-assignments`, `DELETE …/feeding-assignments/{id}`, `GET …/feeding-history`, `GET/POST /feeding-events`, `POST /feeding-events/{id}/reverse`, `GET /feeding-plan/today`, `GET /feed-inventory/{availability,days-of-cover,forecast,reorder-recommendations}`, `POST /feed-inventory/reorder-recommendations/{id}/acknowledge`, `GET/PUT /feed-reorder-policies`, `GET/POST /feed-allocations`, `POST /feed-allocations/{id}/{release,transfer}`, `GET/POST /feed-reconciliations`, `GET /feed-reconciliations/{id}`, `POST …/close`, `GET /feed-costs` |
+| Feeding (generic feed architecture) | `routes_feeding.py` (shapes in `feed_schemas.py`) | `GET/POST /feed-products`, `GET/PATCH /feed-products/{id}`, `GET/PUT /feed-products/{id}/usage-policy`, `POST …/usage-policy/validate`, `GET /feed-lots`, `POST /feed-lots/receive` (buying feed is the manager's — Feed or Inventory *approve* — or a delivery against an approved purchase request, `requisition_id`, up to its quantity +10%, which the delivery closes), `PATCH /feed-lots/{id}/status`, `GET /feed-lots/{id}/trace`, `POST /feed-inventory/adjustments`, `GET/POST /feed-formulas`, `GET /feed-formulas/{id}`, `POST …/versions`, `GET …/versions/{v}`, `POST …/versions/{v}/activate`, `GET …/versions/{v}/scale`, `GET …/versions/{v}/nutrients`, `GET/POST /feed-batches`, `GET /feed-batches/{id}`, `GET …/usage`, `POST …/complete`, `POST …/quarantine`, `GET/PUT /feed-mix-settings`, `POST /feed-mixes` (a numbered mix recorded in one step from the quantities weighed; the output feed's formula, created from the first mix by someone with Feed approval), `GET /feed-mixes/{n}`, `GET /feed-products/standard-slots`, `POST /feed-products/standard` (the feeding form's default rows — concentrate, corn silage, wheat straw — and the idempotent "create what the farm lacks"), `GET /feed-nutrients`, `GET/POST /feed-nutrient-profiles`, `GET/POST /feeding-programs`, `GET /feeding-programs/{id}`, `POST …/versions`, `POST …/versions/{v}/activate`, `POST /feeding-programs/resolve`, `GET /livestock-subjects/{id}/feeding-plan`, `GET/POST …/feeding-assignments`, `DELETE …/feeding-assignments/{id}`, `GET …/feeding-history`, `GET/POST /feeding-events`, `POST /feeding-events/{id}/reverse`, `POST /feeding-events/{id}/correct` (undo a feeding so its stock returns and, with `components`, record what was really fed in its place; Feed *approve*, or a `feeding_correction` approval request), `GET /feeding-plan/today`, `GET /feed-inventory/{availability,days-of-cover,forecast,reorder-recommendations}`, `POST /feed-inventory/reorder-recommendations/{id}/acknowledge`, `GET/PUT /feed-reorder-policies`, `GET/POST /feed-allocations`, `POST /feed-allocations/{id}/{release,transfer}`, `GET/POST /feed-reconciliations`, `GET /feed-reconciliations/{id}`, `POST …/close`, `GET /feed-costs` |
 | Feed performance | `routes_feed_performance.py` (shapes in `platform_schemas.py`) | `GET /feed-performance/summary`, `POST /feed-performance/evaluate`, `GET/POST /feed-performance/monitors`, `PATCH …/monitors/{id}`, `POST …/monitors/{id}/evaluate`, `GET /feed-performance/{assessments,exposures,alerts}`, `POST …/alerts/{id}/{acknowledge,resolve}`, `GET /feed-performance/batches`, `GET …/batches/{id}`, `GET /feed-performance/{suppliers,ingredient-lots,effective-feed-value}` |
 | Platform masters | `routes_platform.py` (shapes in `platform_schemas.py`) | `GET/POST /units-of-measure`, `GET/POST /assets`, `GET/PATCH /assets/{id}`, `GET /notification-routes`, `PUT /notification-routes/{code}`, `GET /scheduler/{jobs,runs}`, `POST /scheduler/run` |
-| Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` — a milk or egg record re-evaluates the subject's feed-performance monitors |
+| Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` — a milk or egg record re-evaluates the subject's feed-performance monitors; `POST /production/milk` goes through `milk_service.ensure_milk_allowed` (on the farm, able to give milk, in milk, within her lactation, withheld under withdrawal, not in the future, a known session, at most 100 L); `POST /production/milk/{id}/correct` (Milk Production *approve*; an employee sends a `milk_correction` approval request) corrects the record in place with the before/after in the audit log |
 | Agriculture | `routes_agriculture.py` | `GET/POST /crop-plantings`, `GET/POST/DELETE /crops`, `POST/PATCH /fields`, `POST /harvest` |
 | Sales & finance | `routes_finance.py` | `GET/POST /expenses`, `GET/POST /sales` |
 | Tasks | `routes_tasks.py` | `GET/POST/PATCH/DELETE /tasks` |
@@ -272,6 +274,46 @@ where cited, not as a generic framework:
 - **RULE-DUP-NEVER** — a repeat that can never be right is a plain 409 with no override: a feed
   product, a field or a raw material of the same name (case-insensitive), a feed lot code already
   used.
+- **RULE-APPROVAL-REQUEST** — an employee's numbered mix (`POST /feed-mixes`, `POST /feed-batches`,
+  `…/complete`) and a correction to a milk record or a feeding are not facts of the day but changes to
+  the farm's stock and history: without *approve* on the module they are refused (403, "… needs the
+  farm manager (Feed & Nutrition approval). Send the mix for the manager's approval.") and sent as an
+  `approval_request` instead (`POST /approval-requests`, kinds `feed_mix`, `milk_correction`,
+  `feeding_correction`). A request is validated when it is sent — the same checks the direct endpoint
+  runs — and stored with the employee's payload; nothing in stock, mixes or records changes until
+  someone with *approve* on its module approves it, which runs the same service as the manager and
+  records who asked (the mix's operator, the replacement feeding's recorder, the audit metadata
+  `requested_by` / `approved_by` / `approval_request_id`). A rejection needs a note; the employee can
+  withdraw a pending request; one pending request per record (409 "… asked to correct this record;
+  approve or reject that request first." also for the manager's direct correction); both sides hear
+  on the bell (`approval_request`, `approval_decision`). A request is never a transaction
+  (`app/farmos/approval_service.py`).
+- **RULE-FEED-MANAGER** — Feed & Nutrition *create* covers recording milk and feedings and drafting a
+  recipe or a feeding program; recording a numbered mix, creating or editing a feed product (and the
+  standard feeds), assigning or ending a ration, reservations and transfers, reorder policies, and
+  reversing or correcting a feeding need *approve*, with a refusal that names it and says what the
+  employee can do instead. Buying feed (`POST /feed-lots/receive`, `POST /feed/transactions` direction
+  `in`) needs Feed or Inventory *approve*, or an approved purchase request named by `requisition_id`
+  for that feed, up to the approved quantity + 10% (422 names the approved amount); the delivery marks
+  the request's line received. Feed staff open and submit purchase requests from the Feed module
+  (`feed_product_id` lines, `submit: true`), and a Feed approver decides a request that is for feed only.
+- **RULE-RECORD-TIME** — a fact is not dated in the future (`app/farmos/record_time.py`, 422 "<What>
+  cannot be dated in the future.", five minutes of clock tolerance): birth and acquisition dates (and
+  acquisition not before birth), milk, egg collections, harvests, feedings, deliveries, mixes
+  (`produced_at`), observations, health cases, medicine doses, weights and head-count changes.
+  Backdating keeps its recorded-at.
+- **RULE-MILK-IN-MILK** — milk belongs to a lactation: `POST /production/milk` and a correction are
+  refused for an animal with no active lactation (409 "… is not recorded as being milked. Start her
+  milking first …"), dated more than a day before the lactation started (422 naming the start), with
+  an unknown session (`morning` | `midday` | `evening`) or more than 100 L in one milking (422 "check
+  the amount"). The same `milk_service` checks run for the record and for its correction.
+- **RULE-RECORD-CONSISTENCY** — a raw ingredient (`is_feedable: false`) is not fed directly (422 "…
+  is an ingredient, not a feed given to animals. Record the mix it goes into, then feed that."); a mix
+  cannot draw a lot received more than a day after the mix's date (422 naming the lot and both dates;
+  nothing is drawn and no number is taken); a delivery's `unit_cost` and `ordered_quantity` are not
+  negative; harvest waste is not more than the harvest; a flock head-count change repeated within half
+  an hour is a possible duplicate (409, `confirm_duplicate`); a species change is refused once the
+  animal has a feeding record too.
 - **RULE-STOCK-OVERRIDE** — `allow_negative` (feeding events, mix completion, `POST /feed-mixes`,
   `POST /feed/transactions`, `POST /mouneh/batches/{id}/consume`) is an approved exception: it
   needs *approve* on the module's own code or on Inventory (`app/farmos/deps.py:ensure_stock_override`),
@@ -295,9 +337,10 @@ where cited, not as a generic framework:
 - **RULE-LIVESTOCK-EXIT** — an exit (sold, dead, culled, slaughtered, transferred; `archived` through
   `PUT active: false`) closes every group membership (a counted flock records the loss in its
   ledger), the active pregnancy and lactation (`ANIMAL_EXITED`) and the active feeding assignments,
-  and blocks milk, breeding and group moves afterwards (409 "… is no longer on the farm"). A death
-  needs Animals · edit, the others Animals · approve; only an archived animal is restored
-  (Animals · delete).
+  and blocks milk, feeding, breeding, group moves, weights (a weight dated before the exit — the sale
+  weight — is still accepted), treatments, medicine doses, health cases and observations afterwards
+  (409 "… is no longer on the farm"). A death needs Animals · edit, the others Animals · approve; only
+  an archived animal is restored (Animals · delete).
 - **RULE-GROUP-LEDGER** — a group's `count` is a projection: the number of current members for a
   `MEMBERSHIP_DERIVED` group, the running total of `animal_group_quantity_event` for a
   `QUANTITY_MANAGED` or `HYBRID` one. `PATCH count` becomes a `COUNT_ADJUSTMENT` row (422 on a
@@ -360,7 +403,7 @@ where cited, not as a generic framework:
   its record is read — inside the tenant-scoped request, because under `FORCE ROW LEVEL SECURITY`
   a migration cannot see any tenant's rows to backfill them.
 - **Species cannot change once history exists.** `PUT /animals/{id}` with a different `species`
-  is 409 once the animal has a milk, treatment, observation, breeding or birth record.
+  is 409 once the animal has a milk, feeding, treatment, observation, breeding or birth record.
 - **Production writes respect capabilities.** `POST /production/milk` is 422 for an animal whose
   resolved set suppresses `MILK_PRODUCTION` by biology (a bull, a hen) and, for an animal that
   carries a management profile, when the profile does not grant it (a meat cow); an animal with no
@@ -564,7 +607,9 @@ where cited, not as a generic framework:
 - **The bell is farm-wide, not per person.** Routing decides who a task is assigned to and who an
   escalation names; the bell entries themselves (`GET /notifications`) are one per farm, visible to
   everyone with the module, as the rest of this contract's notifications are. The reference
-  backend addresses a copy of each entry to every routed recipient.
+  backend addresses a copy of each entry to every routed recipient. An approval request or a
+  purchase request waiting for the manager is therefore one entry (cleared when decided) and the
+  decision one more, rather than a copy for each manager and one for the person who asked.
 - **Context the animal record does not carry is reported as missing, not inferred.** Days in milk
   come from the animal's lactation record (stage 10: `lactation_started_at`, the projection of the
   current lactation episode); an animal in milk with no recorded start makes a lactation-adjusted
@@ -590,7 +635,8 @@ python -m pytest -q tests/test_farmos_stage1.py tests/test_farmos_stage2.py \
   tests/test_farmos_stage5_mouneh.py tests/test_farmos_stage5_visits.py \
   tests/test_farmos_stage6_livestock.py tests/test_farmos_stage7_feed.py \
   tests/test_farmos_stage8_clinical.py tests/test_farmos_stage9_platform_performance.py \
-  tests/test_farmos_stage11_responsibilities_feed.py
+  tests/test_farmos_stage11_responsibilities_feed.py \
+  tests/test_farmos_stage12_approvals_consistency.py
 ```
 
 Every test runs against real `origami_control_test` / `origami_tenant_shared_test` databases (RLS

@@ -769,7 +769,7 @@ def test_a_workers_recipe_is_a_draft_until_approved(client, control_db):
     assert r.json()["active_version"] is None and r.json()["versions"][0]["status"] == "draft"
     # A draft cannot be mixed from; the manager activates it, then it can.
     refused = client.post(
-        f"{API}/feed-batches", json={"formula_id": r.json()["id"], "target_quantity": 100}, headers=f.worker_h
+        f"{API}/feed-batches", json={"formula_id": r.json()["id"], "target_quantity": 100}, headers=f.h
     )
     assert refused.status_code == 422 and "no active version" in refused.json()["detail"]
     assert (
@@ -794,7 +794,10 @@ def test_a_workers_recipe_is_a_draft_until_approved(client, control_db):
     assert program.json()["active_version"] is None
 
 
-def test_a_worker_cannot_create_a_recipe_by_mixing_a_new_feed(client, control_db):
+def test_a_workers_mix_waits_for_the_manager(client, control_db):
+    """Stage 12: an employee's mix — even of an approved recipe — counts only
+    once the manager approves it (test_farmos_stage12_approvals_consistency.py
+    has the whole request flow)."""
     f = Farm(client, control_db, "S11-MIXW", worker_grid={"feed_nutrition": ["view", "create"]})
     barley = f.product("Barley", opening_quantity=1000)
     body = {
@@ -802,21 +805,20 @@ def test_a_worker_cannot_create_a_recipe_by_mixing_a_new_feed(client, control_db
         "components": [{"feed_product_id": barley["id"], "actual_quantity": 50}],
     }
     refused = client.post(f"{API}/feed-mixes", json=body, headers=f.worker_h)
-    assert refused.status_code == 403 and "approved recipe" in refused.json()["detail"], refused.text
+    assert refused.status_code == 403 and "approval" in refused.json()["detail"], refused.text
     made = client.post(f"{API}/feed-mixes", json=body, headers=f.h)
     assert made.status_code == 201, made.text
-    # Once the manager's first mix approved the recipe, the worker mixes it.
-    again = client.post(
-        f"{API}/feed-mixes",
-        json={
-            "feed_product_id": made.json()["feed_product_id"],
-            "components": [{"feed_product_id": barley["id"], "actual_quantity": 40}],
-        },
-        headers=f.worker_h,
+    again_body = {
+        "feed_product_id": made.json()["feed_product_id"],
+        "components": [{"feed_product_id": barley["id"], "actual_quantity": 40}],
+    }
+    again = client.post(f"{API}/feed-mixes", json=again_body, headers=f.worker_h)
+    assert again.status_code == 403, again.text
+    sent = client.post(
+        f"{API}/approval-requests", json={"kind": "feed_mix", "payload": again_body}, headers=f.worker_h
     )
-    assert again.status_code == 201, again.text
-    assert again.json()["mix_number"] == made.json()["mix_number"] + 1
-    assert f.availability(barley["id"])["on_hand"] == 910
+    assert sent.status_code == 201 and sent.json()["status"] == "pending", sent.text
+    assert f.availability(barley["id"])["on_hand"] == 950, "a request moves no stock"
 
 
 def test_a_poor_grade_delivery_is_held_until_released(client, control_db):

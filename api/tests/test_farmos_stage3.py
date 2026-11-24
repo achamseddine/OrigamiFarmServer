@@ -19,10 +19,10 @@ def _owner(client, control_db, prefix: str, email: str):
     return tenant, token
 
 
-def _create_animal(client, token, tenant, *, tag="COW-1"):
+def _create_animal(client, token, tenant, *, tag="COW-1", **fields):
     resp = client.post(
         "/api/v1/animals",
-        json={"tag": tag, "name": "Bessie", "species": "cow"},
+        json={"tag": tag, "name": "Bessie", "species": "cow", **fields},
         headers=farmos_headers(token),
     )
     assert resp.status_code == 201, resp.text
@@ -254,7 +254,11 @@ def _seed_feed_item(client, token, tenant):
 
     with TenantDataRouter.session_for(tenant.id) as db:
         item = InventoryItem(
-            tenant_id=tenant.id, name="Alfalfa Hay", category="Dairy", unit="kg", current_qty=100,
+            tenant_id=tenant.id,
+            name="Alfalfa Hay",
+            category="Dairy",
+            unit="kg",
+            current_qty=100,
             reorder_level=50,
         )
         db.add(item)
@@ -342,7 +346,10 @@ def test_egg_record_validates_accounting_rule(client, control_db):
 
 def test_milk_record_under_withdrawal_is_withheld_or_refused(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-MILK", "milkowner@origami-demo.com")
-    animal_id = _create_animal(client, token, tenant)
+    # Milk belongs to a lactation (stage 12): Bessie is registered in milk.
+    animal_id = _create_animal(
+        client, token, tenant, sex="F", life_stage="adult", management_profile="dairy", lactating=True
+    )
 
     client.post(
         "/api/v1/health/treatments",
@@ -382,9 +389,7 @@ def test_milk_record_under_withdrawal_is_withheld_or_refused(client, control_db)
 
 def test_production_harvest_simple_ledger(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-HARV", "harvowner@origami-demo.com")
-    field = client.post(
-        "/api/v1/fields", json={"name": "Field 1"}, headers=farmos_headers(token)
-    ).json()
+    field = client.post("/api/v1/fields", json={"name": "Field 1"}, headers=farmos_headers(token)).json()
 
     created = client.post(
         "/api/v1/production/harvest",
@@ -464,9 +469,7 @@ def test_field_crop_and_planting_crud(client, control_db):
 
 def test_record_daily_harvest_creates_inventory_stock(client, control_db):
     _tenant, token = _owner(client, control_db, "FARM-DH", "dhowner@origami-demo.com")
-    field = client.post(
-        "/api/v1/fields", json={"name": "Field 3"}, headers=farmos_headers(token)
-    ).json()
+    field = client.post("/api/v1/fields", json={"name": "Field 3"}, headers=farmos_headers(token)).json()
 
     first = client.post(
         "/api/v1/harvest",

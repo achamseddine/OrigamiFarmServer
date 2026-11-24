@@ -574,7 +574,16 @@ def test_mix_code_format_is_configurable_and_starts_are_idempotent(client, contr
     r = client.put(f"{API}/feed-mix-settings", json={"code_format": "OF-{n:04d}"}, headers=h)
     assert r.status_code == 200 and r.json()["next_code"] == "OF-0001", r.text
 
-    headers = {**worker, "Idempotency-Key": "mix-start-replay-1"}
+    # A numbered mix is the manager's (stage 12): the worker sends it for approval.
+    assert (
+        client.post(
+            f"{API}/feed-batches",
+            json={"formula_id": farm["formula"]["id"], "target_quantity": 400},
+            headers=worker,
+        ).status_code
+        == 403
+    )
+    headers = {**h, "Idempotency-Key": "mix-start-replay-1"}
     body = {"formula_id": farm["formula"]["id"], "target_quantity": 400, "notes": "queued offline"}
     first = client.post(f"{API}/feed-batches", json=body, headers=headers)
     assert first.status_code == 201, first.text

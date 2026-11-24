@@ -32,8 +32,12 @@ ALL = ["view", "create", "edit", "delete", "approve", "export", "assign", "confi
 
 
 def _at(days: float) -> datetime:
-    """07:00 UTC, `days` from today (negative = past)."""
-    base = datetime.now(timezone.utc).replace(hour=7, minute=0, second=0, microsecond=0)
+    """07:00 UTC, `days` from today (negative = past) — but never later than
+    now: before 07:00 UTC (early morning in Lebanon) that hour is still
+    ahead, and the server refuses a feeding or a milking dated in the future
+    (stage 12, app/farmos/record_time.py)."""
+    now = datetime.now(timezone.utc)
+    base = min(now.replace(hour=7, minute=0, second=0, microsecond=0), now - timedelta(minutes=1))
     return base + timedelta(days=days)
 
 

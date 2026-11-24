@@ -362,7 +362,9 @@ def test_state_flags_follow_capabilities(client, control_db):
 
 def test_species_cannot_change_once_history_exists(client, control_db):
     _tenant, token = _owner(client, control_db, "FARM-SPC", "spc-owner@origami-demo.com")
-    animal_id = _post_animal(client, token, tag="COW-3", sex="F", management_profile="dairy").json()["id"]
+    animal_id = _post_animal(
+        client, token, tag="COW-3", sex="F", management_profile="dairy", lactating=True
+    ).json()["id"]
 
     # No history yet: a correction is allowed.
     corrected = client.put(
@@ -395,20 +397,35 @@ def test_production_writes_respect_biology_and_configured_profile(client, contro
             headers=farmos_headers(token),
         )
 
-    # A legacy-style cow (no sex, no profile) is held to biology only.
+    # A legacy-style cow (no sex, no profile) is held to biology only — and,
+    # like every animal (stage 12), to being in milk: her synced `lactating`
+    # flag is what says so, since no lactation can be started on a record
+    # that carries no profile.
     legacy = _post_animal(client, token, tag="COW-L").json()["id"]
+    assert milk(legacy).status_code == 409, "not refused for a profile she never had, but not in milk"
+    with TenantDataRouter.session_for(_tenant.id) as db:
+        row = db.get(Animal, uuid.UUID(legacy))
+        assert row is not None
+        row.lactating = True
+        db.commit()
     assert milk(legacy).status_code == 201
     # A bull never milks.
     bull = _post_animal(client, token, name="Ferdinand", tag="BULL-2", sex="M").json()["id"]
     refused = milk(bull)
     assert refused.status_code == 422
     assert "bull" in refused.json()["detail"].lower()
-    # A cow configured for meat does not milk; the same cow as dairy does.
+    # A cow configured for meat does not milk; the same cow as dairy does
+    # once her milking is started.
     meat = _post_animal(client, token, name="Rosa", tag="COW-M", sex="F", management_profile="meat").json()[
         "id"
     ]
     assert milk(meat).status_code == 422
     client.put(f"/api/v1/animals/{meat}", json={"management_profile": "dairy"}, headers=farmos_headers(token))
+    assert milk(meat).status_code == 409, "a dairy cow not yet in milk"
+    assert (
+        client.post(f"/api/v1/animals/{meat}/lactations", json={}, headers=farmos_headers(token)).status_code
+        == 201
+    )
     assert milk(meat).status_code == 201
 
     # Eggs: a registered broiler flock cannot have an egg record; a layer
