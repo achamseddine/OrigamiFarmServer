@@ -72,6 +72,53 @@ def open_for_source(db: Session, source_type: str, source_reference_id: str) -> 
     )
 
 
+def resolve_line(db: Session, line: dict) -> dict:
+    """A line names an inventory item or a feed (whose stock is its
+    inventory item) — feed staff ask to buy feed from the Feed module (PR 23)."""
+    if line.get("feed_product_id"):
+        from app.farmos import feed_models as fm  # local: the feed services import this module
+
+        pk = parse_uuid(line["feed_product_id"])
+        product = db.get(fm.FeedProduct, pk) if pk else None
+        if product is None or product.deleted_at is not None:
+            raise ProcurementError("Feed not found", 404)
+        line = {
+            **line,
+            "inventory_item_id": str(product.inventory_item_id),
+            "uom_code": line.get("uom_code") or product.unit,
+        }
+    if not line.get("inventory_item_id"):
+        raise ProcurementError("Each line names the item or the feed to buy.")
+    line.pop("feed_product_id", None)
+    return line
+
+
+def notify_submitted(db: Session, access: AccessContext, req: PurchaseRequisition) -> None:
+    """The managers hear of a request to buy as it is sent (bell menu)."""
+    first = req.lines[0] if req.lines else None
+    item = db.get(InventoryItem, first.inventory_item_id) if first else None
+    what = (
+        f"{item.name} × {first.requested_quantity:g} {first.uom_code}"
+        if item and first
+        else req.requisition_no
+    )
+    routing.notify_bell(
+        db,
+        access.tenant_id,
+        module_code="inventory",
+        notification_type="purchase_request",
+        title=f"Purchase request {req.requisition_no}: {what}",
+        description=f"Asked by {access.display_name}."
+        + (f" {req.justification}" if req.justification else ""),
+        priority="high",
+        entity_type="purchase_requisition",
+        entity_id=str(req.id),
+        source_type="purchase_requisition",
+        source_id=str(req.id),
+        actor=access.membership_id,
+    )
+
+
 def create_requisition(
     db: Session,
     access: AccessContext,
@@ -181,21 +228,56 @@ def submit(db: Session, access: AccessContext, req: PurchaseRequisition) -> Purc
     req.submitted_at = now_utc()
     req.last_modified_by = access.membership_id
     req.version += 1
+    if req.task_id:
+        t = db.get(Task, req.task_id)
+        if t is not None and t.status == "open" and t.title.startswith("Draft requisition"):
+            t.title = ("Purchase request" + t.title[len("Draft requisition") :] + " — approve or reject")[
+                :300
+            ]
+            t.description = (
+                f"Submitted purchase request ({req.purpose_code or 'manual'}). {req.justification or ''} "
+                "Approve or reject it; an approved request is not an order."
+            ).strip()[:1500]
     _on_incoming_changed(db, access, req)
     return req
 
 
-def authority(access: AccessContext) -> dict:
-    """Who may approve (§6): a manager or owner, or a person granted
-    inventory approve. Snapshotted on the approval row at decision time."""
+def authority(
+    access: AccessContext, db: Session | None = None, req: PurchaseRequisition | None = None
+) -> dict:
+    """Who may approve (§6): a manager or owner, a person granted inventory
+    approve, or — for a request to buy feed only — Feed & Nutrition approve
+    (PR 23). Snapshotted on the approval row at decision time."""
     role_ok = access.role in ("owner", "manager")
-    perm_ok = access.has("inventory", "approve")
+    basis = "role" if role_ok else ("inventory.approve" if access.has("inventory", "approve") else None)
+    if (
+        basis is None
+        and db is not None
+        and req is not None
+        and req.lines
+        and access.has("feed_nutrition", "approve")
+        and all_feed(db, req)
+    ):
+        basis = "feed_nutrition.approve"
     return {
         "user_id": str(access.user_id),
         "role": access.role,
-        "basis": "role" if role_ok else ("inventory.approve" if perm_ok else None),
+        "basis": basis,
         "decided_at": now_utc().isoformat(),
     }
+
+
+def all_feed(db: Session, req: PurchaseRequisition) -> bool:
+    """Every line of the requisition is a feed product's stock item."""
+    from app.farmos import feed_models as fm  # local: the feed services import this module
+
+    items = {ln.inventory_item_id for ln in req.lines}
+    feeds = set(
+        db.scalars(
+            select(fm.FeedProduct.inventory_item_id).where(fm.FeedProduct.inventory_item_id.in_(items))
+        )
+    )
+    return items <= feeds
 
 
 def decide(
@@ -210,7 +292,7 @@ def decide(
         raise ProcurementError("decision must be approved or rejected")
     if req.status not in ("draft", "submitted"):
         raise ProcurementError(f"Requisition {req.requisition_no} is {req.status} and cannot be decided.")
-    snapshot = authority(access)
+    snapshot = authority(access, db, req)
     if snapshot["basis"] is None:
         raise ProcurementError(
             "Approving a purchase requisition needs a farm manager, the owner, "
@@ -242,6 +324,24 @@ def decide(
     for line in req.lines:
         line.status = decision
     _close_task(db, req)
+    if req.requested_by is not None and req.requested_by != access.user_id:
+        # The person who asked hears the answer.
+        verb = "approved" if decision == "approved" else "not approved"
+        routing.notify_bell(
+            db,
+            access.tenant_id,
+            module_code="inventory",
+            notification_type="purchase_request_decision",
+            title=f"{access.display_name} {verb} purchase request {req.requisition_no}",
+            description=comments or None,
+            priority="medium",
+            entity_type="purchase_requisition",
+            entity_id=str(req.id),
+            source_type="purchase_requisition_decision",
+            source_id=f"{req.id}|{req.requested_by}",
+            actor=access.membership_id,
+        )
+    routing.clear_bell(db, source_type="purchase_requisition", source_id=str(req.id), at=at)
     _on_incoming_changed(db, access, req)
     return req
 

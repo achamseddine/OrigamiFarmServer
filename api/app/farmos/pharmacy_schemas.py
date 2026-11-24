@@ -222,7 +222,9 @@ class AdministrationReverse(BaseModel):
 
 # ------------------------------------------------------------- procurement
 class RequisitionLineIn(BaseModel):
-    inventory_item_id: str
+    # The item to buy: an inventory item, or a feed (its inventory item).
+    inventory_item_id: str | None = None
+    feed_product_id: str | None = None
     requested_quantity: float
     uom_code: str | None = None
     estimated_unit_price: float | None = None
@@ -238,6 +240,9 @@ class RequisitionIn(BaseModel):
     needed_by: datetime | None = None
     justification: str | None = None
     currency: str | None = None
+    # Send it to the manager now (an employee asking to buy feed) rather
+    # than keeping a draft to submit later.
+    submit: bool = False
 
 
 class RequisitionDecision(BaseModel):

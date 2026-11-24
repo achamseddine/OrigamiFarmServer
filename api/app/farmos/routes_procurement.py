@@ -3,7 +3,10 @@
 Anyone with inventory view reads; inventory create opens and submits a
 draft; approval and rejection need a manager, the owner, or inventory
 approve — the service snapshots the authority on the decision. Nothing
-here orders or receives stock.
+here orders or receives stock. Feed staff ask to buy feed from the Feed
+module (PR 23): Feed & Nutrition counts as well as Inventory for reading
+and asking, a request for feed only may be decided by a Feed approver, and
+the delivery is recorded against it (`POST /feed-lots/receive`).
 """
 
 from __future__ import annotations
@@ -16,7 +19,13 @@ from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
 from app.farmos import procurement_service as procurement
-from app.farmos.deps import AccessContext, get_access_context, get_farmos_tenant_db, require_permission
+from app.farmos.deps import (
+    AccessContext,
+    get_access_context,
+    get_farmos_tenant_db,
+    require_any_permission,
+    require_permission,
+)
 from app.farmos.feed_inventory_service import parse_uuid
 from app.farmos.pharmacy_schemas import RequisitionCancel, RequisitionDecision, RequisitionIn
 from app.farmos.procurement_models import PurchaseRequisition
@@ -24,8 +33,8 @@ from app.farmos.routing_service import NameCache
 
 router = APIRouter(prefix="/procurement")
 
-_view = require_permission("inventory", "view")
-_create = require_permission("inventory", "create")
+_view = require_any_permission(("inventory", "view"), ("feed_nutrition", "view"))
+_create = require_any_permission(("inventory", "create"), ("feed_nutrition", "create"))
 _edit = require_permission("inventory", "edit")
 
 
@@ -76,11 +85,12 @@ def create_requisition(
     control_db: Session = Depends(get_control_db),
 ) -> dict:
     """A manual DRAFT requisition. Submitting and approving are separate
-    steps; an approved requisition is not a purchase."""
+    steps unless `submit` sends it to the manager now; an approved
+    requisition is not a purchase."""
     req = procurement.create_requisition(
         db,
         access,
-        lines=[line.model_dump() for line in payload.lines],
+        lines=[procurement.resolve_line(db, line.model_dump()) for line in payload.lines],
         requested_by=access.user_id,
         purpose_code=payload.purpose_code or "manual",
         needed_by=payload.needed_by,
@@ -95,6 +105,16 @@ def create_requisition(
         req=req,
         summary=f"Draft requisition {req.requisition_no} opened",
     )
+    if payload.submit:
+        procurement.submit(db, access, req)
+        procurement.notify_submitted(db, access, req)
+        _audit(
+            control_db,
+            access,
+            action="requisition.submitted",
+            req=req,
+            summary=f"Requisition {req.requisition_no} submitted",
+        )
     return procurement.requisition_dict(db, req, NameCache())
 
 
@@ -113,6 +133,7 @@ def submit_requisition(
     control_db: Session = Depends(get_control_db),
 ) -> dict:
     req = procurement.submit(db, access, procurement.get_requisition(db, requisition_id))
+    procurement.notify_submitted(db, access, req)
     _audit(
         control_db,
         access,
