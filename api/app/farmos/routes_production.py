@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType
-from app.farmos import capability_service, duplicates, livestock_service, livestock_state_service
+from app.farmos import approval_service, capability_service, duplicates, livestock_service, milk_service
 from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
+from app.farmos.approval_schemas import MilkCorrectionIn
 from app.farmos.deps import (
     AccessContext,
     check_farm_id,
@@ -28,6 +29,7 @@ from app.farmos.deps import (
 from app.farmos.livestock_catalog import Cap
 from app.farmos.livestock_models import AnimalGroup
 from app.farmos.production_models import EggRecord, HarvestRecord, MilkRecord
+from app.farmos.record_time import not_in_future
 from app.farmos.routes_agriculture import to_field_out
 from app.farmos.schemas import (
     EggRecordCreate,
@@ -50,6 +52,9 @@ _EGGS_VIEW = require_any_permission(("egg_production", "view"), ("produce_harves
 _HARVEST_VIEW = require_any_permission(("produce_harvest", "view"), ("agriculture", "view"))
 # Writes: the same modules the tablet's record sheet offers each action to.
 _HARVEST_CREATE = require_any_permission(("produce_harvest", "create"), ("agriculture", "create"))
+# Correcting milk already on record is the manager's (approve); an employee
+# sends the correction as an approval request (POST /approval-requests).
+_MILK_APPROVE = require_permission("milk_production", "approve")
 
 
 # --- Eggs --------------------------------------------------------------
@@ -124,7 +129,7 @@ def record_eggs(
             cap_set, Cap.EGG_PRODUCTION, group.name, configured=True
         )
     # The same count from the same flock within half an hour is asked about first.
-    at = payload.recorded_at or datetime.now(timezone.utc)
+    at = not_in_future(payload.recorded_at, "An egg collection") or datetime.now(timezone.utc)
     lo, hi = duplicates.near(at)
     earlier = db.scalar(
         select(EggRecord).where(
@@ -234,7 +239,15 @@ def record_harvest(
         field = None
     if field is None or field.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Field not found.")
-    at = payload.recorded_at or datetime.now(timezone.utc)
+    if payload.waste_qty > payload.quantity:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Waste ({payload.waste_qty:g}) cannot be more than the quantity harvested "
+                f"({payload.quantity:g})."
+            ),
+        )
+    at = not_in_future(payload.recorded_at, "A harvest") or datetime.now(timezone.utc)
     lo, hi = duplicates.near(at)
     earlier = db.scalar(
         select(HarvestRecord).where(
@@ -329,37 +342,15 @@ def record_milk(
     milk is recorded as `withheld` or not at all.
     """
     animal = livestock_service.load_animal_or_404(db, payload.animal_id)
-    now = datetime.now(timezone.utc)
-    livestock_state_service.ensure_on_farm(animal, "milk")
-    # Milk is a capability (generic animal model §12): a bull, a hen or
-    # a mare cannot have a milk record; a cow registered with a meat
-    # profile cannot either. An animal with no profile on record is
-    # held to biology only.
-    livestock_service.check_production_capability(
-        livestock_service.capabilities_for_animal(animal),
-        Cap.MILK_PRODUCTION,
-        animal.name,
-        configured=animal.management_profile is not None,
-    )
-    withdrawal_until = livestock_service.ensure_utc(animal.withdrawal_until)
-    under_withdrawal = withdrawal_until is not None and withdrawal_until > now
-
-    # RULE-WITHDRAWAL (tech spec §14): milk from an animal under withdrawal
-    # must not enter stored, sold, processed or consumed stock — a
-    # server-side safety gate, including when an offline tablet is stale.
-    if under_withdrawal and payload.destination != "withheld":
-        assert withdrawal_until is not None
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"{animal.name} is under withdrawal until {withdrawal_until.isoformat()}. "
-                "Record this milk as withheld; it must not enter stored, sold, processed or consumed stock."
-            ),
-        )
+    recorded_at = not_in_future(payload.recorded_at, "Milk")
+    # On the farm, able to give milk (generic animal model §12), in milk,
+    # within her lactation, and withheld while under withdrawal
+    # (RULE-WITHDRAWAL) — milk_service, the same checks a correction passes.
+    under_withdrawal = milk_service.ensure_milk_allowed(db, animal, recorded_at, payload.destination)
 
     # The same cow, the same session, the same farm day: two people (or one
     # person twice) recording one milking. A second milking is confirmed.
-    at = livestock_service.ensure_utc(payload.recorded_at) or now
+    at = recorded_at or datetime.now(timezone.utc)
     tz = duplicates.tenant_timezone(control_db, access.tenant_id)
     day_start, day_end = duplicates.farm_day(tz, at)
     earlier = db.scalar(
@@ -426,3 +417,28 @@ def record_milk(
     # §12 ProductionRecorded: the animal's and its herd's monitors read again.
     perf.on_production_recorded(db, access, "animal", animal)
     return _to_milk_out(record, under_withdrawal_warning=under_withdrawal)
+
+
+@router.post("/production/milk/{record_id}/correct", response_model=MilkRecordOut)
+def correct_milk_record(
+    record_id: str,
+    payload: MilkCorrectionIn,
+    access: AccessContext = Depends(_MILK_APPROVE),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> MilkRecordOut:
+    """A milk record entered wrongly — the amount, the session, the day,
+    the destination or the animal. Corrected in place with the before and
+    after in the audit log; every total reads the corrected value. Needs
+    Milk Production approval; an employee asks through an approval request."""
+    record, _animal = milk_service.get_record(db, record_id)
+    approval_service.ensure_none_pending(db, record.id)
+    milk_service.apply_correction(
+        db,
+        control_db,
+        access,
+        record,
+        payload.model_dump(exclude={"reason"}, exclude_none=True),
+        reason=payload.reason,
+    )
+    return _to_milk_out(record)

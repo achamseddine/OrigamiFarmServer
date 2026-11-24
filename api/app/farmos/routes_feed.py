@@ -202,6 +202,18 @@ def create_feed_transaction(
     if item is None or item.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Inventory item not found.")
     ensure_stock_override(access, payload.allow_negative, "feed_nutrition")
+    # Stock coming in is a purchase: the farm manager's (PR 23). Employees
+    # send a purchase request and record the delivery against it.
+    if payload.direction == "in" and not (
+        access.has("feed_nutrition", "approve") or access.has("inventory", "approve")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Buying feed needs the farm manager. Send a purchase request; once it is approved, "
+                "record the delivery against it."
+            ),
+        )
 
     if inv.is_feed_item(item):
         product = inv.ensure_product_for_item(db, item, actor=access.membership_id)

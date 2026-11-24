@@ -17,14 +17,16 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.exceptions import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
 from app.common.db import get_control_db
 from app.common.enums import ActorType, MembershipStatus
+from app.farmos import approval_service as approvals
 from app.farmos import asset_service as assets
-from app.farmos import duplicates, livestock_service, livestock_state_service
+from app.farmos import duplicates, livestock_service, livestock_state_service, uom_service
 from app.farmos import feed_batch_service as batches
 from app.farmos import feed_catalog as catalog
 from app.farmos import feed_forecast_service as forecast
@@ -33,9 +35,12 @@ from app.farmos import feed_models as fm
 from app.farmos import feed_performance_service as perf
 from app.farmos import feed_policy_service as policy
 from app.farmos import feeding_program_service as programs
+from app.farmos import procurement_service as procurement
+from app.farmos.approval_schemas import FeedingCorrectionIn
 from app.farmos.deps import (
     AccessContext,
     ensure_stock_override,
+    get_access_context,
     get_farmos_tenant_db,
     require_permission,
 )
@@ -89,6 +94,8 @@ from app.farmos.feed_schemas import (
     StandardFeedSlotOut,
 )
 from app.farmos.livestock_service import now_utc
+from app.farmos.procurement_models import PurchaseRequisition
+from app.farmos.record_time import not_in_future
 from app.tenant_api.models import InventoryItem
 from app.tenants.models import TenantMembership
 
@@ -99,6 +106,34 @@ _create = require_permission("feed_nutrition", "create")
 _edit = require_permission("feed_nutrition", "edit")
 _approve = require_permission("feed_nutrition", "approve")
 _configure = require_permission("feed_nutrition", "configure")
+
+
+def _manager(what: str, instead: str = "") -> Any:
+    """The farm's rule (handbook §5, PR 23): employees record the day's
+    feedings and may draft a recipe or a feeding program (a draft does
+    nothing until someone with approval activates it); buying feed, making
+    a numbered mix, the feed catalogue, assigning rations, stock
+    reservations and corrections are the farm manager's — Feed & Nutrition
+    approval. The refusal says what the employee can do instead."""
+
+    def _check(access: AccessContext = Depends(get_access_context)) -> AccessContext:
+        if not access.has("feed_nutrition", "approve"):
+            raise HTTPException(
+                status_code=403,
+                detail=f"{what} needs the farm manager (Feed & Nutrition approval)."
+                + (f" {instead}" if instead else ""),
+            )
+        return access
+
+    return _check
+
+
+_mix_manager = _manager("Recording a feed mix", "Send the mix for the manager's approval.")
+_recipe_manager = _manager("Changing the feed list or an animal's ration")
+_stock_manager = _manager("Reserving or releasing feed stock")
+_correct_manager = _manager(
+    "Correcting a feeding", "Ask the manager to correct it (send the correction for approval)."
+)
 
 
 def _can_approve(access: AccessContext) -> bool:
@@ -601,7 +636,7 @@ def standard_feed_slots(
 
 @router.post("/feed-products/standard", response_model=list[StandardFeedSlotOut])
 def ensure_standard_feeds(
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_recipe_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> list[dict]:
@@ -628,7 +663,7 @@ def ensure_standard_feeds(
 @router.post("/feed-products", response_model=FeedProductOut, status_code=201)
 def create_feed_product(
     payload: FeedProductCreate,
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_recipe_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -667,7 +702,7 @@ def get_feed_product(
 def update_feed_product(
     product_id: str,
     payload: FeedProductUpdate,
-    access: AccessContext = Depends(_edit),
+    access: AccessContext = Depends(_recipe_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -805,6 +840,8 @@ def receive_lot(
     control_db: Session = Depends(get_control_db),
 ) -> dict:
     product = inv.get_product(db, payload.feed_product_id)
+    not_in_future(payload.received_at, "A delivery")
+    requisition = _purchase_authority(db, access, product, payload)
     if payload.lot_code and db.scalar(
         select(fm.FeedLot.id).where(
             fm.FeedLot.lot_code == payload.lot_code.strip(), fm.FeedLot.deleted_at.is_(None)
@@ -821,10 +858,12 @@ def receive_lot(
     lot = inv.receive(
         db,
         product,
-        **payload.model_dump(exclude={"feed_product_id", "confirm_duplicate"}),
+        **payload.model_dump(exclude={"feed_product_id", "confirm_duplicate", "requisition_id"}),
         actor=access.membership_id,
         actor_user=access.user_id,
     )
+    if requisition is not None:
+        procurement.mark_received(db, access, requisition, inventory_item_id=product.inventory_item_id)
     held = False
     if payload.quality_grade == "poor" and lot.status == "active":
         # Possession is not permission to use (FEED-SCHEMA §2): a poor
@@ -854,6 +893,57 @@ def receive_lot(
         + (" — graded poor at receipt, held in quarantine until inspected" if held else ""),
     )
     return _lot_out(lot)
+
+
+# A delivery may come in a little over what was approved (a full bag, a
+# rounded weighbridge ticket); more than this needs the manager.
+DELIVERY_TOLERANCE = 0.10
+
+
+def _purchase_authority(
+    db: Session, access: AccessContext, product: fm.FeedProduct, payload: LotReceive
+) -> PurchaseRequisition | None:
+    """Buying feed is the farm manager's (Feed or Inventory approval). An
+    employee records a delivery only against a purchase request the
+    manager approved, for that feed, up to the approved quantity (+10%).
+    Returns the requisition the delivery closes, if one is named."""
+    manager = access.has("feed_nutrition", "approve") or access.has("inventory", "approve")
+    if not payload.requisition_id:
+        if manager:
+            return None
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Buying feed needs the farm manager. Send a purchase request; once it is approved, "
+                "record the delivery against it."
+            ),
+        )
+    req = procurement.get_requisition(db, payload.requisition_id)
+    if req.status not in ("approved", "ordered"):
+        raise FeedError(
+            f"Purchase request {req.requisition_no} is {req.status}; a delivery is recorded against "
+            "an approved request.",
+            409,
+        )
+    line = next(
+        (
+            ln
+            for ln in req.lines
+            if ln.inventory_item_id == product.inventory_item_id and ln.status in ("approved", "ordered")
+        ),
+        None,
+    )
+    if line is None:
+        raise FeedError(f"Purchase request {req.requisition_no} does not include {product.name}.")
+    if not manager:
+        approved = uom_service.convert(db, line.requested_quantity, line.uom_code, product.unit)
+        received = uom_service.convert(db, payload.quantity, payload.unit or product.unit, product.unit)
+        if received > approved * (1 + DELIVERY_TOLERANCE) + 1e-9:
+            raise FeedError(
+                f"{received:g} {product.unit} is more than the {approved:g} {product.unit} approved in "
+                f"{req.requisition_no}; ask the manager to record the difference."
+            )
+    return req
 
 
 def _duplicate_receipt(db: Session, product: fm.FeedProduct, payload: LotReceive) -> fm.FeedLot | None:
@@ -1168,7 +1258,7 @@ def list_batches(
 @router.post("/feed-batches", response_model=BatchOut, status_code=201)
 def start_batch(
     payload: BatchStart,
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_mix_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1202,7 +1292,7 @@ def start_batch(
 @router.post("/feed-mixes", response_model=BatchOut, status_code=201)
 def record_mix(
     payload: QuickMixIn,
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_mix_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1329,7 +1419,7 @@ def batch_usage(
 def complete_batch(
     batch_id: str,
     payload: BatchComplete,
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_mix_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1622,7 +1712,7 @@ def list_assignments(
 def create_assignment(
     subject_id: str,
     payload: AssignmentCreate,
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_recipe_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1660,7 +1750,7 @@ def end_assignment(
     subject_id: str,
     assignment_id: str,
     reason: str | None = None,
-    access: AccessContext = Depends(_edit),
+    access: AccessContext = Depends(_recipe_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1781,7 +1871,7 @@ def list_feeding_events(
 def reverse_feeding_event(
     event_id: str,
     payload: FeedingEventReverse,
-    access: AccessContext = Depends(_edit),
+    access: AccessContext = Depends(_correct_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1802,6 +1892,28 @@ def reverse_feeding_event(
         summary=f"Reversed feeding {event.id}: {payload.reason}",
     )
     return programs.event_to_dict(reversal)
+
+
+@router.post("/feeding-events/{event_id}/correct", response_model=FeedingEventOut, status_code=201)
+def correct_feeding_event(
+    event_id: str,
+    payload: FeedingCorrectionIn,
+    access: AccessContext = Depends(_correct_manager),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Undo a feeding (its stock returns to its lots) and, with components,
+    record what was really fed in its place. An employee sends the same
+    correction for approval (POST /approval-requests)."""
+    pk = inv.parse_uuid(event_id)
+    event = db.get(fm.FeedingEvent, pk) if pk else None
+    if event is None or event.deleted_at is not None:
+        raise FeedError("Feeding event not found", 404)
+    approvals.ensure_none_pending(db, event.id)
+    result = approvals.correct_feeding(
+        db, control_db, access, event, payload, allow_negative=payload.allow_negative
+    )
+    return programs.event_to_dict(result)
 
 
 @router.get("/feeding-plan/today")
@@ -1891,7 +2003,7 @@ def list_reorder_policies(
 @router.put("/feed-reorder-policies", response_model=ReorderPolicyOut)
 def upsert_reorder_policy(
     payload: ReorderPolicyUpsert,
-    access: AccessContext = Depends(_edit),
+    access: AccessContext = Depends(_stock_manager),
     db: Session = Depends(get_farmos_tenant_db),
 ) -> dict:
     product = inv.get_product(db, payload.feed_product_id)
@@ -1941,7 +2053,7 @@ def list_allocations(
 @router.post("/feed-allocations", response_model=AllocationOut, status_code=201)
 def create_allocation(
     payload: AllocationCreate,
-    access: AccessContext = Depends(_create),
+    access: AccessContext = Depends(_stock_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1976,7 +2088,7 @@ def _allocation_or_404(db: Session, allocation_id: str) -> fm.FeedAllocation:
 def release_allocation(
     allocation_id: str,
     reason: str | None = None,
-    access: AccessContext = Depends(_edit),
+    access: AccessContext = Depends(_stock_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:
@@ -1998,7 +2110,7 @@ def release_allocation(
 def transfer_allocation(
     allocation_id: str,
     payload: AllocationTransfer,
-    access: AccessContext = Depends(_edit),
+    access: AccessContext = Depends(_stock_manager),
     db: Session = Depends(get_farmos_tenant_db),
     control_db: Session = Depends(get_control_db),
 ) -> dict:

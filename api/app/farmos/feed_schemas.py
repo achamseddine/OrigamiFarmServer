@@ -121,12 +121,12 @@ class LotReceive(BaseModel):
     feed_product_id: str
     quantity: float = Field(gt=0)
     unit: str | None = None
-    unit_cost: float | None = None
+    unit_cost: float | None = Field(None, ge=0)
     supplier_id: str | None = None
     supplier_label: str | None = None
     lot_code: str | None = None
     expiry_date: datetime | None = None
-    ordered_quantity: float | None = None
+    ordered_quantity: float | None = Field(None, ge=0)
     rejected_quantity: float = Field(0, ge=0)
     reference: str | None = None
     notes: str | None = None
@@ -140,6 +140,10 @@ class LotReceive(BaseModel):
     # The same delivery note, or the same quantity from the same supplier
     # within half an hour, is refused as a possible duplicate unless confirmed.
     confirm_duplicate: bool = False
+    # The approved purchase request this delivery fills. An employee records
+    # a delivery only against one (buying feed is the manager's); naming it
+    # closes the request's line.
+    requisition_id: str | None = None
 
 
 class LotStatusUpdate(BaseModel):
