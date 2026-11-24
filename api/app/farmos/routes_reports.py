@@ -1,26 +1,33 @@
 """GET /morning-briefing — the tablet app's home-screen summary: today's
-date, a handful of top priorities, today's tasks, and a few headline KPIs.
+date, a handful of top priorities, today's tasks, and a few headline KPIs —
+and the farm's reports for a period (stage 13, reference v0.7.9/v0.8.0
+`api/v1/reports.py`): `GET /reports/{milk,feed,herd,finance,sales,stock}`,
+read from the canonical records by app/farmos/farm_reports_service.py.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserIdentity
 from app.common.db import get_control_db
 from app.common.enums import MembershipStatus
+from app.farmos import farm_reports_service as farm_reports
+from app.farmos import finance_service as finance
 from app.farmos.deps import (
     AccessContext,
     check_farm_id,
+    get_access_context,
     get_farmos_tenant_db,
     require_any_permission,
     require_permission,
 )
 from app.farmos.finance_models import Expense, Sale
+from app.farmos.permissions import MODULE_LABELS
 from app.farmos.production_models import EggRecord, MilkRecord
 from app.farmos.recommendations import FEED_COST_SHARE_THRESHOLD
 from app.farmos.routes_priorities import build_priorities
@@ -143,8 +150,14 @@ def daily_summary(
     sales = (
         db.execute(select(Sale).where(Sale.deleted_at.is_(None), Sale.sold_at >= today_start)).scalars().all()
     )
+    # A cancelled expense stays on file but is not spent (v0.8.0); a
+    # cancelled sale and its negative reversal cancel each other out.
     expenses = (
-        db.execute(select(Expense).where(Expense.deleted_at.is_(None), Expense.incurred_at >= today_start))
+        db.execute(
+            select(Expense).where(
+                Expense.deleted_at.is_(None), Expense.incurred_at >= today_start, Expense.status == "recorded"
+            )
+        )
         .scalars()
         .all()
     )
@@ -188,3 +201,126 @@ def daily_summary(
         top_selling_products=[AmountByProductLabel(product_label=k, amount=v) for k, v in top_products],
         business_insights=business_insights,
     )
+
+
+# ------------------------------------------------------------- the reports
+# Who reads each report: Reports holders read them all; otherwise the
+# report's own area. Money (milk sales in the milk report, the finance
+# report, stock values) is shown only to someone who may see sales or finance.
+_REPORT_MODULES = {
+    "milk": ("milk_production",),
+    "feed": ("feed_nutrition", "inventory"),
+    "herd": ("animals", "animal_health"),
+    "finance": ("finance", "sales"),
+    "sales": ("sales", "finance"),
+    "stock": ("inventory", "feed_nutrition", "mouneh_inventory", "animal_health", "milk_production"),
+}
+_MONEY_MODULES = ("reports", "finance", "sales")
+# The stock report shows each part to whoever works in that area.
+_STOCK_SECTION_MODULES = {
+    "feed": ("feed_nutrition", "inventory"),
+    "medicine": ("animal_health", "inventory"),
+    "mouneh_goods": ("mouneh_inventory", "mouneh_production", "inventory"),
+    "mouneh_materials": ("mouneh_inventory", "mouneh_production", "inventory"),
+    "milk": ("milk_production",),
+    "other": ("inventory",),
+}
+
+
+def _farm_report(
+    kind: str, start: date | None, end: date | None, db: Session, control_db: Session, access: AccessContext
+) -> dict:
+    """The farm's report for a period — milk, feed, herd, finance, sales or
+    stock — from [start] to [end] (farm days, inclusive; default the last
+    30 days). Read from the canonical records every time."""
+    modules = ("reports", *_REPORT_MODULES[kind])
+    if not any(access.has(m, "view") for m in modules):
+        names = " or ".join(MODULE_LABELS[m] for m in modules)
+        raise HTTPException(
+            status_code=403, detail=f"This report needs {names}. Ask a farm manager to grant it."
+        )
+    money = any(access.has(m, "view") for m in _MONEY_MODULES)
+    sections = None
+    if kind == "stock" and not access.has("reports", "view"):
+        sections = {
+            section
+            for section, areas in _STOCK_SECTION_MODULES.items()
+            if any(access.has(m, "view") for m in areas)
+        }
+    books = finance.farm_books(control_db, access.tenant_id)
+    return farm_reports.build(db, books, kind, start, end, with_sales=money, stock_sections=sections)
+
+
+# One route per report, not `/reports/{kind}`: a path parameter there would
+# also answer `/reports/daily-summary` and the other modules' reports.
+@router.get("/reports/milk")
+def milk_report(
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Milk for a period: produced, per day and animal, where it went, the tank; with money, the sales."""
+    return _farm_report("milk", start, end, db, control_db, access)
+
+
+@router.get("/reports/feed")
+def feed_report(
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Feed for a period: feedings, feed used and its cost, deliveries, mixes, stock now."""
+    return _farm_report("feed", start, end, db, control_db, access)
+
+
+@router.get("/reports/herd")
+def herd_report(
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """The herd for a period: on the farm by species, births, animals added and that left, health cases."""
+    return _farm_report("herd", start, end, db, control_db, access)
+
+
+@router.get("/reports/finance")
+def finance_report(
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Money for a period: revenue, expenses, margin, cash collected, unpaid; by product, category and day."""
+    return _farm_report("finance", start, end, db, control_db, access)
+
+
+@router.get("/reports/sales")
+def sales_report(
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Everything sold in a period: by product, buyer, activity and day; what is still unpaid; every sale."""
+    return _farm_report("sales", start, end, db, control_db, access)
+
+
+@router.get("/reports/stock")
+def stock_report(
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    access: AccessContext = Depends(get_access_context),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """What is in stock now: feed, medicine, Mouneh goods and materials, milk in the tank, other items;
+    low and expiring stock; its value at cost (for those who see money)."""
+    return _farm_report("stock", start, end, db, control_db, access)

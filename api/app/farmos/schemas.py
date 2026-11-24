@@ -1408,6 +1408,18 @@ class ExpenseOut(BaseModel):
     linked_entity_type: str | None
     linked_entity_id: str | None
     incurred_at: datetime
+    # Stage 13 (reference v0.8.0 schemas/sales.py): the books' fields.
+    description: str | None = None
+    supplier_label: str | None = None
+    payment_status: str = "paid"
+    due_date: datetime | None = None
+    paid_at: datetime | None = None
+    status: str = "recorded"
+    reference: str | None = None
+    original_amount: float | None = None
+    original_currency: str | None = None
+    exchange_rate: float | None = None
+    activity: str | None = None
 
 
 class SaleOut(BaseModel):
@@ -1422,6 +1434,16 @@ class SaleOut(BaseModel):
     currency: str
     payment_status: str
     sold_at: datetime
+    # Stage 13 (reference v0.8.0 schemas/sales.py): the books' fields.
+    status: str = "recorded"
+    unit_price: float | None = None
+    buyer_name: str | None = None
+    reference: str | None = None
+    paid_at: datetime | None = None
+    original_amount: float | None = None
+    original_currency: str | None = None
+    exchange_rate: float | None = None
+    activity: str | None = None
 
 
 class ExpenseCreate(BaseModel):

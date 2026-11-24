@@ -18,15 +18,20 @@ from app.common.enums import ActorType
 from app.farmos import capability_service, duplicates, livestock_service, livestock_state_service
 from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
+from app.farmos import finance_service as finance
+from app.farmos import milk_models as mm
+from app.farmos import milk_sales_service as milk_sales
 from app.farmos.deps import (
     AccessContext,
     check_farm_id,
+    get_access_context,
     get_farmos_tenant_db,
     require_any_permission,
     require_permission,
 )
 from app.farmos.livestock_catalog import Cap
 from app.farmos.livestock_models import AnimalGroup
+from app.farmos.milk_schemas import MilkSaleCancel, MilkSaleCreate, MilkTankAdjust
 from app.farmos.production_models import EggRecord, HarvestRecord, MilkRecord
 from app.farmos.routes_agriculture import to_field_out
 from app.farmos.schemas import (
@@ -426,3 +431,145 @@ def record_milk(
     # §12 ProductionRecorded: the animal's and its herd's monitors read again.
     perf.on_production_recorded(db, access, "animal", animal)
     return _to_milk_out(record, under_withdrawal_warning=under_withdrawal)
+
+
+# --- Selling milk (stage 13, reference v0.7.9 PR 24) -----------------------
+# Selling is a commercial act: Sales or Finance *create*, or the milk
+# module's approval (the farm manager). Cancelling a sale and adjusting the
+# tank change the record: *approve*. Reading: whoever sees milk or sales.
+# The rules live in app/farmos/milk_sales_service.py.
+_MILK_SALES_VIEW = require_any_permission(("milk_production", "view"), ("sales", "view"), ("finance", "view"))
+_MILK_SALES_APPROVE = require_any_permission(
+    ("milk_production", "approve"), ("sales", "approve"), ("finance", "approve")
+)
+_MILK_APPROVE = require_permission("milk_production", "approve")
+
+
+def _sell_dep(access: AccessContext = Depends(get_access_context)) -> AccessContext:
+    if not (
+        access.has("sales", "create")
+        or access.has("finance", "create")
+        or access.has("milk_production", "approve")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Selling milk needs Sales or Finance, or Milk production approval — ask the farm manager.",
+        )
+    return access
+
+
+@router.get("/production/milk-tank")
+def milk_tank(
+    access: AccessContext = Depends(_MILK_SALES_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Milk in the tank: stored milk recorded − sold + adjustments. Worked
+    out from the records every time, never stored."""
+    return milk_sales.tank(db, finance.farm_books(control_db, access.tenant_id).currency)
+
+
+@router.get("/production/milk-sales")
+def list_milk_sales(
+    days: int = Query(default=90),
+    access: AccessContext = Depends(_MILK_SALES_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = db.scalars(
+        select(mm.MilkSale)
+        .where(mm.MilkSale.deleted_at.is_(None), mm.MilkSale.sold_at >= cutoff)
+        .order_by(mm.MilkSale.sold_at.desc())
+    )
+    return [milk_sales.sale_dict(r) for r in rows]
+
+
+@router.post("/production/milk-sales", status_code=201)
+def sell_milk(
+    payload: MilkSaleCreate,
+    access: AccessContext = Depends(_sell_dep),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Milk sold from the tank: litres, price per litre, buyer, paid or to be
+    paid. Writes the farm's revenue record (product "milk") as well."""
+    sale = milk_sales.sell(
+        db,
+        control_db,
+        access,
+        liters=payload.liters,
+        price_per_liter=payload.price_per_liter,
+        sold_at=payload.sold_at,
+        customer_id=payload.customer_id,
+        buyer_name=payload.buyer_name,
+        payment_status=payload.payment_status,
+        reference=payload.reference,
+        notes=payload.notes,
+        allow_negative=payload.allow_negative,
+        can_override=access.has("milk_production", "approve"),
+        confirm_duplicate=payload.confirm_duplicate,
+        currency=finance.farm_books(control_db, access.tenant_id).currency,
+    )
+    return milk_sales.sale_dict(sale)
+
+
+@router.post("/production/milk-sales/{sale_id}/paid")
+def milk_sale_paid(
+    sale_id: str,
+    access: AccessContext = Depends(_sell_dep),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    sale = milk_sales.mark_paid(db, control_db, access, milk_sales.get_sale(db, sale_id))
+    return milk_sales.sale_dict(sale)
+
+
+@router.post("/production/milk-sales/{sale_id}/cancel")
+def cancel_milk_sale(
+    sale_id: str,
+    payload: MilkSaleCancel,
+    access: AccessContext = Depends(_MILK_SALES_APPROVE),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """A sale recorded by mistake: kept, marked cancelled with the reason;
+    the revenue is reversed and the milk is back in the tank."""
+    sale = milk_sales.cancel(db, control_db, access, milk_sales.get_sale(db, sale_id), reason=payload.reason)
+    return milk_sales.sale_dict(sale)
+
+
+@router.get("/production/milk-tank/adjustments")
+def list_tank_adjustments(
+    days: int = Query(default=90),
+    access: AccessContext = Depends(_MILK_SALES_VIEW),
+    db: Session = Depends(get_farmos_tenant_db),
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = db.scalars(
+        select(mm.MilkTankAdjustment)
+        .where(mm.MilkTankAdjustment.deleted_at.is_(None), mm.MilkTankAdjustment.occurred_at >= cutoff)
+        .order_by(mm.MilkTankAdjustment.occurred_at.desc())
+    )
+    return [milk_sales.adjustment_dict(r) for r in rows]
+
+
+@router.post("/production/milk-tank/adjustments", status_code=201)
+def adjust_milk_tank(
+    payload: MilkTankAdjust,
+    access: AccessContext = Depends(_MILK_APPROVE),
+    db: Session = Depends(get_farmos_tenant_db),
+    control_db: Session = Depends(get_control_db),
+) -> dict:
+    """Milk that left the tank outside a sale, or a count of the tank —
+    the farm manager's (Milk production approval)."""
+    row = milk_sales.adjust_tank(
+        db,
+        control_db,
+        access,
+        reason=payload.reason,
+        liters=payload.liters,
+        counted_level=payload.counted_level,
+        occurred_at=payload.occurred_at,
+        notes=payload.notes,
+    )
+    return milk_sales.adjustment_dict(row)
