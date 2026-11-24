@@ -1,6 +1,7 @@
 """Import every farm-data-plane model so TenantBase.metadata is complete."""
 
 from app.common.db import TenantBase
+from app.farmos import approval_models as _farmos_approval_models  # noqa: F401
 from app.farmos import emergency_models as _farmos_emergency_models  # noqa: F401
 from app.farmos import farm_models as _farmos_farm_models  # noqa: F401
 from app.farmos import feed_models as _farmos_feed_models  # noqa: F401

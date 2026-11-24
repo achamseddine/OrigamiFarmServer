@@ -132,6 +132,7 @@ _CONTROL_TABLES = [
 ]
 _TENANT_TABLES = [
     "sync_event",
+    "approval_request",
     "hatch_event",
     "incubation_batch",
     "lactation_episode",

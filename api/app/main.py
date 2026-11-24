@@ -138,6 +138,7 @@ from app.auth.routes import router as auth_router  # noqa: E402
 from app.backups.routes import router as backups_router  # noqa: E402
 from app.farmos.routes_agriculture import router as farmos_agriculture_router  # noqa: E402
 from app.farmos.routes_animals import router as farmos_animals_router  # noqa: E402
+from app.farmos.routes_approvals import router as farmos_approvals_router  # noqa: E402
 from app.farmos.routes_audit import router as farmos_audit_router  # noqa: E402
 from app.farmos.routes_auth import router as farmos_auth_router  # noqa: E402
 from app.farmos.routes_emergency import router as farmos_emergency_router  # noqa: E402
@@ -212,6 +213,7 @@ app.include_router(farmos_visits_router, prefix="/api/v1", tags=["FarmOS: Visits
 app.include_router(farmos_visit_bookings_router, prefix="/api/v1", tags=["FarmOS: Visit Bookings"])
 app.include_router(farmos_reproduction_router, prefix="/api/v1", tags=["FarmOS: Reproduction"])
 app.include_router(farmos_responsibilities_router, prefix="/api/v1", tags=["FarmOS: Responsibilities"])
+app.include_router(farmos_approvals_router, prefix="/api/v1", tags=["FarmOS: Approvals"])
 app.include_router(sync_router, prefix="/api/v1/sync", tags=["Sync"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["Files"])
 app.include_router(platform_auth_router, prefix="/platform/v1/auth", tags=["Platform Auth"])

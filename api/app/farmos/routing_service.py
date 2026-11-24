@@ -42,6 +42,7 @@ DEFAULT_ROLES: dict[str, tuple[str, ...]] = {
     "emergency_reassessment": ("manager", "owner"),
     "feed_performance": ("manager", "owner"),
     "procurement_requisition": ("manager", "owner"),
+    "approval_request": ("manager", "owner"),
 }
 ROUTE_CODES = tuple(DEFAULT_ROLES)
 ROUTABLE_ROLES = ("owner", "manager", "veterinarian", "worker", "accountant", "staff")
