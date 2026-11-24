@@ -207,13 +207,15 @@ render end-to-end as early as possible rather than needing all 92 endpoints at o
 | 10 | Livestock records and reproduction: effective-dated animal state history (status, stage, profile, location), first-class group membership with type policies and the head-count ledger, rule groups (pregnant / open / in milk / dry), the animal's exit and restore, parentage, breeding → pregnancy check → pregnancy → birth → offspring, lactations and dry-off, incubation and hatch, the farm's calendar settings (`farm_settings`), generated farm numbers at registration, and the duplicate guards on milk, breedings and registrations | The herd screens that move an animal between pens and keep "who was in it last spring", the reproduction card and calendar on the digital twin, the breeding / calving / hatch flows, Settings → Farm calendar, and a registration that never waits for a scanned tag |
 | 11 | Work responsibilities (what an employee looks after and the duties it means, granting the module access they need), the feed room's one-step mix (`POST /feed-mixes`) and standard feeds, lot quality at receipt, the duplicate-entry guards of every record workflow (`confirm_duplicate`), the approval behind stock overrides and recipe activation, and the module gates aligned with the tablet's screens | Settings → Employees → Responsibilities and the worker's own day, the animal feeding form's default rows, "possible duplicate" prompts on the record sheets, and a worker who cannot take stock below the ledger or activate a recipe without a manager |
 | 12 | Employees enter, the manager approves: approval requests (`approval_request` — an employee's numbered mix or a correction to a milk record or a feeding, checked when sent, applied as the manager on approval, rejected with a reason, withdrawn while pending, on the bell both ways), corrections in place (`POST /production/milk/{id}/correct`, `POST /feeding-events/{id}/correct`), the Feed module's rights split (*create* records milk and feedings and drafts recipes and programs; mixes, the feed list, rations, reservations, corrections and buying feed need *approve*), buying feed through purchase requests (`feed_product_id` lines, `submit`, a Feed approver decides a feed-only request, the delivery is recorded against it), and the record-consistency rules (nothing dated in the future, acquisition not before birth, milk only from an animal in milk within her lactation and at most 100 L, no records on an animal that left, a raw ingredient never fed directly, a mix drawing no lot received after its date, a non-negative delivery cost, waste not more than the harvest, a repeated flock head-count change asked as a duplicate, species locked once fed) | The approvals card on My Day, Feed and Milk (Approve / Reject for the manager, "your requests" with Withdraw for employees), *Send to the manager* on an employee's mix, *Ask to buy feed*, correcting milk and feedings from the animal's page, and a server that refuses tomorrow's milk from an offline tablet with a wrong clock |
+| 13 | Selling milk from the tank (`milk_sale`, `milk_tank_adjustment`: the tank is stored milk − sold + adjustments, never typed in; a sale writes the farm's revenue row), the farm's financials (`exchange_rate`, the books' fields on `sale` and `expense`: any sale, expenses and bills, USD / LBP at the day's rate, mark paid, cancel by reversal, who owes what, profit and loss by month and activity) and the period reports (`GET /reports/{milk,feed,herd,finance,sales,stock}`) | The Milk page's *Sell milk* and tank card, Sales & Finance's tabs (Sales, Expenses & bills, Who owes what, Profit & loss, Exchange rate) and the Reports menu with print, PDF and CSV |
 
-Each stage's tests live in `api/tests/test_farmos_stage{1..12}[_suffix].py` and run against real
+Each stage's tests live in `api/tests/test_farmos_stage{1..13}[_suffix].py` and run against real
 PostgreSQL, RLS included — nothing about this contract is mocked at the database layer.
 
 Stages 6 to 11 are the staged port of the reference backend's newer contract (its OpenAPI document
 at `b5d8c94`); stage 12 ports its PR 23 (approvals, corrections, buying feed) and the record-consistency
-review of commit `32356c2`. What the port deliberately leaves out is listed under "Known, deliberate gaps".
+review of commit `32356c2`; stage 13 ports its v0.7.9–v0.8.0 milk sales, finance and reports
+(`6e7386b`, PRs 24 and 25). What the port deliberately leaves out is listed under "Known, deliberate gaps".
 
 ## Endpoint inventory by group
 
@@ -242,14 +244,14 @@ the routing map — which router module owns which path.
 | Feeding (generic feed architecture) | `routes_feeding.py` (shapes in `feed_schemas.py`) | `GET/POST /feed-products`, `GET/PATCH /feed-products/{id}`, `GET/PUT /feed-products/{id}/usage-policy`, `POST …/usage-policy/validate`, `GET /feed-lots`, `POST /feed-lots/receive` (buying feed is the manager's — Feed or Inventory *approve* — or a delivery against an approved purchase request, `requisition_id`, up to its quantity +10%, which the delivery closes), `PATCH /feed-lots/{id}/status`, `GET /feed-lots/{id}/trace`, `POST /feed-inventory/adjustments`, `GET/POST /feed-formulas`, `GET /feed-formulas/{id}`, `POST …/versions`, `GET …/versions/{v}`, `POST …/versions/{v}/activate`, `GET …/versions/{v}/scale`, `GET …/versions/{v}/nutrients`, `GET/POST /feed-batches`, `GET /feed-batches/{id}`, `GET …/usage`, `POST …/complete`, `POST …/quarantine`, `GET/PUT /feed-mix-settings`, `POST /feed-mixes` (a numbered mix recorded in one step from the quantities weighed; the output feed's formula, created from the first mix by someone with Feed approval), `GET /feed-mixes/{n}`, `GET /feed-products/standard-slots`, `POST /feed-products/standard` (the feeding form's default rows — concentrate, corn silage, wheat straw — and the idempotent "create what the farm lacks"), `GET /feed-nutrients`, `GET/POST /feed-nutrient-profiles`, `GET/POST /feeding-programs`, `GET /feeding-programs/{id}`, `POST …/versions`, `POST …/versions/{v}/activate`, `POST /feeding-programs/resolve`, `GET /livestock-subjects/{id}/feeding-plan`, `GET/POST …/feeding-assignments`, `DELETE …/feeding-assignments/{id}`, `GET …/feeding-history`, `GET/POST /feeding-events`, `POST /feeding-events/{id}/reverse`, `POST /feeding-events/{id}/correct` (undo a feeding so its stock returns and, with `components`, record what was really fed in its place; Feed *approve*, or a `feeding_correction` approval request), `GET /feeding-plan/today`, `GET /feed-inventory/{availability,days-of-cover,forecast,reorder-recommendations}`, `POST /feed-inventory/reorder-recommendations/{id}/acknowledge`, `GET/PUT /feed-reorder-policies`, `GET/POST /feed-allocations`, `POST /feed-allocations/{id}/{release,transfer}`, `GET/POST /feed-reconciliations`, `GET /feed-reconciliations/{id}`, `POST …/close`, `GET /feed-costs` |
 | Feed performance | `routes_feed_performance.py` (shapes in `platform_schemas.py`) | `GET /feed-performance/summary`, `POST /feed-performance/evaluate`, `GET/POST /feed-performance/monitors`, `PATCH …/monitors/{id}`, `POST …/monitors/{id}/evaluate`, `GET /feed-performance/{assessments,exposures,alerts}`, `POST …/alerts/{id}/{acknowledge,resolve}`, `GET /feed-performance/batches`, `GET …/batches/{id}`, `GET /feed-performance/{suppliers,ingredient-lots,effective-feed-value}` |
 | Platform masters | `routes_platform.py` (shapes in `platform_schemas.py`) | `GET/POST /units-of-measure`, `GET/POST /assets`, `GET/PATCH /assets/{id}`, `GET /notification-routes`, `PUT /notification-routes/{code}`, `GET /scheduler/{jobs,runs}`, `POST /scheduler/run` |
-| Production | `routes_production.py` | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` — a milk or egg record re-evaluates the subject's feed-performance monitors; `POST /production/milk` goes through `milk_service.ensure_milk_allowed` (on the farm, able to give milk, in milk, within her lactation, withheld under withdrawal, not in the future, a known session, at most 100 L); `POST /production/milk/{id}/correct` (Milk Production *approve*; an employee sends a `milk_correction` approval request) corrects the record in place with the before/after in the audit log |
+| Production | `routes_production.py` (milk sales: shapes in `milk_schemas.py`, rules in `milk_sales_service.py`) | `GET/POST /production/{eggs,harvest,milk}`, `GET /production/fields` — a milk or egg record re-evaluates the subject's feed-performance monitors; `POST /production/milk` goes through `milk_service.ensure_milk_allowed` (on the farm, able to give milk, in milk, within her lactation, withheld under withdrawal, not in the future, a known session, at most 100 L); `POST /production/milk/{id}/correct` (Milk Production *approve*; an employee sends a `milk_correction` approval request) corrects the record in place with the before/after in the audit log; `GET /production/milk-tank` (stored − sold + adjusted, worked out every time), `GET/POST /production/milk-sales` (selling: Sales or Finance *create*, or Milk Production *approve*; writes the revenue row `product_type: milk`; `allow_negative` past the tank needs Milk Production *approve*), `POST /production/milk-sales/{id}/paid` (same as selling), `POST /production/milk-sales/{id}/cancel` (*approve* on Milk Production, Sales or Finance; reversal row, milk back in the tank), `GET/POST /production/milk-tank/adjustments` (spoiled / calves / home_use / other take litres out; `count` sets the level — Milk Production *approve*) |
 | Agriculture | `routes_agriculture.py` | `GET/POST /crop-plantings`, `GET/POST/DELETE /crops`, `POST/PATCH /fields`, `POST /harvest` |
-| Sales & finance | `routes_finance.py` | `GET/POST /expenses`, `GET/POST /sales` |
+| Sales & finance | `routes_finance.py` (shapes in `finance_schemas.py`, rules in `finance_service.py`) | `GET/POST /expenses`, `GET/POST /sales` (the stage 4 shapes, now writing the same books: `amount` is the total, `payment_status` is `paid` or `pending`, the response carries `status`, `unit_price`, `buyer_name`, `paid_at`, `original_amount` / `original_currency` / `exchange_rate`, `activity`); `GET/POST /finance/exchange-rates` (1 USD = n LBP from a date, a history; setting needs Finance *approve* or Settings *configure*); `GET/POST /finance/sales` (eggs, produce, animals, farm products, other — milk is sold from the tank and Mouneh from its shop, 422; Sales or Finance *create*), `POST /finance/sales/{id}/paid`, `POST /finance/sales/{id}/cancel` (Sales or Finance *approve*; a milk sale cancelled here goes back to the tank, a farm-shop sale is cancelled in Farm visits); `GET/POST /finance/expenses` (15 categories, a paid expense or a bill with `due_date`; Expenses or Finance *create*), `POST /finance/expenses/{id}/paid`, `POST /finance/expenses/{id}/cancel` (Expenses or Finance *approve*); `GET /finance/owed` (receivables with Sales / Finance, payables with Expenses / Finance, each with its age and overdue days); `GET /finance/profit-loss?start&end` (Finance or Reports; by month and activity, cash in and out — feed is a cost when fed, medicine when received, feed deliveries are cash out) |
 | Tasks | `routes_tasks.py` | `GET/POST/PATCH/DELETE /tasks` |
 | Notifications | `routes_notifications.py` | `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all` |
 | Priorities & audit | `routes_priorities.py`, `routes_audit.py` | `GET /priorities`, `GET /audit` |
 | AI recommendations | `routes_recommendations.py` | `GET /recommendations`, `PATCH /recommendations/{id}/decision` |
-| Reports | `routes_reports.py` | `GET /morning-briefing`, `GET /reports/daily-summary` |
+| Reports | `routes_reports.py` (period reports in `farm_reports_service.py`) | `GET /morning-briefing`, `GET /reports/daily-summary` (a cancelled expense is out of today's totals; a cancelled sale and its reversal cancel out), `GET /reports/{milk,feed,herd,finance,sales,stock}?start&end` (farm days, inclusive, default the last 30 days, at most 366; Reports *view* reads them all, otherwise the report's own area — milk: Milk Production; feed: Feed & Nutrition or Inventory; herd: Animals or Animal Health; finance and sales: Finance or Sales; stock: any stock area, each section only for whoever works in it — and money (milk sales, stock values) only with Reports, Finance or Sales) |
 | Module licensing | `routes_modules.py` | `GET /modules`, `POST /modules/{code}/activate` |
 | Web app | `app/web_client.py` (outside the API prefix, not in the OpenAPI document) | `GET /app/` — the farm app compiled for the browser, served beside the API from `FARMOS_WEB_DIR` (docs/AZURE_DEPLOYMENT.md §8) |
 | Mouneh production | `routes_mouneh.py` | raw materials, products, recipes, batches, finished goods, sales |
@@ -359,6 +361,30 @@ where cited, not as a generic framework:
   whole birth), links parentage and starts the dam's next lactation where she has `LACTATION`.
   Every action is checked against the resolved capabilities (a hen is never pregnancy-checked, a
   stallion never gives birth).
+- **RULE-MILK-TANK** — the milk tank is never a stored number: `GET /production/milk-tank` is
+  `milk_record` rows with destination `stored` − recorded milk sales + signed tank adjustments, worked
+  out at every read (`milk_sales_service.tank_balance`); a count is an adjustment of the difference,
+  never an edit. Selling more than the tank holds on record is refused (422, "The tank holds … L on
+  record") unless `allow_negative` is sent by someone with Milk Production *approve* (403 names it
+  otherwise); the override is written to the audit event (`over_tank`).
+- **RULE-MONEY-REVERSAL** — money is never deleted or edited. A sale (`sale`) is `recorded`,
+  `cancelled` or a `reversal`: cancelling marks the row and adds a negative twin with
+  `reversal_of_id` (a milk sale's twin is `Raw milk (cancelled sale)` and its litres return to the
+  tank); an expense is `recorded` or `cancelled` and a cancelled one leaves every total. A reversal
+  row cannot itself be cancelled (409), a cancelled sale cannot be paid (409), and a reason is
+  required (422). Mouneh and farm-shop sales are cancelled where their stock is (409 says where).
+- **RULE-FX-RATE** — the books are in USD (`finance_models.BASE_CURRENCY`). An amount in LBP is
+  converted at the `exchange_rate` row in force on the record's farm day (latest `effective_date` ≤
+  the day, latest set wins) unless the request gives the rate used; no rate set is 422 ("No LBP
+  exchange rate is set for that day…"). The LBP amount and the rate stay on the record
+  (`original_amount`, `original_currency`, `exchange_rate`). Rates are a history: a new rate is a
+  new row, never an edit, and cannot start in the future.
+- **RULE-REPORT-MONEY** — every period report is read from the canonical records at request time
+  (milk records, milk sales, feeding events and components, lots, numbered mixes, animals, births,
+  health cases, sales, expenses), never from a stored figure; a period is whole farm days in the
+  farm's own time zone. Money appears only for a reader with Reports, Finance or Sales *view*: the
+  milk report then omits `sales`, `by_buyer` and the revenue KPIs, and the stock report answers
+  `value: null`.
 - **RULE-MOU-005** — `POST /mouneh/batches/{id}/complete` auto-fills any recipe material never
   explicitly `/consume`'d at its planned (recipe) quantity, so a manager who skips the granular step
   still gets correct stock and cost (`app/farmos/mouneh_service.py`).
@@ -571,11 +597,21 @@ where cited, not as a generic framework:
 
 ## Known, deliberate gaps
 
-- **`POST /expenses` and `POST /sales` field shapes are inferred, not captured.** The 81+11
-  reference examples never captured a manual expense/sale entry, so these two endpoints (added to
-  close the "no write path" gap noted below) mirror `ExpenseOut`/`SaleOut`'s existing fields rather
-  than a verified real request. `Sale` rows also still arrive via `POST /mouneh/sales` and `POST
-  /visit-retail-sales` as before; the general manual entry point now exists alongside those.
+- **`POST /expenses` and `POST /sales` keep their stage 4 shapes but write the stage 13 books.** The
+  81+11 reference examples never captured a manual expense/sale entry; the reference later built it
+  as `POST /finance/sales` / `POST /finance/expenses` (v0.8.0), which the server ports in full. The
+  older paths stay for the tablet's *Today* tab and record the same rows through the same rules
+  (`amount` is the total, `payment_status` is `paid` or `pending`, `partial` is no longer accepted).
+  `Sale` rows also still arrive via `POST /visit-retail-sales`; `POST /mouneh/sales` keeps its own
+  `mouneh_sale` ledger and does not write a `sale` row, so a Mouneh sale is not in the farm's
+  revenue reports here (the reference links the two).
+- **Customers and suppliers remain names plus opaque ids.** The reference's v0.8.0 finance adds
+  the buyer or supplier to a `customers` / `suppliers` master the first time a name is used and
+  finds it again by name; the server has no such masters, so `customer_id` / `supplier_id` are
+  stored as given (a UUID, or none) and the name travels on the record (`buyer_name`,
+  `supplier_label` / `supplier_name`). "The same buyer" for the duplicate guards and for *who owes
+  what* is the same id when one is given, else the same name whatever the case. There are no
+  `/customers` or `/suppliers` endpoints.
 - **`GET /feed/items`'s new `POST` sibling, `GET /feed/transactions`, and `GET /observations` are
   the same situation** — built to close a real store-without-display or no-write-path gap using the
   same field names as their existing `Out` schemas, but not verified against a captured example.
@@ -637,6 +673,7 @@ python -m pytest -q tests/test_farmos_stage1.py tests/test_farmos_stage2.py \
   tests/test_farmos_stage8_clinical.py tests/test_farmos_stage9_platform_performance.py \
   tests/test_farmos_stage11_responsibilities_feed.py \
   tests/test_farmos_stage12_approvals_consistency.py
+  tests/test_farmos_stage13_milk_finance_reports.py
 ```
 
 Every test runs against real `origami_control_test` / `origami_tenant_shared_test` databases (RLS

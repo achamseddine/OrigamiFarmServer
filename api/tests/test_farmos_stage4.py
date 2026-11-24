@@ -112,11 +112,7 @@ def test_expenses_and_sales_can_be_listed(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-FIN", "finowner@origami-demo.com")
     now = datetime.now(timezone.utc)
     with TenantDataRouter.session_for(tenant.id) as db:
-        db.add(
-            Expense(
-                tenant_id=tenant.id, category="feed", amount=1680, currency="USD", incurred_at=now
-            )
-        )
+        db.add(Expense(tenant_id=tenant.id, category="feed", amount=1680, currency="USD", incurred_at=now))
         db.add(
             Sale(
                 tenant_id=tenant.id,
@@ -137,9 +133,7 @@ def test_expenses_and_sales_can_be_listed(client, control_db):
     assert expenses.status_code == 200
     assert expenses.json()[0]["category"] == "feed"
 
-    sales = client.get(
-        "/api/v1/sales", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
-    )
+    sales = client.get("/api/v1/sales", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token))
     assert sales.status_code == 200
     assert sales.json()[0]["product_type"] == "milk"
 
@@ -159,6 +153,8 @@ def test_manager_can_record_a_manual_expense_and_sale(client, control_db):
     assert body["amount"] == 420.0
     assert body["currency"] == "USD"
 
+    # Stage 13: the manual entry writes the farm's books (paid | pending);
+    # `amount` is the total, the unit price is worked out from it.
     sale = client.post(
         "/api/v1/sales",
         json={
@@ -167,14 +163,21 @@ def test_manager_can_record_a_manual_expense_and_sale(client, control_db):
             "quantity": 90,
             "unit": "kg",
             "amount": 945,
-            "payment_status": "partial",
+            "payment_status": "pending",
         },
         headers=farmos_headers(token),
     )
     assert sale.status_code == 201, sale.text
     sale_body = sale.json()
     assert sale_body["product_type"] == "produce"
-    assert sale_body["payment_status"] == "partial"
+    assert sale_body["payment_status"] == "pending"
+    assert (sale_body["status"], sale_body["unit_price"], sale_body["activity"]) == (
+        "recorded",
+        10.5,
+        "crops",
+    )
+    owed = client.get("/api/v1/finance/owed", headers=farmos_headers(token)).json()
+    assert any(i["id"] == sale_body["id"] for i in owed["receivables"]["items"])
 
     # Both new rows show up in the read listings — nothing recorded is lost.
     expenses = client.get(
@@ -182,9 +185,7 @@ def test_manager_can_record_a_manual_expense_and_sale(client, control_db):
     )
     assert any(e["id"] == body["id"] for e in expenses.json())
 
-    sales = client.get(
-        "/api/v1/sales", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
-    )
+    sales = client.get("/api/v1/sales", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token))
     assert any(s["id"] == sale_body["id"] for s in sales.json())
 
 
@@ -236,9 +237,7 @@ def test_audit_trail_records_animal_move_and_treatment(client, control_db):
         headers=farmos_headers(token),
     )
 
-    events = client.get(
-        "/api/v1/audit", params={"entity_type": "animal"}, headers=farmos_headers(token)
-    )
+    events = client.get("/api/v1/audit", params={"entity_type": "animal"}, headers=farmos_headers(token))
     assert events.status_code == 200
     body = events.json()
     # Newest first: the move, then the registration itself (Stage 6 audits
@@ -310,12 +309,8 @@ def test_feed_cost_recommendation_fires_above_threshold_and_can_be_decided(clien
 
 def test_harvest_due_recommendation_fires_for_soon_ready_planting(client, control_db):
     tenant, token = _owner(client, control_db, "FARM-REC2", "recowner2@origami-demo.com")
-    field = client.post(
-        "/api/v1/fields", json={"name": "Herb Garden"}, headers=farmos_headers(token)
-    ).json()
-    crop = client.post(
-        "/api/v1/crops", json={"name": "Basil"}, headers=farmos_headers(token)
-    ).json()
+    field = client.post("/api/v1/fields", json={"name": "Herb Garden"}, headers=farmos_headers(token)).json()
+    crop = client.post("/api/v1/crops", json={"name": "Basil"}, headers=farmos_headers(token)).json()
     client.post(
         "/api/v1/crop-plantings",
         json={
@@ -342,14 +337,22 @@ def test_low_feed_recommendation_fires_at_or_below_reorder_level(client, control
     with TenantDataRouter.session_for(tenant.id) as db:
         db.add(
             InventoryItem(
-                tenant_id=tenant.id, name="Dairy Mix", category="Dairy", unit="kg",
-                current_qty=1800, reorder_level=2000,
+                tenant_id=tenant.id,
+                name="Dairy Mix",
+                category="Dairy",
+                unit="kg",
+                current_qty=1800,
+                reorder_level=2000,
             )
         )
         # Has no reorder level set — should never fire regardless of stock.
         db.add(
             InventoryItem(
-                tenant_id=tenant.id, name="Bedding Straw", unit="bale", current_qty=0, reorder_level=0,
+                tenant_id=tenant.id,
+                name="Bedding Straw",
+                unit="bale",
+                current_qty=0,
+                reorder_level=0,
             )
         )
 
@@ -387,14 +390,20 @@ def test_egg_drop_recommendation_fires_when_production_falls(client, control_db)
         # Last week: 1400 sellable eggs for this flock.
         db.add(
             EggRecord(
-                tenant_id=tenant.id, flock_id="flock-duck", total_eggs=1500, sellable_eggs=1400,
+                tenant_id=tenant.id,
+                flock_id="flock-duck",
+                total_eggs=1500,
+                sellable_eggs=1400,
                 recorded_at=now - timedelta(days=10),
             )
         )
         # This week: only 1000 — a 28.6% drop, above the 20% threshold.
         db.add(
             EggRecord(
-                tenant_id=tenant.id, flock_id="flock-duck", total_eggs=1050, sellable_eggs=1000,
+                tenant_id=tenant.id,
+                flock_id="flock-duck",
+                total_eggs=1050,
+                sellable_eggs=1000,
                 recorded_at=now - timedelta(days=1),
             )
         )
@@ -418,19 +427,27 @@ def test_daily_summary_aggregates_todays_sales_and_expenses(client, control_db):
     with TenantDataRouter.session_for(tenant.id) as db:
         db.add(
             Sale(
-                tenant_id=tenant.id, product_type="milk", product_label="Milk", amount=4250,
-                currency="USD", payment_status="paid", sold_at=now,
+                tenant_id=tenant.id,
+                product_type="milk",
+                product_label="Milk",
+                amount=4250,
+                currency="USD",
+                payment_status="paid",
+                sold_at=now,
             )
         )
         db.add(
             Sale(
-                tenant_id=tenant.id, product_type="eggs", product_label="Eggs", amount=2380,
-                currency="USD", payment_status="pending", sold_at=now,
+                tenant_id=tenant.id,
+                product_type="eggs",
+                product_label="Eggs",
+                amount=2380,
+                currency="USD",
+                payment_status="pending",
+                sold_at=now,
             )
         )
-        db.add(
-            Expense(tenant_id=tenant.id, category="feed", amount=1680, currency="USD", incurred_at=now)
-        )
+        db.add(Expense(tenant_id=tenant.id, category="feed", amount=1680, currency="USD", incurred_at=now))
 
     resp = client.get(
         "/api/v1/reports/daily-summary", params={"farm_id": str(tenant.id)}, headers=farmos_headers(token)
