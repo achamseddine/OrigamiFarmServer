@@ -38,6 +38,7 @@ from app.farmos.feed_inventory_service import Purpose
 from app.farmos.livestock_models import AnimalGroup
 from app.farmos.livestock_service import ensure_utc, now_utc
 from app.farmos.production_models import EggRecord, MilkRecord
+from app.farmos.record_time import not_in_future
 from app.tenant_api.models import Animal, Task
 
 MILK_METRIC = "milk_l_per_day"
@@ -870,7 +871,7 @@ def record_feeding(
             for a in active_assignments(db, "group", group.id)
             if a.assignment_type == "restriction"
         }
-    when = ensure_utc(occurred_at) or now_utc()
+    when = not_in_future(occurred_at, "A feeding") or now_utc()
     program_version = assignment.program_version_id if assignment else None
     if program_version_id:
         program_version = inv.parse_uuid(program_version_id) or program_version
@@ -915,6 +916,14 @@ def record_feeding(
         batch_pk = inv.parse_uuid(line.get("batch_id"))
         through_formula = (product.is_feedable and not product.is_ingredient) or batch_pk is not None
         policy.check_or_raise(db, product, state.policy_target(), lot=lot, through_formula=through_formula)
+        if not product.is_feedable:
+            # A raw material with no usage policy of its own (a grain) still
+            # reaches animals only through the mix it goes into; the policy
+            # check above gives the more specific reason when there is one.
+            raise FeedError(
+                f"{product.name} is an ingredient, not a feed given to animals. "
+                "Record the mix it goes into, then feed that."
+            )
         consumed = line.get("quantity_consumed")
         if moves_stock:
             draws = inv.consume(

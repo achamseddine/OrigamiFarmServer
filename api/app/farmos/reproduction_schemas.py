@@ -63,6 +63,9 @@ class QuantityEventIn(BaseModel):
     quantity_delta: int
     occurred_at: datetime | None = None
     reason: str | None = Field(None, max_length=200)
+    # The same change to the same group within half an hour is refused as a
+    # possible duplicate unless confirmed (two people counting the same loss).
+    confirm_duplicate: bool = False
 
     @field_validator("event_type")
     @classmethod

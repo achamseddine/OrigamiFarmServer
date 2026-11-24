@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.common.db import get_control_db
 from app.common.enums import MembershipStatus
-from app.farmos import duplicates, emergency_service
+from app.farmos import duplicates, emergency_service, livestock_state_service
 from app.farmos import health_case_service as cases
 from app.farmos.deps import (
     AccessContext,
@@ -33,6 +33,7 @@ from app.farmos.production_models import (
     OBSERVATION_QUALITY_CONFIDENCE,
     Observation,
 )
+from app.farmos.record_time import not_in_future
 from app.farmos.schemas import ObservationCreate, ObservationOut
 from app.tenant_api.models import Animal, Field
 from app.tenants.models import TenantMembership
@@ -147,8 +148,13 @@ def create_observation(
     if payload.entity_type not in _SUBJECTS:
         raise HTTPException(status_code=422, detail=f"entity_type must be one of {sorted(_SUBJECTS)}")
     ensure_any_permission(access, *_SUBJECTS[payload.entity_type][2])
-    _subject_or_404(db, payload.entity_type, payload.entity_id)
+    subject = _subject_or_404(db, payload.entity_type, payload.entity_id)
     observer_id = _ensure_farm_user(control_db, access, payload.observer_id, "observer")
+    not_in_future(payload.observed_at, "An observation")
+    if payload.entity_type == "animal":
+        # An animal that left the farm is not observed afterwards (§14).
+        assert isinstance(subject, Animal)
+        livestock_state_service.ensure_on_farm(subject, "an observation")
     lo, hi = duplicates.near(payload.observed_at)
     earlier = db.scalar(
         select(Observation).where(

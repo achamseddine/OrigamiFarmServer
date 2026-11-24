@@ -246,6 +246,13 @@ def record_weight(
     """A dated weight with its method; the animal's `weight_kg` becomes the
     latest of them (never an older back-dated one)."""
     at = validate_weight_input(weight_kg, method, measured_at)
+    exited = ensure_utc(animal.exited_at)
+    if not animal.active and (exited is None or at >= exited):
+        # A weight from before she left (the sale weight) can still be
+        # entered; one dated after she left cannot (§14).
+        from app.farmos.livestock_state_service import ensure_on_farm  # the state service imports this module
+
+        ensure_on_farm(animal, "a weight")
     row = AnimalWeightRecord(
         tenant_id=animal.tenant_id,
         last_modified_by=access.membership_id,

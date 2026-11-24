@@ -29,7 +29,9 @@ from app.farmos.feed_inventory_service import parse_uuid
 from app.farmos.health_case_models import CASE_SEVERITIES, CERTAINTIES, Diagnosis, HealthCase, TreatmentPlan
 from app.farmos.livestock_models import AnimalGroup
 from app.farmos.livestock_service import ensure_utc, now_utc
+from app.farmos.livestock_state_service import ensure_on_farm
 from app.farmos.production_models import Observation, Treatment
+from app.farmos.record_time import not_in_future
 from app.farmos.routing_service import NameCache
 from app.tenant_api.models import Animal
 
@@ -99,6 +101,13 @@ def severity_rank(code: str | None) -> int:
     return CASE_SEVERITIES.index(code) if code in CASE_SEVERITIES else -1
 
 
+def _on_farm(subject_type: str, subject: Any, action: str) -> None:
+    """Behavioural model §14: an animal that left the farm blocks ordinary
+    health records afterwards, the same as milk, feeding and breeding."""
+    if subject_type == "animal":
+        ensure_on_farm(subject, action)
+
+
 # ------------------------------------------------------------------ cases
 def open_case(
     db: Session,
@@ -115,6 +124,8 @@ def open_case(
     opened_at: datetime | None = None,
 ) -> HealthCase:
     subject = subject_or_404(db, subject_type, subject_id)
+    _on_farm(subject_type, subject, "a health case")
+    opened_at = not_in_future(opened_at, "A health case")
     if severity_code is not None and severity_code not in CASE_SEVERITIES:
         raise HealthError(f"severity_code must be one of {list(CASE_SEVERITIES)}")
     responsible = parse_uuid(responsible_user_id) if responsible_user_id else None
@@ -358,6 +369,7 @@ def record_treatment(
 
     subject_type = subject_type_of(entity_type)
     subject = subject_or_404(db, subject_type, entity_id)
+    _on_farm(subject_type, subject, "a treatment")
     product_pk = None
     if medicine_product_id:
         product_pk = parse_uuid(medicine_product_id)

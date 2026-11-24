@@ -23,6 +23,7 @@ from app.farmos import capability_service, identifier_service, livestock_service
 from app.farmos.capability_service import CapabilitySet
 from app.farmos.deps import AccessContext
 from app.farmos.livestock_catalog import Cap
+from app.farmos.record_time import not_in_future
 from app.farmos.schemas import IdentifierIn
 from app.tenant_api.models import Animal
 
@@ -40,6 +41,14 @@ _OPENING_STATE_FIELDS = (
     "service_type",
     "lactation_started_at",
 )
+
+
+def check_dates(birth_date: datetime | None, acquisition_date: datetime | None) -> None:
+    """An animal is not born tomorrow, and does not arrive before it is born."""
+    born = not_in_future(birth_date, "A birth date")
+    acquired = not_in_future(acquisition_date, "An acquisition date")
+    if born is not None and acquired is not None and acquired.date() < born.date():
+        raise HTTPException(status_code=422, detail="The acquisition date cannot be before the birth date.")
 
 
 def check_state_against(cap_set: CapabilitySet, *, name: str, pregnant: bool, lactating: bool) -> None:
@@ -71,6 +80,7 @@ def create_animal(
 
     data = dict(data)
     livestock_service.species_or_422(data["species"])
+    check_dates(data.get("birth_date"), data.get("acquisition_date"))
     cap_set = capability_service.resolve(
         data["species"], data.get("sex"), data.get("life_stage"), data.get("management_profile")
     )

@@ -18,6 +18,7 @@ from app.common.db import get_control_db
 from app.farmos import duplicates
 from app.farmos.deps import AccessContext, get_farmos_tenant_db, require_any_permission, require_permission
 from app.farmos.production_models import Crop, CropPlanting, DailyHarvest
+from app.farmos.record_time import not_in_future
 from app.farmos.schemas import (
     CropCreate,
     CropOut,
@@ -279,7 +280,15 @@ def record_daily_harvest(
         if payload.sellable_quantity is not None
         else payload.total_quantity - payload.waste_quantity
     )
-    recorded_at = payload.recorded_at or datetime.now(timezone.utc)
+    if payload.waste_quantity > payload.total_quantity:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Waste ({payload.waste_quantity:g}) cannot be more than the quantity harvested "
+                f"({payload.total_quantity:g})."
+            ),
+        )
+    recorded_at = not_in_future(payload.recorded_at, "A harvest") or datetime.now(timezone.utc)
     # The same pick entered twice within half an hour is asked about first.
     lo, hi = duplicates.near(recorded_at)
     earlier = db.scalar(

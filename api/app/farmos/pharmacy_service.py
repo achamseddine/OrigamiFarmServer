@@ -1672,6 +1672,13 @@ def administer(
         raise PharmacyError(f"{item.name} is retired and cannot be administered.")
     subject = subject_or_404(db, subject_type, subject_id)
     at = ensure_utc(administered_at) or now_utc()
+    if at > now_utc() + timedelta(minutes=5):
+        raise PharmacyError("A dose cannot be dated in the future.")
+    if subject_type == "animal" and not subject.active:
+        # An animal that left the farm is not treated afterwards (§14).
+        from app.farmos.livestock_state_service import ensure_on_farm
+
+        ensure_on_farm(subject, "a medicine dose")
     if dose_quantity <= 0:
         raise PharmacyError("Dose must be greater than zero.")
     dose_unit = uom_service.require(db, dose_unit, what="dose unit")

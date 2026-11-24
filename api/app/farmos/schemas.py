@@ -973,6 +973,13 @@ class TaskCreate(BaseModel):
     # (409 "Possible duplicate:") unless the person confirms a second one.
     confirm_duplicate: bool = False
 
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("a task needs a title")
+        return v.strip()
+
 
 class TaskUpdate(BaseModel):
     status: str | None = None
@@ -1316,6 +1323,14 @@ class MilkRecordOut(BaseModel):
     under_withdrawal_warning: bool = False
 
 
+# The milkings of a day (the tablet's morning / evening rounds; midday for
+# a herd milked three times) and the amount no animal gives in one of them
+# (OrigamiFarmOS schemas/production.py, stage 12).
+MILK_SESSIONS = frozenset({"morning", "midday", "evening"})
+MAX_LITERS_PER_MILKING = 100.0
+ALLOWED_MILK_DESTINATIONS = frozenset({"stored", "sold", "processed", "consumed", "withheld"})
+
+
 class MilkRecordCreate(BaseModel):
     animal_id: str
     session: str
@@ -1327,6 +1342,24 @@ class MilkRecordCreate(BaseModel):
     # The same cow, the same session, the same farm day is refused as a
     # possible duplicate unless confirmed (a second milking).
     confirm_duplicate: bool = False
+
+    @field_validator("liters")
+    @classmethod
+    def liters_plausible(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("liters cannot be negative")
+        # No animal gives this in one milking: a slipped decimal (185 for
+        # 18.5) is caught here rather than in the month's totals.
+        if v > MAX_LITERS_PER_MILKING:
+            raise ValueError(f"{v:g} L is more than one animal gives in one milking — check the amount")
+        return v
+
+    @field_validator("session")
+    @classmethod
+    def session_known(cls, v: str) -> str:
+        if v not in MILK_SESSIONS:
+            raise ValueError(f"session must be one of {sorted(MILK_SESSIONS)}")
+        return v
 
 
 # --- Agriculture ---------------------------------------------------------

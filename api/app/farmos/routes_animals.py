@@ -35,6 +35,7 @@ from app.farmos import (
     reproduction_service,
 )
 from app.farmos import emergency_models as em
+from app.farmos import feed_models as fm
 from app.farmos import feed_performance_service as perf
 from app.farmos import feeding_program_service as programs
 from app.farmos import health_case_service as cases
@@ -238,6 +239,10 @@ def _has_operational_history(db: Session, animal: Animal) -> bool:
         select(Treatment.id).where(Treatment.entity_type == "animal", Treatment.entity_id == key),
         select(rm.BreedingEvent.id).where(rm.BreedingEvent.female_animal_id == animal.id),
         select(rm.BirthEvent.id).where(rm.BirthEvent.dam_animal_id == animal.id),
+        # What she was fed was checked against her species (feed-usage policy).
+        select(fm.FeedingEvent.id).where(
+            fm.FeedingEvent.subject_type == "animal", fm.FeedingEvent.subject_id == animal.id
+        ),
     )
     return any(db.scalar(q.limit(1)) for q in checks)
 
@@ -548,6 +553,12 @@ def update_animal(
         if changes["lactation_cycle"] is not None and changes["lactation_cycle"] < 0:
             raise HTTPException(status_code=422, detail="The lactation number cannot be negative.")
 
+    if "birth_date" in changes or "acquisition_date" in changes:
+        animal_service.check_dates(
+            changes.get("birth_date", animal.birth_date),
+            changes.get("acquisition_date", animal.acquisition_date),
+        )
+
     # Species is the one thing history depends on (§12): once anything has
     # been recorded about the animal, it stays what it was registered as.
     new_species = changes.get("species", animal.species)
@@ -557,8 +568,8 @@ def update_animal(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"{animal.name} already has milk, treatment, observation or reproduction records as a "
-                    f"{animal.species.replace('_', ' ')}. Its species cannot be changed; "
+                    f"{animal.name} already has milk, feeding, treatment, observation or reproduction "
+                    f"records as a {animal.species.replace('_', ' ')}. Its species cannot be changed; "
                     "register a new animal instead."
                 ),
             )

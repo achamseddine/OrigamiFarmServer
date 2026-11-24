@@ -16,7 +16,7 @@ routers fill them in.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -30,6 +30,7 @@ from app.farmos import livestock_catalog
 from app.farmos.deps import AccessContext
 from app.farmos.feed_catalog import FeedError
 from app.farmos.livestock_service import ensure_utc, now_utc
+from app.farmos.record_time import not_in_future
 from app.tenant_api.models import InventoryItem, InventoryMovement
 
 
@@ -473,7 +474,7 @@ def complete_batch(
             f"Actual quantities are missing for: {names}. Record zero explicitly if none was used."
         )
 
-    when = ensure_utc(produced_at) or now_utc()
+    when = not_in_future(produced_at, "A mix") or now_utc()
     new_components: list[fm.FeedBatchComponent] = []
     total_cost = 0.0
     cost_known = False
@@ -528,6 +529,16 @@ def complete_batch(
         )
         first = True
         for d in draws:
+            # Lineage (ingredient lot → batch): a mix cannot contain feed
+            # that had not arrived when it was made. A day's grace covers
+            # the farm's time zone and a delivery entered the same day.
+            lot_received = ensure_utc(d.lot.received_at) if d.lot is not None else None
+            if d.lot is not None and lot_received is not None and lot_received > when + timedelta(days=1):
+                raise FeedError(
+                    f"{product.name} (lot {d.lot.lot_code}) was received on "
+                    f"{lot_received.date().isoformat()}, after this mix's date ({when.date().isoformat()}). "
+                    "A mix cannot use feed that had not arrived yet — check the two dates."
+                )
             target_qty = None
             if target and first:
                 target_qty = catalog.convert(target.target_quantity or 0, target.unit, product.unit)
@@ -697,7 +708,7 @@ def quick_mix(
         for c in lines
     )
     output = float(output_quantity) if output_quantity else total_in
-    when = ensure_utc(produced_at) or now_utc()
+    when = not_in_future(produced_at, "A mix") or now_utc()
 
     wanted: dict[uuid.UUID, float] = {}
     for c in lines:

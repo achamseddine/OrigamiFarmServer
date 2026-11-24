@@ -39,7 +39,12 @@ from app.farmos.deps import (
     require_diagnostic_role,
     require_permission,
 )
-from app.farmos.livestock_models import AnimalGroup, AnimalHealthCondition, AnimalWeightRecord
+from app.farmos.livestock_models import (
+    AnimalGroup,
+    AnimalGroupQuantityEvent,
+    AnimalHealthCondition,
+    AnimalWeightRecord,
+)
 from app.farmos.reproduction_schemas import (
     AnimalExitIn,
     AnimalRestoreIn,
@@ -527,6 +532,26 @@ def record_quantity_event(
     """A flock's deaths, sales, purchases, transfers or a recount — one row
     of its head-count ledger; `count` follows."""
     group = livestock_service.load_group_or_404(db, group_id)
+    # The same change to the same group within half an hour: two people
+    # counting the same loss, unless the person confirms a second one.
+    lo, hi = duplicates.near(payload.occurred_at)
+    twin = db.scalar(
+        select(AnimalGroupQuantityEvent).where(
+            AnimalGroupQuantityEvent.animal_group_id == group.id,
+            AnimalGroupQuantityEvent.event_type == payload.event_type,
+            AnimalGroupQuantityEvent.quantity_delta == payload.quantity_delta,
+            AnimalGroupQuantityEvent.source_type == "manual",
+            AnimalGroupQuantityEvent.deleted_at.is_(None),
+            AnimalGroupQuantityEvent.occurred_at >= lo,
+            AnimalGroupQuantityEvent.occurred_at <= hi,
+        )
+    )
+    duplicates.guard(
+        twin,
+        f"{payload.event_type.lower().replace('_', ' ')} {payload.quantity_delta:+d} on {group.name} "
+        "was already recorded within half an hour.",
+        confirm=payload.confirm_duplicate,
+    )
     event = group_service.record_quantity(
         db,
         access,
@@ -536,6 +561,15 @@ def record_quantity_event(
         at=payload.occurred_at,
         reason=payload.reason,
         source_type="manual",
+    )
+    duplicates.log_confirmed(
+        control_db,
+        access,
+        entity_type="group",
+        entity_id=str(group.id),
+        match_id=twin.id if twin else None,
+        what=f"quantity_event:{event.id}",
+        module_code="animals",
     )
     _audit(
         control_db,
