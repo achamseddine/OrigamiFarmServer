@@ -88,16 +88,18 @@ RUN pip install --no-cache-dir --only-binary=:all: --progress-bar off -r require
 # The farm app compiled for the browser (OrigamiFarmOS ADR-004): the
 # origami-farmos-web.zip of a web release of the app repository, unzipped so
 # app/web_client.py can serve it at /app/ beside the API. The tag is passed
-# by publish-image.yml as the newest web release at build time; an empty
-# tag (a plain `docker build`, `az acr build`) makes the script look the
-# newest one up itself, "none" skips it, and a failed download leaves the
-# folder empty: /app/ then says the web app is not installed — the API is
-# unaffected either way.
+# pinned in api/WEB_APP_RELEASE (the workflows pass the same tag so the
+# log shows it); an empty tag makes the script look the newest one up,
+# "none" skips it, and a failed download leaves the folder empty: /app/
+# then says the web app is not installed — the API is unaffected either way.
 FROM python:3.12-slim-bookworm AS webapp
 ARG FARMOS_WEB_REPO=achamseddine/OrigamiFarmOS
 ARG FARMOS_WEB_RELEASE_TAG=""
+# api/WEB_APP_RELEASE pins the web release this server ships: bumping it is
+# the commit that deploys a newer web app. A build arg overrides the pin.
 COPY api/fetch_web_app.py /fetch_web_app.py
-RUN python /fetch_web_app.py "$FARMOS_WEB_REPO" "$FARMOS_WEB_RELEASE_TAG" /web
+COPY api/WEB_APP_RELEASE /WEB_APP_RELEASE
+RUN python /fetch_web_app.py "$FARMOS_WEB_REPO" "${FARMOS_WEB_RELEASE_TAG:-$(tr -d '[:space:]' < /WEB_APP_RELEASE)}" /web
 
 FROM python:3.12-slim-bookworm AS final
 

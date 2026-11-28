@@ -469,16 +469,17 @@ is what the in-app Settings override, added alongside the app's own data-engine 
 
 The farm app compiled for the browser (OrigamiFarmOS `architecture/ADR-004-WEB-CLIENT.md`) ships
 inside this image and is served by the API at `https://<host>/app/` — the same address as the API,
-so there is no server address to type and no CORS setting to add. `publish-image.yml` looks up the
-newest `web-*` release of the OrigamiFarmOS repository when it builds the image and passes its tag
-to the `webapp` stage of `api/Dockerfile` (`FARMOS_WEB_RELEASE_TAG`); `api/fetch_web_app.py`
-downloads and unzips `origami-farmos-web.zip` into `/app/web_app`, which `FARMOS_WEB_DIR` names.
+so there is no server address to type and no CORS setting to add. The web release this server
+ships is pinned in `api/WEB_APP_RELEASE` (a `web-*` tag of the OrigamiFarmOS repository); the
+`webapp` stage of `api/Dockerfile` reads it (a `FARMOS_WEB_RELEASE_TAG` build arg overrides it) and
+`api/fetch_web_app.py` downloads and unzips that release's `origami-farmos-web.zip` into
+`/app/web_app`, which `FARMOS_WEB_DIR` names. The workflows print the tag in their log.
 
-So deploying a newer web app is: let the app repository's "Build web app" workflow publish a release,
-then rebuild and redeploy this image (sections 1 and 3). A plain `docker build` with no tag, or a
-release that cannot be downloaded, still builds — `/app/` then says the web app is not installed,
-and the API is unaffected. To serve a build from somewhere else instead, mount or copy its folder
-and point `FARMOS_WEB_DIR` at it.
+So deploying a newer web app is a commit here: after the app repository's "Build web app" workflow
+publishes a release, put its tag in `api/WEB_APP_RELEASE`, push, then rebuild and redeploy this
+image (sections 1 and 3). A release that cannot be downloaded still builds — `/app/` then says the
+web app is not installed, and the API is unaffected. To serve a build from somewhere else instead,
+mount or copy its folder and point `FARMOS_WEB_DIR` at it.
 
 Check: `https://<host>/app/` shows the sign-in screen with `App 0.7.<build>` under the button;
 `https://<host>/app/version.json` names the build.

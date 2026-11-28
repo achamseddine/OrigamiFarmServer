@@ -79,13 +79,12 @@ jobs:
       # the newest `web-*` release of the app repository (its "Build web app"
       # workflow publishes one per build). None found, or the download
       # failing, builds the image without it rather than failing the build.
-      - name: Find the newest web release of the app
+      # The web app this server ships is pinned in api/WEB_APP_RELEASE: bumping
+      # that file is the commit that deploys a newer web app.
+      - name: Read the pinned web release of the app
         id: webapp
         run: |
-          tag=$(curl -fsS -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
-            'https://api.github.com/repos/achamseddine/OrigamiFarmOS/releases?per_page=30' \
-            | python3 -c 'import json,sys; rs=[r for r in json.load(sys.stdin) if r["tag_name"].startswith("web-") and any(a["name"]=="origami-farmos-web.zip" for a in r["assets"])]; rs.sort(key=lambda r: r["published_at"], reverse=True); print(rs[0]["tag_name"] if rs else "")' \
-            || true)
+          tag=$(tr -d '[:space:]' < api/WEB_APP_RELEASE)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Web app release: ${tag:-none}"
 

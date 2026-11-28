@@ -55,3 +55,12 @@ def test_the_build_is_served_under_app_with_its_base_rewritten(client, web_build
     assert logo.status_code == 200 and logo.headers["cache-control"] == "public, max-age=3600"
 
     assert client.get("/app/assets/missing.png").status_code == 404
+
+
+def test_the_shipped_web_release_is_pinned():
+    """api/WEB_APP_RELEASE names the web release the image ships; bumping it
+    is the commit that deploys a newer web app (docs/AZURE_DEPLOYMENT.md §8)."""
+    from pathlib import Path
+
+    pin = (Path(__file__).resolve().parents[1] / "WEB_APP_RELEASE").read_text(encoding="utf-8").strip()
+    assert pin.startswith("web-v") and "-build-" in pin, pin
